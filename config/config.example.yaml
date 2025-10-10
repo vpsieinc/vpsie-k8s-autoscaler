@@ -1,0 +1,67 @@
+vpsie:
+  # VPSie credentials are read from vpsie-secret in kube-system namespace
+  # The secret should already exist in your VPSie Kubernetes cluster
+  # Secret keys: token (API key), url (API endpoint)
+  secretName: vpsie-secret
+  secretNamespace: kube-system
+  
+  # API rate limiting
+  rateLimitPerMinute: 100
+  requestTimeout: 30s
+
+controller:
+  # How often to sync state
+  syncPeriod: 30s
+  
+  # Metrics update interval
+  metricsUpdateInterval: 30s
+  
+  # How often to refresh VPSie offerings
+  offeringRefreshInterval: 30m
+  
+  # Leader election
+  leaderElection:
+    enabled: true
+    leaseDuration: 15s
+    renewDeadline: 10s
+    retryPeriod: 2s
+
+scaling:
+  # Time to wait before scaling up
+  scaleUpStabilizationWindow: 3m
+  
+  # Time to wait before scaling down
+  scaleDownStabilizationWindow: 10m
+  
+  # Maximum nodes per node group
+  maxNodesPerGroup: 100
+  
+  # Timeout for node provisioning
+  nodeProvisionTimeout: 10m
+
+costOptimization:
+  # Enable cost optimization
+  enabled: true
+  
+  # How often to evaluate rebalancing
+  rebalanceInterval: 15m
+  
+  # Minimum savings threshold to trigger rebalancing (%)
+  minSavingsThreshold: 15
+  
+  # Resource weights for cost calculation
+  cpuWeight: 1.0
+  ramWeight: 0.5
+
+observability:
+  # Metrics port
+  metricsPort: 8080
+  
+  # Health check port
+  healthPort: 8081
+  
+  # Log level (debug, info, warn, error)
+  logLevel: info
+  
+  # Enable distributed tracing
+  enableTracing: false
