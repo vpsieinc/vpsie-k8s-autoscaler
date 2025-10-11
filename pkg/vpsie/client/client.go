@@ -298,23 +298,6 @@ func (c *Client) post(ctx context.Context, path string, body, result interface{}
 	return nil
 }
 
-// put performs a PUT request
-func (c *Client) put(ctx context.Context, path string, body, result interface{}) error {
-	resp, err := c.doRequest(ctx, http.MethodPut, path, body)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if result != nil {
-		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
-			return fmt.Errorf("failed to decode response: %w", err)
-		}
-	}
-
-	return nil
-}
-
 // delete performs a DELETE request
 func (c *Client) delete(ctx context.Context, path string) error {
 	resp, err := c.doRequest(ctx, http.MethodDelete, path, nil)

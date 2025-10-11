@@ -61,13 +61,13 @@ test-e2e:
 ## lint: Run linters
 lint:
 	@echo "Running linters..."
-	@golangci-lint run ./...
+	@$(HOME)/go/bin/golangci-lint run ./...
 
 ## fmt: Format code
 fmt:
 	@echo "Formatting code..."
 	@go fmt ./...
-	@goimports -w .
+	@$(HOME)/go/bin/goimports -w .
 
 ## vet: Run go vet
 vet:

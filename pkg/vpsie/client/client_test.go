@@ -287,7 +287,7 @@ func TestClient_RequestHeaders(t *testing.T) {
 		capturedReq = r
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(ListVPSResponse{Data: []VPS{}})
+		_ = json.NewEncoder(w).Encode(ListVPSResponse{Data: []VPS{}})
 	})
 	defer server.Close()
 
@@ -357,9 +357,9 @@ func TestClient_URLConstruction(t *testing.T) {
 
 				// Return appropriate response
 				if r.Method == http.MethodGet && r.URL.Path == "/vms" {
-					json.NewEncoder(w).Encode(ListVPSResponse{Data: []VPS{}})
+					_ = json.NewEncoder(w).Encode(ListVPSResponse{Data: []VPS{}})
 				} else if r.Method == http.MethodGet {
-					json.NewEncoder(w).Encode(VPS{ID: "vm-123"})
+					_ = json.NewEncoder(w).Encode(VPS{ID: "vm-123"})
 				}
 			})
 			defer server.Close()
@@ -379,7 +379,7 @@ func TestClient_RateLimiting(t *testing.T) {
 		requestCount++
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(ListVPSResponse{Data: []VPS{}})
+		_ = json.NewEncoder(w).Encode(ListVPSResponse{Data: []VPS{}})
 	})
 	defer server.Close()
 
@@ -484,7 +484,7 @@ func TestListVMs_Success(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(ListVPSResponse{
+		_ = json.NewEncoder(w).Encode(ListVPSResponse{
 			Data: expectedVMs,
 			Pagination: Pagination{
 				Total:       2,
@@ -514,7 +514,7 @@ func TestListVMs_EmptyList(t *testing.T) {
 	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(ListVPSResponse{
+		_ = json.NewEncoder(w).Encode(ListVPSResponse{
 			Data:       []VPS{},
 			Pagination: Pagination{Total: 0},
 		})
@@ -535,7 +535,7 @@ func TestListVMs_APIError(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Request-ID", "req-123")
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(ErrorResponse{
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
 			Error:   "Unauthorized",
 			Message: "Invalid API token",
 			Code:    401,
@@ -601,7 +601,7 @@ func TestCreateVM_Success(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(expectedVM)
+		_ = json.NewEncoder(w).Encode(expectedVM)
 	})
 	defer server.Close()
 
@@ -628,14 +628,14 @@ func TestCreateVM_DefaultHostname(t *testing.T) {
 
 	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		var receivedReq CreateVPSRequest
-		json.NewDecoder(r.Body).Decode(&receivedReq)
+		_ = json.NewDecoder(r.Body).Decode(&receivedReq)
 
 		// Hostname should default to name
 		assert.Equal(t, "auto-hostname-vm", receivedReq.Hostname)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(VPS{ID: "vm-123", Name: "auto-hostname-vm"})
+		_ = json.NewEncoder(w).Encode(VPS{ID: "vm-123", Name: "auto-hostname-vm"})
 	})
 	defer server.Close()
 
@@ -736,7 +736,7 @@ func TestGetVM_Success(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(expectedVM)
+		_ = json.NewEncoder(w).Encode(expectedVM)
 	})
 	defer server.Close()
 
@@ -756,7 +756,7 @@ func TestGetVM_NotFound(t *testing.T) {
 	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(ErrorResponse{
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
 			Error:   "Not Found",
 			Message: "VM not found",
 			Code:    404,
@@ -813,7 +813,7 @@ func TestDeleteVM_AlreadyDeleted(t *testing.T) {
 	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(ErrorResponse{
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
 			Error:   "Not Found",
 			Message: "VM not found",
 			Code:    404,
@@ -834,7 +834,7 @@ func TestDeleteVM_Conflict(t *testing.T) {
 	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(ErrorResponse{
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
 			Error:   "Conflict",
 			Message: "VM must be stopped before deletion",
 			Code:    409,
@@ -874,7 +874,7 @@ func TestAPIError_Parsing(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Request-ID", "req-abc-123")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(ErrorResponse{
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
 			Error:   "Bad Request",
 			Message: "Invalid parameters provided",
 			Code:    400,
@@ -901,7 +901,7 @@ func TestAPIError_RateLimit(t *testing.T) {
 	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
-		json.NewEncoder(w).Encode(ErrorResponse{
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
 			Error:   "Rate Limit Exceeded",
 			Message: "Too many requests",
 			Code:    429,
@@ -925,7 +925,7 @@ func TestAPIError_RateLimit(t *testing.T) {
 func TestAPIError_ServerError(t *testing.T) {
 	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("Internal Server Error"))
+		_, _ = w.Write([]byte("Internal Server Error"))
 	})
 	defer server.Close()
 
