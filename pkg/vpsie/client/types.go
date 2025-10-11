@@ -6,24 +6,24 @@ import (
 
 // VPS represents a Virtual Private Server instance from VPSie API
 type VPS struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Hostname    string    `json:"hostname"`
-	Status      string    `json:"status"` // running, stopped, suspended, etc.
-	CPU         int       `json:"cpu"`    // Number of CPU cores
-	RAM         int       `json:"ram"`    // RAM in MB
-	Disk        int       `json:"disk"`   // Disk size in GB
-	Bandwidth   int       `json:"bandwidth"`
-	IPAddress   string    `json:"ip_address"`
-	IPv6Address string    `json:"ipv6_address"`
-	OfferingID  string    `json:"offering_id"`
-	DatacenterID string   `json:"datacenter_id"`
-	OSName      string    `json:"os_name"`
-	OSVersion   string    `json:"os_version"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	Tags        []string  `json:"tags"`
-	Notes       string    `json:"notes"`
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Hostname     string    `json:"hostname"`
+	Status       string    `json:"status"` // running, stopped, suspended, etc.
+	CPU          int       `json:"cpu"`    // Number of CPU cores
+	RAM          int       `json:"ram"`    // RAM in MB
+	Disk         int       `json:"disk"`   // Disk size in GB
+	Bandwidth    int       `json:"bandwidth"`
+	IPAddress    string    `json:"ip_address"`
+	IPv6Address  string    `json:"ipv6_address"`
+	OfferingID   string    `json:"offering_id"`
+	DatacenterID string    `json:"datacenter_id"`
+	OSName       string    `json:"os_name"`
+	OSVersion    string    `json:"os_version"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Tags         []string  `json:"tags"`
+	Notes        string    `json:"notes"`
 }
 
 // Offering represents a VPSie instance type/plan
@@ -43,25 +43,25 @@ type Offering struct {
 
 // Datacenter represents a VPSie datacenter/region
 type Datacenter struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Code        string `json:"code"`        // e.g., "us-east", "eu-west"
-	Country     string `json:"country"`     // e.g., "United States", "Germany"
-	City        string `json:"city"`        // e.g., "New York", "Frankfurt"
-	Continent   string `json:"continent"`   // e.g., "North America", "Europe"
-	Available   bool   `json:"available"`   // Whether datacenter accepts new VMs
-	FeaturedDC  bool   `json:"featured_dc"` // Whether this is a featured datacenter
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Code       string `json:"code"`        // e.g., "us-east", "eu-west"
+	Country    string `json:"country"`     // e.g., "United States", "Germany"
+	City       string `json:"city"`        // e.g., "New York", "Frankfurt"
+	Continent  string `json:"continent"`   // e.g., "North America", "Europe"
+	Available  bool   `json:"available"`   // Whether datacenter accepts new VMs
+	FeaturedDC bool   `json:"featured_dc"` // Whether this is a featured datacenter
 }
 
 // OSImage represents an operating system image
 type OSImage struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Version     string `json:"version"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Version      string `json:"version"`
 	Distribution string `json:"distribution"` // e.g., "ubuntu", "debian", "centos"
 	Architecture string `json:"architecture"` // e.g., "x86_64"
-	MinDisk     int    `json:"min_disk"`     // Minimum disk size in GB
-	Available   bool   `json:"available"`
+	MinDisk      int    `json:"min_disk"`     // Minimum disk size in GB
+	Available    bool   `json:"available"`
 }
 
 // CreateVPSRequest represents a request to create a new VPS
@@ -159,8 +159,8 @@ type Snapshot struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
 	VPSID       string    `json:"vps_id"`
-	Size        int       `json:"size"`        // Size in GB
-	Status      string    `json:"status"`      // creating, available, deleting
+	Size        int       `json:"size"`   // Size in GB
+	Status      string    `json:"status"` // creating, available, deleting
 	CreatedAt   time.Time `json:"created_at"`
 	CompletedAt time.Time `json:"completed_at"`
 }
@@ -178,11 +178,11 @@ type RestoreSnapshotRequest struct {
 
 // VPSMetrics represents metrics for a VPS
 type VPSMetrics struct {
-	VPSID        string    `json:"vps_id"`
-	CPUUsage     float64   `json:"cpu_usage"`     // CPU usage percentage
-	RAMUsage     float64   `json:"ram_usage"`     // RAM usage percentage
-	DiskUsage    float64   `json:"disk_usage"`    // Disk usage percentage
-	NetworkIn    int64     `json:"network_in"`    // Network in bytes
-	NetworkOut   int64     `json:"network_out"`   // Network out bytes
-	Timestamp    time.Time `json:"timestamp"`
+	VPSID      string    `json:"vps_id"`
+	CPUUsage   float64   `json:"cpu_usage"`   // CPU usage percentage
+	RAMUsage   float64   `json:"ram_usage"`   // RAM usage percentage
+	DiskUsage  float64   `json:"disk_usage"`  // Disk usage percentage
+	NetworkIn  int64     `json:"network_in"`  // Network in bytes
+	NetworkOut int64     `json:"network_out"` // Network out bytes
+	Timestamp  time.Time `json:"timestamp"`
 }

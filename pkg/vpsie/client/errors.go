@@ -1,6 +1,7 @@
 package client
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 )
@@ -121,7 +122,8 @@ func NewConfigError(field, reason string) *ConfigError {
 
 // IsNotFound checks if an error is a 404 Not Found error
 func IsNotFound(err error) bool {
-	if apiErr, ok := err.(*APIError); ok {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
 		return apiErr.IsNotFound()
 	}
 	return false
@@ -129,7 +131,8 @@ func IsNotFound(err error) bool {
 
 // IsUnauthorized checks if an error is a 401 Unauthorized error
 func IsUnauthorized(err error) bool {
-	if apiErr, ok := err.(*APIError); ok {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
 		return apiErr.IsUnauthorized()
 	}
 	return false
@@ -137,7 +140,8 @@ func IsUnauthorized(err error) bool {
 
 // IsRateLimited checks if an error is a 429 Too Many Requests error
 func IsRateLimited(err error) bool {
-	if apiErr, ok := err.(*APIError); ok {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
 		return apiErr.IsRateLimited()
 	}
 	return false
