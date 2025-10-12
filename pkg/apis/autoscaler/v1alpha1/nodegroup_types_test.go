@@ -267,13 +267,13 @@ func TestNodeGroup_MixedInstances(t *testing.T) {
 			Namespace: "kube-system",
 		},
 		Spec: NodeGroupSpec{
-			MinNodes:                2,
-			MaxNodes:                10,
-			DatacenterID:            "us-east-1",
-			OfferingIDs:             []string{"small-2cpu-4gb", "medium-4cpu-8gb", "large-8cpu-16gb"},
-			OSImageID:               "ubuntu-22.04-lts",
-			PreferredInstanceType:   "small-2cpu-4gb",
-			AllowMixedInstances:     true,
+			MinNodes:              2,
+			MaxNodes:              10,
+			DatacenterID:          "us-east-1",
+			OfferingIDs:           []string{"small-2cpu-4gb", "medium-4cpu-8gb", "large-8cpu-16gb"},
+			OSImageID:             "ubuntu-22.04-lts",
+			PreferredInstanceType: "small-2cpu-4gb",
+			AllowMixedInstances:   true,
 		},
 	}
 
