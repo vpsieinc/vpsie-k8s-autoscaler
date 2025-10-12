@@ -1,0 +1,76 @@
+---
+# Example NodeGroup for memory-intensive workloads
+# This node group provisions larger instances with high memory for data processing, caching, etc.
+
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: high-memory
+  namespace: kube-system
+  labels:
+    workload-type: high-memory
+    environment: production
+spec:
+  # Scaling bounds - smaller pool for specialized workloads
+  minNodes: 1
+  maxNodes: 5
+
+  # VPSie instance configuration - high-memory instances only
+  datacenterID: "us-east-1"
+  offeringIDs:
+    - "large-8cpu-16gb"
+    - "xlarge-16cpu-32gb"
+  osImageID: "ubuntu-22.04-lts"
+
+  # Prefer the smaller high-memory instance
+  preferredInstanceType: "large-8cpu-16gb"
+  allowMixedInstances: true
+
+  # Node labels - identify high-memory nodes
+  labels:
+    nodegroup: high-memory
+    workload-type: memory-intensive
+    instance-size: large
+
+  # Taint to ensure only pods that explicitly request high-memory nodes are scheduled here
+  taints:
+    - key: workload-type
+      value: memory-intensive
+      effect: NoSchedule
+
+  # Scale-up policy - be more aggressive for memory-intensive workloads
+  scaleUpPolicy:
+    enabled: true
+    stabilizationWindowSeconds: 30   # Shorter window for faster response
+    cpuThreshold: 70                 # Lower threshold for scale-up
+    memoryThreshold: 75              # Scale up when memory is 75% full
+
+  # Scale-down policy - more conservative to avoid disruption
+  scaleDownPolicy:
+    enabled: true
+    stabilizationWindowSeconds: 900  # Wait 15 minutes before scaling down
+    cpuThreshold: 40                 # Lower threshold for scale-down
+    memoryThreshold: 40
+    cooldownSeconds: 900             # Longer cooldown period
+
+  # Cloud-init user data
+  userData: |
+    #!/bin/bash
+    set -euo pipefail
+
+    # Optimize system for high-memory workloads
+    sysctl -w vm.swappiness=10
+    sysctl -w vm.dirty_ratio=40
+    sysctl -w vm.dirty_background_ratio=10
+
+    # Join Kubernetes cluster
+    # kubeadm join <control-plane-endpoint>:6443 \
+    #   --token <token> \
+    #   --discovery-token-ca-cert-hash sha256:<hash>
+
+  tags:
+    - "k8s-cluster-prod"
+    - "nodegroup-high-memory"
+    - "managed-by-autoscaler"
+
+  notes: "Kubernetes worker node - high-memory nodegroup for data processing"

@@ -1,0 +1,87 @@
+---
+# Example NodeGroup for general-purpose workloads
+# This node group manages a pool of small to medium instances for stateless applications
+
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: general-purpose
+  namespace: kube-system
+  labels:
+    workload-type: general
+    environment: production
+spec:
+  # Scaling bounds
+  minNodes: 2
+  maxNodes: 10
+
+  # VPSie instance configuration
+  datacenterID: "us-east-1"
+  offeringIDs:
+    - "small-2cpu-4gb"
+    - "medium-4cpu-8gb"
+  osImageID: "ubuntu-22.04-lts"
+
+  # Prefer smaller instances for cost optimization
+  preferredInstanceType: "small-2cpu-4gb"
+  allowMixedInstances: true
+
+  # Node labels - applied to all Kubernetes nodes in this group
+  labels:
+    nodegroup: general-purpose
+    workload-type: stateless
+    cost-tier: optimized
+
+  # Node taints - optional, can be used to reserve nodes for specific workloads
+  # taints:
+  #   - key: workload-type
+  #     value: general-purpose
+  #     effect: NoSchedule
+
+  # Scale-up policy - add nodes when resources are constrained
+  scaleUpPolicy:
+    enabled: true
+    stabilizationWindowSeconds: 60  # Wait 60 seconds before scaling up
+    cpuThreshold: 80                 # Scale up if avg CPU > 80%
+    memoryThreshold: 80              # Scale up if avg memory > 80%
+
+  # Scale-down policy - remove nodes when underutilized
+  scaleDownPolicy:
+    enabled: true
+    stabilizationWindowSeconds: 600  # Wait 10 minutes before scaling down
+    cpuThreshold: 50                 # Scale down if CPU < 50%
+    memoryThreshold: 50              # Scale down if memory < 50%
+    cooldownSeconds: 600             # Wait 10 minutes after scale-up before scale-down
+
+  # SSH keys for node access (optional)
+  # sshKeyIDs:
+  #   - "ssh-key-id-1"
+  #   - "ssh-key-id-2"
+
+  # Cloud-init user data for node bootstrapping
+  # This script should configure the node to join the Kubernetes cluster
+  userData: |
+    #!/bin/bash
+    set -euo pipefail
+
+    # Update system
+    apt-get update
+    apt-get upgrade -y
+
+    # Install Docker (if not pre-installed in the image)
+    # curl -fsSL https://get.docker.com | sh
+
+    # Join Kubernetes cluster
+    # Replace with your actual kubeadm join command
+    # kubeadm join <control-plane-endpoint>:6443 \
+    #   --token <token> \
+    #   --discovery-token-ca-cert-hash sha256:<hash>
+
+  # Tags for VPSie instances (for organization and billing)
+  tags:
+    - "k8s-cluster-prod"
+    - "nodegroup-general-purpose"
+    - "managed-by-autoscaler"
+
+  # Notes for VPSie instances
+  notes: "Kubernetes worker node - general-purpose nodegroup - managed by VPSie autoscaler"

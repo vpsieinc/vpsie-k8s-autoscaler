@@ -1,0 +1,80 @@
+---
+# Example VPSieNode resource
+# This resource represents a single VPSie VPS instance that is part of the Kubernetes cluster
+# Typically, VPSieNode resources are created automatically by the autoscaler controller
+# This example shows the structure for reference
+
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: VPSieNode
+metadata:
+  name: vpsie-node-6266
+  namespace: kube-system
+  labels:
+    nodegroup: general-purpose
+    instance-type: small-2cpu-4gb
+spec:
+  # VPSie VPS instance ID
+  vpsieInstanceID: 6266
+
+  # VPSie offering/boxsize ID
+  instanceType: "small-2cpu-4gb"
+
+  # NodeGroup this node belongs to
+  nodeGroupName: "general-purpose"
+
+  # VPSie datacenter ID
+  datacenterID: "us-east-1"
+
+  # Kubernetes node name (optional, auto-generated if not specified)
+  nodeName: "vpsie-node-6266"
+
+  # VPS IP addresses (populated by controller after provisioning)
+  ipAddress: "192.0.2.10"
+  ipv6Address: "2001:db8::1"
+
+status:
+  # Lifecycle phase
+  phase: Ready
+
+  # Kubernetes node name (after node joins cluster)
+  nodeName: "vpsie-node-6266"
+
+  # VPSie API status
+  vpsieStatus: "running"
+
+  # VPS hostname
+  hostname: "vpsie-node-6266"
+
+  # Actual resource capacity
+  resources:
+    cpu: 2
+    memoryMB: 4096
+    diskGB: 80
+    bandwidthGB: 2000
+
+  # Timestamps
+  createdAt: "2025-10-12T10:00:00Z"
+  provisionedAt: "2025-10-12T10:03:00Z"
+  joinedAt: "2025-10-12T10:05:00Z"
+  readyAt: "2025-10-12T10:06:00Z"
+
+  # Conditions
+  conditions:
+    - type: VPSReady
+      status: "True"
+      lastTransitionTime: "2025-10-12T10:03:00Z"
+      reason: VPSRunning
+      message: "VPS is running on VPSie"
+    - type: NodeJoined
+      status: "True"
+      lastTransitionTime: "2025-10-12T10:05:00Z"
+      reason: NodeJoinedCluster
+      message: "Node successfully joined Kubernetes cluster"
+    - type: NodeReady
+      status: "True"
+      lastTransitionTime: "2025-10-12T10:06:00Z"
+      reason: NodeReady
+      message: "Kubernetes node is ready to accept workloads"
+
+  # Generation tracking
+  observedGeneration: 1

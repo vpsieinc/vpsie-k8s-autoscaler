@@ -1,0 +1,80 @@
+---
+# Example NodeGroup for cost-optimized spot/preemptible workloads
+# This node group uses smaller instances for batch jobs and fault-tolerant workloads
+
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: spot-instances
+  namespace: kube-system
+  labels:
+    workload-type: batch
+    cost-tier: spot
+    environment: production
+spec:
+  # Scaling bounds - larger pool to handle variable availability
+  minNodes: 0  # Can scale to zero when no batch jobs are running
+  maxNodes: 20
+
+  # VPSie instance configuration - use cheapest instances
+  datacenterID: "us-west-2"
+  offeringIDs:
+    - "micro-1cpu-1gb"
+    - "small-2cpu-4gb"
+  osImageID: "ubuntu-22.04-lts"
+
+  # Always prefer the cheapest option
+  preferredInstanceType: "micro-1cpu-1gb"
+  allowMixedInstances: true
+
+  # Node labels - mark as spot/batch nodes
+  labels:
+    nodegroup: spot-instances
+    workload-type: batch
+    cost-tier: spot
+    preemptible: "true"
+
+  # Taint to prevent regular workloads from scheduling on spot nodes
+  taints:
+    - key: workload-type
+      value: batch
+      effect: NoSchedule
+    - key: preemptible
+      value: "true"
+      effect: PreferNoSchedule
+
+  # Scale-up policy - fast response to batch job submissions
+  scaleUpPolicy:
+    enabled: true
+    stabilizationWindowSeconds: 15   # Very fast scale-up for batch jobs
+    cpuThreshold: 85
+    memoryThreshold: 85
+
+  # Scale-down policy - aggressive scale-down to minimize costs
+  scaleDownPolicy:
+    enabled: true
+    stabilizationWindowSeconds: 300  # 5 minutes of low usage before scale-down
+    cpuThreshold: 20                 # Very low threshold - aggressively remove idle nodes
+    memoryThreshold: 20
+    cooldownSeconds: 300             # Short cooldown for rapid scaling
+
+  # Cloud-init user data for batch workloads
+  userData: |
+    #!/bin/bash
+    set -euo pipefail
+
+    # Label node as preemptible in Kubernetes
+    # This will be done by the controller after node joins
+
+    # Join Kubernetes cluster
+    # kubeadm join <control-plane-endpoint>:6443 \
+    #   --token <token> \
+    #   --discovery-token-ca-cert-hash sha256:<hash>
+
+  tags:
+    - "k8s-cluster-prod"
+    - "nodegroup-spot"
+    - "workload-batch"
+    - "managed-by-autoscaler"
+
+  notes: "Kubernetes worker node - spot/batch nodegroup for cost-optimized workloads"
