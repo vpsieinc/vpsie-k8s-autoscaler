@@ -67,6 +67,14 @@ jobs:
           go-version: '1.22'
           cache: true
 
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Verify go.mod and go.sum
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum || (echo "go.mod or go.sum is out of sync. Please run 'go mod tidy'" && exit 1)
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v4
         with:
