@@ -761,7 +761,7 @@ func (c *Client) DeleteVM(ctx context.Context, vmID int) error {
 	}
 
 	if err != nil {
-		return fmt.Errorf("failed to delete VM '%s': %w", vmID, err)
+		return fmt.Errorf("failed to delete VM %d: %w", vmID, err)
 	}
 
 	return nil

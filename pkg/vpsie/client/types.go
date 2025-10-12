@@ -9,14 +9,14 @@ type VPS struct {
 	ID           int       `json:"id"` // API returns numeric ID
 	Name         string    `json:"name"`
 	Hostname     string    `json:"hostname"`
-	Status       string    `json:"status"` // running, stopped, suspended, etc.
-	CPU          int       `json:"cpu"`    // Number of CPU cores
-	RAM          int       `json:"ram"`    // RAM in MB
-	Disk         int       `json:"ssd"`    // Disk size in GB (API uses "ssd" field)
-	Bandwidth    int       `json:"traffic"` // API uses "traffic" field
-	IPAddress    string    `json:"default_ip"`    // API uses "default_ip"
-	IPv6Address  string    `json:"default_ipv6"`  // API uses "default_ipv6"
-	OfferingID   int       `json:"boxsize_id"` // API uses "boxsize_id"
+	Status       string    `json:"status"`       // running, stopped, suspended, etc.
+	CPU          int       `json:"cpu"`          // Number of CPU cores
+	RAM          int       `json:"ram"`          // RAM in MB
+	Disk         int       `json:"ssd"`          // Disk size in GB (API uses "ssd" field)
+	Bandwidth    int       `json:"traffic"`      // API uses "traffic" field
+	IPAddress    string    `json:"default_ip"`   // API uses "default_ip"
+	IPv6Address  string    `json:"default_ipv6"` // API uses "default_ipv6"
+	OfferingID   int       `json:"boxsize_id"`   // API uses "boxsize_id"
 	DatacenterID int       `json:"datacenter_id"`
 	OSName       string    `json:"os_name"`
 	OSVersion    string    `json:"os_version"`

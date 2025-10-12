@@ -53,8 +53,14 @@ func createTestServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(TokenResponse{
-				Token:     "mock-access-token-" + time.Now().Format("20060102150405"),
-				ExpiresIn: 3600,
+				AccessToken: AccessTokenInfo{
+					Token:   "mock-access-token-" + time.Now().Format("20060102150405"),
+					Expires: time.Now().Add(1 * time.Hour).Format(time.RFC3339),
+				},
+				RefreshToken: RefreshTokenInfo{
+					Token:   "mock-refresh-token",
+					Expires: time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+				},
 			})
 			return
 		}
@@ -435,18 +441,18 @@ func TestClient_URLConstruction(t *testing.T) {
 			name:    "GetVM",
 			baseURL: "https://api.test",
 			operation: func(c *Client) error {
-				_, err := c.GetVM(context.Background(), "vm-123")
+				_, err := c.GetVM(context.Background(), 123)
 				return err
 			},
-			expectedPath: "/vms/vm-123",
+			expectedPath: "/vm/123",
 		},
 		{
 			name:    "DeleteVM",
 			baseURL: "https://api.test",
 			operation: func(c *Client) error {
-				return c.DeleteVM(context.Background(), "vm-456")
+				return c.DeleteVM(context.Background(), 456)
 			},
-			expectedPath: "/vms/vm-456",
+			expectedPath: "/vm/456",
 		},
 	}
 
@@ -459,10 +465,10 @@ func TestClient_URLConstruction(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 
 				// Return appropriate response
-				if r.Method == http.MethodGet && r.URL.Path == "/vms" {
+				if r.Method == http.MethodGet && r.URL.Path == "/vm" {
 					_ = json.NewEncoder(w).Encode(ListVPSResponse{Data: []VPS{}})
 				} else if r.Method == http.MethodGet {
-					_ = json.NewEncoder(w).Encode(VPS{ID: "vm-123"})
+					_ = json.NewEncoder(w).Encode(VPS{ID: 123})
 				}
 			})
 			defer server.Close()
@@ -563,7 +569,7 @@ func TestClient_ContextTimeout(t *testing.T) {
 func TestListVMs_Success(t *testing.T) {
 	expectedVMs := []VPS{
 		{
-			ID:        "vm-1",
+			ID:        1,
 			Name:      "test-vm-1",
 			Status:    "running",
 			CPU:       2,
@@ -572,7 +578,7 @@ func TestListVMs_Success(t *testing.T) {
 			IPAddress: "192.168.1.10",
 		},
 		{
-			ID:        "vm-2",
+			ID:        2,
 			Name:      "test-vm-2",
 			Status:    "stopped",
 			CPU:       4,
@@ -584,7 +590,7 @@ func TestListVMs_Success(t *testing.T) {
 
 	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "/vms", r.URL.Path)
+		assert.Equal(t, "/vm", r.URL.Path)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -608,10 +614,10 @@ func TestListVMs_Success(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Len(t, vms, 2)
-	assert.Equal(t, "vm-1", vms[0].ID)
+	assert.Equal(t, 1, vms[0].ID)
 	assert.Equal(t, "test-vm-1", vms[0].Name)
 	assert.Equal(t, "running", vms[0].Status)
-	assert.Equal(t, "vm-2", vms[1].ID)
+	assert.Equal(t, 2, vms[1].ID)
 }
 
 func TestListVMs_EmptyList(t *testing.T) {
@@ -678,7 +684,7 @@ func TestCreateVM_Success(t *testing.T) {
 	}
 
 	expectedVM := VPS{
-		ID:           "vm-new-123",
+		ID:           123,
 		Name:         "test-vm",
 		Hostname:     "test-vm.example.com",
 		Status:       "creating",
@@ -686,14 +692,14 @@ func TestCreateVM_Success(t *testing.T) {
 		RAM:          4096,
 		Disk:         50,
 		IPAddress:    "192.168.1.100",
-		OfferingID:   "offering-123",
-		DatacenterID: "dc-456",
+		OfferingID:   123,
+		DatacenterID: 456,
 		Tags:         []string{"test", "k8s"},
 	}
 
 	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/vms", r.URL.Path)
+		assert.Equal(t, "/vm", r.URL.Path)
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
 		// Verify request body
@@ -739,7 +745,7 @@ func TestCreateVM_DefaultHostname(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(VPS{ID: "vm-123", Name: "auto-hostname-vm"})
+		_ = json.NewEncoder(w).Encode(VPS{ID: 123, Name: "auto-hostname-vm"})
 	})
 	defer server.Close()
 
@@ -823,20 +829,20 @@ func TestCreateVM_ValidationErrors(t *testing.T) {
 
 func TestGetVM_Success(t *testing.T) {
 	expectedVM := VPS{
-		ID:           "vm-123",
+		ID:           123,
 		Name:         "test-vm",
 		Status:       "running",
 		CPU:          4,
 		RAM:          8192,
 		Disk:         100,
 		IPAddress:    "192.168.1.50",
-		OfferingID:   "offering-123",
-		DatacenterID: "dc-456",
+		OfferingID:   123,
+		DatacenterID: 456,
 	}
 
 	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "/vms/vm-123", r.URL.Path)
+		assert.Equal(t, "/vm/123", r.URL.Path)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -847,10 +853,10 @@ func TestGetVM_Success(t *testing.T) {
 	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
-	vm, err := client.GetVM(context.Background(), "vm-123")
+	vm, err := client.GetVM(context.Background(), 123)
 
 	require.NoError(t, err)
-	assert.Equal(t, "vm-123", vm.ID)
+	assert.Equal(t, 123, vm.ID)
 	assert.Equal(t, "test-vm", vm.Name)
 	assert.Equal(t, "running", vm.Status)
 	assert.Equal(t, 4, vm.CPU)
@@ -871,7 +877,7 @@ func TestGetVM_NotFound(t *testing.T) {
 	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
-	vm, err := client.GetVM(context.Background(), "vm-nonexistent")
+	vm, err := client.GetVM(context.Background(), 999)
 
 	assert.Nil(t, vm)
 	assert.Error(t, err)
@@ -879,10 +885,13 @@ func TestGetVM_NotFound(t *testing.T) {
 }
 
 func TestGetVM_EmptyID(t *testing.T) {
-	client, err := NewClientWithCredentials("https://api.test", "test-client-id", "test-client-secret", nil)
+	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
-	vm, err := client.GetVM(context.Background(), "")
+	vm, err := client.GetVM(context.Background(), 0)
 
 	assert.Nil(t, vm)
 	assert.Error(t, err)
@@ -899,7 +908,7 @@ func TestGetVM_EmptyID(t *testing.T) {
 func TestDeleteVM_Success(t *testing.T) {
 	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodDelete, r.Method)
-		assert.Equal(t, "/vms/vm-123", r.URL.Path)
+		assert.Equal(t, "/vm/123", r.URL.Path)
 
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -908,7 +917,7 @@ func TestDeleteVM_Success(t *testing.T) {
 	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
-	err = client.DeleteVM(context.Background(), "vm-123")
+	err = client.DeleteVM(context.Background(), 123)
 	assert.NoError(t, err)
 }
 
@@ -929,7 +938,7 @@ func TestDeleteVM_AlreadyDeleted(t *testing.T) {
 	require.NoError(t, err)
 
 	// 404 should be treated as success (idempotent)
-	err = client.DeleteVM(context.Background(), "vm-already-deleted")
+	err = client.DeleteVM(context.Background(), 999)
 	assert.NoError(t, err, "DeleteVM should treat 404 as success")
 }
 
@@ -949,7 +958,7 @@ func TestDeleteVM_Conflict(t *testing.T) {
 	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
-	err = client.DeleteVM(context.Background(), "vm-running")
+	err = client.DeleteVM(context.Background(), 456)
 	assert.Error(t, err)
 
 	var apiErr *APIError
@@ -958,10 +967,13 @@ func TestDeleteVM_Conflict(t *testing.T) {
 }
 
 func TestDeleteVM_EmptyID(t *testing.T) {
-	client, err := NewClientWithCredentials("https://api.test", "test-client-id", "test-client-secret", nil)
+	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
-	err = client.DeleteVM(context.Background(), "")
+	err = client.DeleteVM(context.Background(), 0)
 	assert.Error(t, err)
 
 	var configErr *ConfigError
@@ -1055,14 +1067,20 @@ func TestAPIError_ServerError(t *testing.T) {
 // ============================================================================
 
 func TestGetBaseURL(t *testing.T) {
-	client, err := NewClientWithCredentials("https://api.test/v2", "test-client-id", "test-client-secret", nil)
+	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
-	assert.Equal(t, "https://api.test/v2", client.GetBaseURL())
+	assert.Equal(t, server.URL, client.GetBaseURL())
 }
 
 func TestSetUserAgent(t *testing.T) {
-	client, err := NewClientWithCredentials("https://api.test", "test-client-id", "test-client-secret", nil)
+	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {})
+	defer server.Close()
+
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	client.SetUserAgent("new-agent/2.0")
