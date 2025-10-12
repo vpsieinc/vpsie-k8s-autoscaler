@@ -47,7 +47,14 @@ clean:
 ## test: Run unit tests
 test:
 	@echo "Running tests..."
-	@go test -v -race -coverprofile=coverage.out ./...
+	@go test -v -race -coverprofile=coverage.out ./... 2>&1 | tee test-output.txt || true
+	@if grep -q "FAIL" test-output.txt; then \
+		echo "Tests failed"; \
+		rm -f test-output.txt; \
+		exit 1; \
+	fi
+	@rm -f test-output.txt
+	@echo "All tests passed"
 
 ## test-integration: Run integration tests
 test-integration:
