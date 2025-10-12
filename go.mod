@@ -1,6 +1,6 @@
 module github.com/vpsie/vpsie-k8s-autoscaler
 
-go 1.25.2
+go 1.22
 
 require (
 	github.com/stretchr/testify v1.9.0
