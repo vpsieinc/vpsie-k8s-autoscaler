@@ -11,7 +11,8 @@ GOBIN := $(GOBASE)/bin
 GOFILES := $(wildcard *.go)
 
 # Docker variables
-DOCKER_IMAGE := vpsie/k8s-autoscaler
+DOCKER_REGISTRY := ghcr.io
+DOCKER_IMAGE := $(DOCKER_REGISTRY)/vpsie/vpsie-k8s-autoscaler
 DOCKER_TAG ?= $(VERSION)
 
 # Kubernetes variables
@@ -73,12 +74,11 @@ fmt:
 vet:
 	@go vet ./...
 
-## generate: Generate code (CRDs, clients, mocks)
+## generate: Generate code (CRDs, DeepCopy methods)
 generate:
 	@echo "Generating code..."
-	@controller-gen object:headerFile="hack/boilerplate.go.txt" paths="./pkg/apis/..."
-	@controller-gen crd:crdVersions=v1 paths="./pkg/apis/..." output:crd:dir=deploy/manifests
-	@go generate ./...
+	@controller-gen object paths="./pkg/apis/autoscaler/v1alpha1/..."
+	@controller-gen crd paths="./pkg/apis/autoscaler/v1alpha1/..." output:crd:dir=./deploy/crds
 
 ## manifests: Generate Kubernetes manifests
 manifests:
@@ -88,12 +88,24 @@ manifests:
 ## docker-build: Build Docker image
 docker-build:
 	@echo "Building Docker image..."
-	@docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+	@docker build \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg COMMIT=$(COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG) \
+		-t $(DOCKER_IMAGE):latest \
+		.
 
 ## docker-push: Push Docker image
 docker-push:
 	@echo "Pushing Docker image..."
 	@docker push $(DOCKER_IMAGE):$(DOCKER_TAG)
+	@docker push $(DOCKER_IMAGE):latest
+
+## docker-login: Login to GitHub Container Registry
+docker-login:
+	@echo "Logging in to GitHub Container Registry..."
+	@echo $(GITHUB_TOKEN) | docker login $(DOCKER_REGISTRY) -u $(GITHUB_USER) --password-stdin
 
 ## kind-create: Create kind cluster for development
 kind-create:
@@ -114,12 +126,12 @@ kind-load:
 ## install: Install CRDs into cluster
 install:
 	@echo "Installing CRDs..."
-	@kubectl apply -f deploy/manifests/
+	@kubectl apply -f deploy/crds/
 
 ## uninstall: Uninstall CRDs from cluster
 uninstall:
 	@echo "Uninstalling CRDs..."
-	@kubectl delete -f deploy/manifests/
+	@kubectl delete -f deploy/crds/
 
 ## deploy: Deploy controller to cluster
 deploy: install

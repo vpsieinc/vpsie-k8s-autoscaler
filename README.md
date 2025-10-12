@@ -1,5 +1,10 @@
 # VPSie Kubernetes Node Autoscaler
 
+[![CI](https://github.com/vpsie/vpsie-k8s-autoscaler/actions/workflows/ci.yml/badge.svg)](https://github.com/vpsie/vpsie-k8s-autoscaler/actions/workflows/ci.yml)
+[![Docker](https://github.com/vpsie/vpsie-k8s-autoscaler/actions/workflows/docker.yml/badge.svg)](https://github.com/vpsie/vpsie-k8s-autoscaler/actions/workflows/docker.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/vpsie/vpsie-k8s-autoscaler)](https://goreportcard.com/report/github.com/vpsie/vpsie-k8s-autoscaler)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 Event-driven Kubernetes node autoscaler that dynamically provisions and optimizes nodes using the VPSie cloud platform.
 
 ## 🚧 Project Status
@@ -12,6 +17,7 @@ Event-driven Kubernetes node autoscaler that dynamically provisions and optimize
 - Comprehensive test coverage (81.5%)
 - CRD manifests and example configurations
 - Product Requirements Document
+- Docker images and CI/CD pipeline
 
 🚧 **In Progress:**
 - Controller implementation (see [NEXT_STEPS.md](NEXT_STEPS.md))
@@ -20,6 +26,31 @@ Event-driven Kubernetes node autoscaler that dynamically provisions and optimize
 - Event-driven autoscaling logic
 - Cost optimization engine
 - Helm charts and deployment manifests
+
+## 📦 Container Images
+
+Docker images are automatically built and published to GitHub Container Registry:
+
+```bash
+# Pull the latest image
+docker pull ghcr.io/vpsie/vpsie-k8s-autoscaler:latest
+
+# Pull a specific version
+docker pull ghcr.io/vpsie/vpsie-k8s-autoscaler:v0.1.0
+
+# Pull from main branch
+docker pull ghcr.io/vpsie/vpsie-k8s-autoscaler:main
+```
+
+**Available tags:**
+- `latest` - Latest stable release from main branch
+- `v*` - Semantic version tags (e.g., `v0.1.0`, `v0.2.0`)
+- `main` - Latest commit from main branch
+- `main-<sha>` - Specific commit from main branch
+
+**Supported architectures:**
+- `linux/amd64`
+- `linux/arm64`
 
 ## Features
 
