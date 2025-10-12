@@ -6,22 +6,22 @@ import (
 
 // VPS represents a Virtual Private Server instance from VPSie API
 type VPS struct {
-	ID           string    `json:"id"`
+	ID           int       `json:"id"` // API returns numeric ID
 	Name         string    `json:"name"`
 	Hostname     string    `json:"hostname"`
 	Status       string    `json:"status"` // running, stopped, suspended, etc.
 	CPU          int       `json:"cpu"`    // Number of CPU cores
 	RAM          int       `json:"ram"`    // RAM in MB
-	Disk         int       `json:"disk"`   // Disk size in GB
-	Bandwidth    int       `json:"bandwidth"`
-	IPAddress    string    `json:"ip_address"`
-	IPv6Address  string    `json:"ipv6_address"`
-	OfferingID   string    `json:"offering_id"`
-	DatacenterID string    `json:"datacenter_id"`
+	Disk         int       `json:"ssd"`    // Disk size in GB (API uses "ssd" field)
+	Bandwidth    int       `json:"traffic"` // API uses "traffic" field
+	IPAddress    string    `json:"default_ip"`    // API uses "default_ip"
+	IPv6Address  string    `json:"default_ipv6"`  // API uses "default_ipv6"
+	OfferingID   int       `json:"boxsize_id"` // API uses "boxsize_id"
+	DatacenterID int       `json:"datacenter_id"`
 	OSName       string    `json:"os_name"`
 	OSVersion    string    `json:"os_version"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	CreatedAt    time.Time `json:"created_on"` // API uses "created_on"
+	UpdatedAt    time.Time `json:"last_updated"`
 	Tags         []string  `json:"tags"`
 	Notes        string    `json:"notes"`
 }

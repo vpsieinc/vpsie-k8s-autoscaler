@@ -20,8 +20,8 @@ import (
 // Test Helpers
 // ============================================================================
 
-// createTestSecret creates a Kubernetes secret for testing
-func createTestSecret(name, namespace, token, url string) *corev1.Secret {
+// createTestSecret creates a Kubernetes secret for testing with OAuth credentials
+func createTestSecret(name, namespace, clientID, clientSecret, url string) *corev1.Secret {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -30,8 +30,12 @@ func createTestSecret(name, namespace, token, url string) *corev1.Secret {
 		Data: map[string][]byte{},
 	}
 
-	if token != "" {
-		secret.Data[SecretTokenKey] = []byte(token)
+	if clientID != "" {
+		secret.Data[SecretClientIDKey] = []byte(clientID)
+	}
+
+	if clientSecret != "" {
+		secret.Data[SecretClientSecretKey] = []byte(clientSecret)
 	}
 
 	if url != "" {
@@ -41,9 +45,22 @@ func createTestSecret(name, namespace, token, url string) *corev1.Secret {
 	return secret
 }
 
-// createTestServer creates a test HTTP server for mocking VPSie API
+// createTestServer creates a test HTTP server for mocking VPSie API with authentication
 func createTestServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
-	return httptest.NewServer(handler)
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Mock VPSie authentication endpoint
+		if r.URL.Path == TokenEndpoint {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(TokenResponse{
+				Token:     "mock-access-token-" + time.Now().Format("20060102150405"),
+				ExpiresIn: 3600,
+			})
+			return
+		}
+		// Delegate to custom handler for API endpoints
+		handler(w, r)
+	}))
 }
 
 // ============================================================================
@@ -55,7 +72,8 @@ func TestNewClient_Success(t *testing.T) {
 	secret := createTestSecret(
 		DefaultSecretName,
 		DefaultSecretNamespace,
-		"test-api-token-123",
+		"test-client-id",
+		"test-client-secret",
 		"https://api.vpsie.test/v2",
 	)
 
@@ -68,7 +86,9 @@ func TestNewClient_Success(t *testing.T) {
 	// Assertions
 	require.NoError(t, err)
 	assert.NotNil(t, client)
-	assert.Equal(t, "test-api-token-123", client.token)
+	assert.Equal(t, "test-client-id", client.clientID)
+	assert.Equal(t, "test-client-secret", client.clientSecret)
+	assert.NotEmpty(t, client.accessToken, "access token should be obtained")
 	assert.Equal(t, "https://api.vpsie.test/v2", client.baseURL)
 	assert.Equal(t, "vpsie-k8s-autoscaler/1.0", client.userAgent)
 }
@@ -77,7 +97,8 @@ func TestNewClient_WithCustomOptions(t *testing.T) {
 	secret := createTestSecret(
 		"custom-secret",
 		"custom-namespace",
-		"custom-token",
+		"custom-client-id",
+		"custom-client-secret",
 		"https://custom.api/v2",
 	)
 
@@ -94,7 +115,9 @@ func TestNewClient_WithCustomOptions(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, client)
-	assert.Equal(t, "custom-token", client.token)
+	assert.Equal(t, "custom-client-id", client.clientID)
+	assert.Equal(t, "custom-client-secret", client.clientSecret)
+	assert.NotEmpty(t, client.accessToken)
 	assert.Equal(t, "https://custom.api/v2", client.baseURL)
 	assert.Equal(t, "custom-agent/2.0", client.userAgent)
 }
@@ -104,7 +127,8 @@ func TestNewClient_DefaultURL(t *testing.T) {
 	secret := createTestSecret(
 		DefaultSecretName,
 		DefaultSecretNamespace,
-		"test-token",
+		"test-client-id",
+		"test-client-secret",
 		"", // No URL
 	)
 
@@ -134,15 +158,43 @@ func TestNewClient_SecretNotFound(t *testing.T) {
 	assert.Equal(t, DefaultSecretNamespace, secretErr.SecretNamespace)
 }
 
-func TestNewClient_MissingTokenKey(t *testing.T) {
-	// Secret without token key
+func TestNewClient_MissingClientIDKey(t *testing.T) {
+	// Secret without clientId key
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      DefaultSecretName,
 			Namespace: DefaultSecretNamespace,
 		},
 		Data: map[string][]byte{
-			// Missing token key
+			// Missing clientId key
+			SecretClientSecretKey: []byte("test-client-secret"),
+			SecretURLKey:          []byte("https://api.vpsie.test/v2"),
+		},
+	}
+
+	fakeClient := fake.NewSimpleClientset(secret)
+
+	ctx := context.Background()
+	client, err := NewClient(ctx, fakeClient, nil)
+
+	assert.Nil(t, client)
+	assert.Error(t, err)
+
+	var secretErr *SecretError
+	require.True(t, errors.As(err, &secretErr))
+	assert.Contains(t, secretErr.Reason, "does not contain 'clientId' key")
+}
+
+func TestNewClient_MissingClientSecretKey(t *testing.T) {
+	// Secret without clientSecret key
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      DefaultSecretName,
+			Namespace: DefaultSecretNamespace,
+		},
+		Data: map[string][]byte{
+			SecretClientIDKey: []byte("test-client-id"),
+			// Missing clientSecret key
 			SecretURLKey: []byte("https://api.vpsie.test/v2"),
 		},
 	}
@@ -157,19 +209,47 @@ func TestNewClient_MissingTokenKey(t *testing.T) {
 
 	var secretErr *SecretError
 	require.True(t, errors.As(err, &secretErr))
-	assert.Contains(t, secretErr.Reason, "does not contain 'token' key")
+	assert.Contains(t, secretErr.Reason, "does not contain 'clientSecret' key")
 }
 
-func TestNewClient_EmptyToken(t *testing.T) {
-	// Secret with empty token - need to manually create to set empty value
+func TestNewClient_EmptyClientID(t *testing.T) {
+	// Secret with empty clientId
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      DefaultSecretName,
 			Namespace: DefaultSecretNamespace,
 		},
 		Data: map[string][]byte{
-			SecretTokenKey: []byte(""), // Explicitly empty token
-			SecretURLKey:   []byte("https://api.vpsie.test/v2"),
+			SecretClientIDKey:     []byte(""), // Explicitly empty clientId
+			SecretClientSecretKey: []byte("test-client-secret"),
+			SecretURLKey:          []byte("https://api.vpsie.test/v2"),
+		},
+	}
+
+	fakeClient := fake.NewSimpleClientset(secret)
+
+	ctx := context.Background()
+	client, err := NewClient(ctx, fakeClient, nil)
+
+	assert.Nil(t, client)
+	assert.Error(t, err)
+
+	var secretErr *SecretError
+	require.True(t, errors.As(err, &secretErr))
+	assert.Contains(t, secretErr.Reason, "is empty")
+}
+
+func TestNewClient_EmptyClientSecret(t *testing.T) {
+	// Secret with empty clientSecret
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      DefaultSecretName,
+			Namespace: DefaultSecretNamespace,
+		},
+		Data: map[string][]byte{
+			SecretClientIDKey:     []byte("test-client-id"),
+			SecretClientSecretKey: []byte(""), // Explicitly empty clientSecret
+			SecretURLKey:          []byte("https://api.vpsie.test/v2"),
 		},
 	}
 
@@ -214,7 +294,8 @@ func TestNewClient_URLTrimming(t *testing.T) {
 			secret := createTestSecret(
 				DefaultSecretName,
 				DefaultSecretNamespace,
-				"test-token",
+				"test-client-id",
+				"test-client-secret",
 				tt.inputURL,
 			)
 
@@ -236,7 +317,8 @@ func TestNewClient_URLTrimming(t *testing.T) {
 func TestNewClientWithCredentials_Success(t *testing.T) {
 	client, err := NewClientWithCredentials(
 		"https://api.vpsie.test/v2",
-		"test-token-123",
+		"test-client-id",
+		"test-client-secret",
 		&ClientOptions{
 			RateLimit: 50,
 			UserAgent: "test-agent",
@@ -245,15 +327,18 @@ func TestNewClientWithCredentials_Success(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, client)
-	assert.Equal(t, "test-token-123", client.token)
+	assert.Equal(t, "test-client-id", client.clientID)
+	assert.Equal(t, "test-client-secret", client.clientSecret)
+	assert.NotEmpty(t, client.accessToken)
 	assert.Equal(t, "https://api.vpsie.test/v2", client.baseURL)
 	assert.Equal(t, "test-agent", client.userAgent)
 }
 
-func TestNewClientWithCredentials_EmptyToken(t *testing.T) {
+func TestNewClientWithCredentials_EmptyClientID(t *testing.T) {
 	client, err := NewClientWithCredentials(
 		"https://api.vpsie.test/v2",
-		"", // Empty token
+		"", // Empty client ID
+		"test-client-secret",
 		nil,
 	)
 
@@ -262,13 +347,30 @@ func TestNewClientWithCredentials_EmptyToken(t *testing.T) {
 
 	var configErr *ConfigError
 	require.True(t, errors.As(err, &configErr))
-	assert.Equal(t, "token", configErr.Field)
+	assert.Equal(t, "client_id", configErr.Field)
+}
+
+func TestNewClientWithCredentials_EmptyClientSecret(t *testing.T) {
+	client, err := NewClientWithCredentials(
+		"https://api.vpsie.test/v2",
+		"test-client-id",
+		"", // Empty client secret
+		nil,
+	)
+
+	assert.Nil(t, client)
+	assert.Error(t, err)
+
+	var configErr *ConfigError
+	require.True(t, errors.As(err, &configErr))
+	assert.Equal(t, "client_secret", configErr.Field)
 }
 
 func TestNewClientWithCredentials_DefaultURL(t *testing.T) {
 	client, err := NewClientWithCredentials(
 		"", // Empty URL
-		"test-token",
+		"test-client-id",
+		"test-client-secret",
 		nil,
 	)
 
@@ -294,7 +396,8 @@ func TestClient_RequestHeaders(t *testing.T) {
 	// Create client
 	client, err := NewClientWithCredentials(
 		server.URL,
-		"test-bearer-token",
+		"test-client-id",
+		"test-client-secret",
 		&ClientOptions{
 			UserAgent: "test-user-agent/1.0",
 		},
@@ -364,7 +467,7 @@ func TestClient_URLConstruction(t *testing.T) {
 			})
 			defer server.Close()
 
-			client, err := NewClientWithCredentials(server.URL, "token", nil)
+			client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 			require.NoError(t, err)
 
 			_ = tt.operation(client)
@@ -386,7 +489,8 @@ func TestClient_RateLimiting(t *testing.T) {
 	// Create client with rate limit
 	client, err := NewClientWithCredentials(
 		server.URL,
-		"token",
+		"test-client-id",
+		"test-client-secret",
 		&ClientOptions{
 			RateLimit: 100, // 100 per minute
 		},
@@ -419,7 +523,7 @@ func TestClient_ContextCancellation(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "token", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	// Create context that will be cancelled
@@ -440,7 +544,7 @@ func TestClient_ContextTimeout(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "token", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	// Create context with short timeout
@@ -496,7 +600,7 @@ func TestListVMs_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "token", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -521,7 +625,7 @@ func TestListVMs_EmptyList(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "token", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	vms, err := client.ListVMs(context.Background())
@@ -543,7 +647,7 @@ func TestListVMs_APIError(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "invalid-token", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	vms, err := client.ListVMs(context.Background())
@@ -605,7 +709,7 @@ func TestCreateVM_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "token", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	vm, err := client.CreateVM(context.Background(), req)
@@ -639,7 +743,7 @@ func TestCreateVM_DefaultHostname(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "token", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	_, err = client.CreateVM(context.Background(), req)
@@ -697,7 +801,7 @@ func TestCreateVM_ValidationErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client, err := NewClientWithCredentials("https://api.test", "token", nil)
+			client, err := NewClientWithCredentials("https://api.test", "test-client-id", "test-client-secret", nil)
 			require.NoError(t, err)
 
 			vm, err := client.CreateVM(context.Background(), tt.req)
@@ -740,7 +844,7 @@ func TestGetVM_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "token", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	vm, err := client.GetVM(context.Background(), "vm-123")
@@ -764,7 +868,7 @@ func TestGetVM_NotFound(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "token", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	vm, err := client.GetVM(context.Background(), "vm-nonexistent")
@@ -775,7 +879,7 @@ func TestGetVM_NotFound(t *testing.T) {
 }
 
 func TestGetVM_EmptyID(t *testing.T) {
-	client, err := NewClientWithCredentials("https://api.test", "token", nil)
+	client, err := NewClientWithCredentials("https://api.test", "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	vm, err := client.GetVM(context.Background(), "")
@@ -801,7 +905,7 @@ func TestDeleteVM_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "token", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	err = client.DeleteVM(context.Background(), "vm-123")
@@ -821,7 +925,7 @@ func TestDeleteVM_AlreadyDeleted(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "token", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	// 404 should be treated as success (idempotent)
@@ -842,7 +946,7 @@ func TestDeleteVM_Conflict(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "token", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	err = client.DeleteVM(context.Background(), "vm-running")
@@ -854,7 +958,7 @@ func TestDeleteVM_Conflict(t *testing.T) {
 }
 
 func TestDeleteVM_EmptyID(t *testing.T) {
-	client, err := NewClientWithCredentials("https://api.test", "token", nil)
+	client, err := NewClientWithCredentials("https://api.test", "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	err = client.DeleteVM(context.Background(), "")
@@ -882,7 +986,7 @@ func TestAPIError_Parsing(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "token", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	_, err = client.ListVMs(context.Background())
@@ -909,7 +1013,7 @@ func TestAPIError_RateLimit(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "token", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	_, err = client.ListVMs(context.Background())
@@ -929,7 +1033,7 @@ func TestAPIError_ServerError(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "token", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	_, err = client.ListVMs(context.Background())
@@ -945,54 +1049,20 @@ func TestAPIError_ServerError(t *testing.T) {
 // ============================================================================
 // UpdateCredentials Tests
 // ============================================================================
-
-func TestUpdateCredentials_Success(t *testing.T) {
-	client, err := NewClientWithCredentials("https://api.old", "old-token", nil)
-	require.NoError(t, err)
-
-	err = client.UpdateCredentials("new-token", "https://api.new")
-	require.NoError(t, err)
-
-	assert.Equal(t, "new-token", client.token)
-	assert.Equal(t, "https://api.new", client.baseURL)
-}
-
-func TestUpdateCredentials_EmptyToken(t *testing.T) {
-	client, err := NewClientWithCredentials("https://api.test", "token", nil)
-	require.NoError(t, err)
-
-	err = client.UpdateCredentials("", "https://api.new")
-	assert.Error(t, err)
-
-	var configErr *ConfigError
-	require.True(t, errors.As(err, &configErr))
-	assert.Equal(t, "token", configErr.Field)
-}
-
-func TestUpdateCredentials_OnlyToken(t *testing.T) {
-	client, err := NewClientWithCredentials("https://api.old", "old-token", nil)
-	require.NoError(t, err)
-
-	err = client.UpdateCredentials("new-token", "")
-	require.NoError(t, err)
-
-	assert.Equal(t, "new-token", client.token)
-	assert.Equal(t, "https://api.old", client.baseURL) // URL unchanged
-}
-
+// Note: UpdateCredentials removed in OAuth implementation - tokens are auto-refreshed
 // ============================================================================
 // Helper Method Tests
 // ============================================================================
 
 func TestGetBaseURL(t *testing.T) {
-	client, err := NewClientWithCredentials("https://api.test/v2", "token", nil)
+	client, err := NewClientWithCredentials("https://api.test/v2", "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, "https://api.test/v2", client.GetBaseURL())
 }
 
 func TestSetUserAgent(t *testing.T) {
-	client, err := NewClientWithCredentials("https://api.test", "token", nil)
+	client, err := NewClientWithCredentials("https://api.test", "test-client-id", "test-client-secret", nil)
 	require.NoError(t, err)
 
 	client.SetUserAgent("new-agent/2.0")

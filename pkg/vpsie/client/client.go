@@ -32,21 +32,33 @@ const (
 	// DefaultRateLimit is the default rate limit (requests per minute)
 	DefaultRateLimit = 100
 
-	// SecretTokenKey is the key name for the API token in the secret
-	SecretTokenKey = "token"
+	// DefaultTokenRefreshBuffer is the time before expiration to refresh the token
+	DefaultTokenRefreshBuffer = 5 * time.Minute
 
-	// SecretURLKey is the key name for the API URL in the secret
+	// SecretClientIDKey is the key name for the OAuth client ID in the secret
+	SecretClientIDKey = "clientId"
+
+	// SecretClientSecretKey is the key name for the OAuth client secret in the secret
+	SecretClientSecretKey = "clientSecret"
+
+	// SecretURLKey is the key name for the API URL in the secret (optional)
 	SecretURLKey = "url"
+
+	// TokenEndpoint is the VPSie authentication endpoint path
+	TokenEndpoint = "/auth/from/api"
 )
 
 // Client represents a VPSie API client
 type Client struct {
-	httpClient  *http.Client
-	rateLimiter *rate.Limiter
-	baseURL     string
-	token       string
-	userAgent   string
-	mu          sync.RWMutex
+	httpClient     *http.Client
+	rateLimiter    *rate.Limiter
+	baseURL        string
+	clientID       string
+	clientSecret   string
+	accessToken    string
+	tokenExpiresAt time.Time
+	userAgent      string
+	mu             sync.RWMutex
 }
 
 // ClientOptions represents options for creating a new Client
@@ -68,6 +80,30 @@ type ClientOptions struct {
 
 	// UserAgent is the user agent string to use in requests
 	UserAgent string
+
+	// TokenRefreshBuffer is the time before expiration to refresh the token
+	TokenRefreshBuffer time.Duration
+}
+
+// TokenResponse represents the authentication response from the VPSie API
+type TokenResponse struct {
+	AccessToken  AccessTokenInfo  `json:"accessToken"`
+	RefreshToken RefreshTokenInfo `json:"refreshToken"`
+	Error        bool             `json:"error,omitempty"`
+	Message      string           `json:"message,omitempty"`
+	Code         int              `json:"code,omitempty"`
+}
+
+// AccessTokenInfo contains the access token details
+type AccessTokenInfo struct {
+	Token   string `json:"token"`
+	Expires string `json:"expires"`
+}
+
+// RefreshTokenInfo contains the refresh token details
+type RefreshTokenInfo struct {
+	Token   string `json:"token"`
+	Expires string `json:"expires"`
 }
 
 // NewClient creates a new VPSie API client by reading credentials from a Kubernetes secret
@@ -99,16 +135,28 @@ func NewClient(ctx context.Context, clientset kubernetes.Interface, opts *Client
 		return nil, NewSecretError(opts.SecretName, opts.SecretNamespace, "failed to get secret", err)
 	}
 
-	// Extract token from secret
-	tokenBytes, ok := secret.Data[SecretTokenKey]
+	// Extract client ID from secret
+	clientIDBytes, ok := secret.Data[SecretClientIDKey]
 	if !ok {
 		return nil, NewSecretError(opts.SecretName, opts.SecretNamespace,
-			fmt.Sprintf("secret does not contain '%s' key", SecretTokenKey), nil)
+			fmt.Sprintf("secret does not contain '%s' key", SecretClientIDKey), nil)
 	}
-	token := string(tokenBytes)
-	if token == "" {
+	clientID := string(clientIDBytes)
+	if clientID == "" {
 		return nil, NewSecretError(opts.SecretName, opts.SecretNamespace,
-			fmt.Sprintf("secret key '%s' is empty", SecretTokenKey), nil)
+			fmt.Sprintf("secret key '%s' is empty", SecretClientIDKey), nil)
+	}
+
+	// Extract client secret from secret
+	clientSecretBytes, ok := secret.Data[SecretClientSecretKey]
+	if !ok {
+		return nil, NewSecretError(opts.SecretName, opts.SecretNamespace,
+			fmt.Sprintf("secret does not contain '%s' key", SecretClientSecretKey), nil)
+	}
+	clientSecret := string(clientSecretBytes)
+	if clientSecret == "" {
+		return nil, NewSecretError(opts.SecretName, opts.SecretNamespace,
+			fmt.Sprintf("secret key '%s' is empty", SecretClientSecretKey), nil)
 	}
 
 	// Extract API URL from secret (optional, use default if not provided)
@@ -140,23 +188,42 @@ func NewClient(ctx context.Context, clientset kubernetes.Interface, opts *Client
 	rps := float64(opts.RateLimit) / 60.0
 	rateLimiter := rate.NewLimiter(rate.Limit(rps), opts.RateLimit)
 
-	return &Client{
-		httpClient:  httpClient,
-		rateLimiter: rateLimiter,
-		baseURL:     baseURL,
-		token:       token,
-		userAgent:   opts.UserAgent,
-	}, nil
+	// Create client instance
+	client := &Client{
+		httpClient:   httpClient,
+		rateLimiter:  rateLimiter,
+		baseURL:      baseURL,
+		clientID:     clientID,
+		clientSecret: clientSecret,
+		userAgent:    opts.UserAgent,
+	}
+
+	// Obtain initial access token
+	if err := client.refreshToken(ctx); err != nil {
+		return nil, fmt.Errorf("failed to obtain initial access token: %w", err)
+	}
+
+	return client, nil
 }
 
-// NewClientWithCredentials creates a new VPSie API client with explicit credentials (for testing)
-func NewClientWithCredentials(baseURL, token string, opts *ClientOptions) (*Client, error) {
+// NewClientWithCredentials creates a new VPSie API client with explicit OAuth credentials (for testing)
+func NewClientWithCredentials(baseURL, clientID, clientSecret string, opts *ClientOptions) (*Client, error) {
+	ctx := context.Background()
+	return NewClientWithCredentialsAndContext(ctx, baseURL, clientID, clientSecret, opts)
+}
+
+// NewClientWithCredentialsAndContext creates a new VPSie API client with explicit OAuth credentials and context
+func NewClientWithCredentialsAndContext(ctx context.Context, baseURL, clientID, clientSecret string, opts *ClientOptions) (*Client, error) {
 	if opts == nil {
 		opts = &ClientOptions{}
 	}
 
-	if token == "" {
-		return nil, NewConfigError("token", "API token cannot be empty")
+	if clientID == "" {
+		return nil, NewConfigError("client_id", "Client ID cannot be empty")
+	}
+
+	if clientSecret == "" {
+		return nil, NewConfigError("client_secret", "Client secret cannot be empty")
 	}
 
 	baseURL = strings.TrimRight(baseURL, "/")
@@ -192,17 +259,122 @@ func NewClientWithCredentials(baseURL, token string, opts *ClientOptions) (*Clie
 	rps := float64(opts.RateLimit) / 60.0
 	rateLimiter := rate.NewLimiter(rate.Limit(rps), opts.RateLimit)
 
-	return &Client{
-		httpClient:  httpClient,
-		rateLimiter: rateLimiter,
-		baseURL:     baseURL,
-		token:       token,
-		userAgent:   opts.UserAgent,
-	}, nil
+	// Create client instance
+	client := &Client{
+		httpClient:   httpClient,
+		rateLimiter:  rateLimiter,
+		baseURL:      baseURL,
+		clientID:     clientID,
+		clientSecret: clientSecret,
+		userAgent:    opts.UserAgent,
+	}
+
+	// Obtain initial access token
+	if err := client.refreshToken(ctx); err != nil {
+		return nil, fmt.Errorf("failed to obtain initial access token: %w", err)
+	}
+
+	return client, nil
+}
+
+// refreshToken obtains a new access token using client credentials
+func (c *Client) refreshToken(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Prepare form data (application/x-www-form-urlencoded)
+	formData := fmt.Sprintf("clientId=%s&clientSecret=%s",
+		c.clientID,
+		c.clientSecret,
+	)
+
+	// Build token URL
+	tokenURL := c.baseURL + TokenEndpoint
+
+	// Create HTTP request (without using doRequest to avoid circular dependency)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(formData))
+	if err != nil {
+		return fmt.Errorf("failed to create token request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", c.userAgent)
+
+	// Perform request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to perform token request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read token response: %w", err)
+	}
+
+	// Parse token response
+	var tokenResp TokenResponse
+	if err := json.Unmarshal(bodyBytes, &tokenResp); err != nil {
+		return fmt.Errorf("failed to decode token response: %w", err)
+	}
+
+	// Check for API errors
+	if tokenResp.Error {
+		return fmt.Errorf("token request failed: %s (code: %d)", tokenResp.Message, tokenResp.Code)
+	}
+
+	// Check for non-200 status
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("token request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// Validate response
+	if tokenResp.AccessToken.Token == "" {
+		return fmt.Errorf("token response missing access token")
+	}
+
+	// Update client state
+	c.accessToken = tokenResp.AccessToken.Token
+
+	// Parse expiration time
+	if tokenResp.AccessToken.Expires != "" {
+		expiresAt, err := time.Parse(time.RFC3339, tokenResp.AccessToken.Expires)
+		if err == nil {
+			c.tokenExpiresAt = expiresAt
+		} else {
+			// If parsing fails, default to 1 hour from now
+			c.tokenExpiresAt = time.Now().Add(1 * time.Hour)
+		}
+	} else {
+		// Default to 1 hour if not specified
+		c.tokenExpiresAt = time.Now().Add(1 * time.Hour)
+	}
+
+	return nil
+}
+
+// ensureValidToken checks if the token is still valid and refreshes if needed
+func (c *Client) ensureValidToken(ctx context.Context) error {
+	c.mu.RLock()
+	needsRefresh := time.Now().Add(DefaultTokenRefreshBuffer).After(c.tokenExpiresAt)
+	c.mu.RUnlock()
+
+	if needsRefresh {
+		return c.refreshToken(ctx)
+	}
+
+	return nil
 }
 
 // doRequest performs an HTTP request with authentication and rate limiting
 func (c *Client) doRequest(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
+	// Ensure we have a valid access token
+	if err := c.ensureValidToken(ctx); err != nil {
+		return nil, fmt.Errorf("failed to ensure valid token: %w", err)
+	}
+
 	// Wait for rate limiter
 	if err := c.rateLimiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("rate limiter error: %w", err)
@@ -229,7 +401,78 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 
 	// Set headers
 	c.mu.RLock()
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Authorization", "Bearer "+c.accessToken)
+	req.Header.Set("User-Agent", c.userAgent)
+	c.mu.RUnlock()
+
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Accept", "application/json")
+
+	// Perform request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to perform request: %w", err)
+	}
+
+	// Check for HTTP errors
+	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+
+		// If we get 401 Unauthorized, try refreshing the token once
+		if resp.StatusCode == http.StatusUnauthorized {
+			if refreshErr := c.refreshToken(ctx); refreshErr == nil {
+				// Token refreshed successfully, retry the request
+				return c.doRequestWithToken(ctx, method, path, body)
+			}
+		}
+
+		// Try to parse error response
+		var errResp ErrorResponse
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		if err := json.Unmarshal(bodyBytes, &errResp); err == nil && errResp.Message != "" {
+			requestID := resp.Header.Get("X-Request-ID")
+			return nil, NewAPIErrorWithRequestID(resp.StatusCode, errResp.Error, errResp.Message, requestID)
+		}
+
+		// Fallback to generic error
+		requestID := resp.Header.Get("X-Request-ID")
+		return nil, NewAPIErrorWithRequestID(resp.StatusCode, http.StatusText(resp.StatusCode), string(bodyBytes), requestID)
+	}
+
+	return resp, nil
+}
+
+// doRequestWithToken performs an HTTP request with the current token (no retry on 401)
+func (c *Client) doRequestWithToken(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
+	// Wait for rate limiter
+	if err := c.rateLimiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limiter error: %w", err)
+	}
+
+	// Build URL
+	url := c.baseURL + path
+
+	// Marshal request body if provided
+	var bodyReader io.Reader
+	if body != nil {
+		bodyBytes, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request body: %w", err)
+		}
+		bodyReader = bytes.NewReader(bodyBytes)
+	}
+
+	// Create request
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	c.mu.RLock()
+	req.Header.Set("Authorization", "Bearer "+c.accessToken)
 	req.Header.Set("User-Agent", c.userAgent)
 	c.mu.RUnlock()
 
@@ -309,24 +552,6 @@ func (c *Client) delete(ctx context.Context, path string) error {
 	return nil
 }
 
-// UpdateCredentials updates the API credentials (useful for credential rotation)
-func (c *Client) UpdateCredentials(token, baseURL string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if token == "" {
-		return NewConfigError("token", "API token cannot be empty")
-	}
-
-	c.token = token
-
-	if baseURL != "" {
-		c.baseURL = strings.TrimRight(baseURL, "/")
-	}
-
-	return nil
-}
-
 // GetBaseURL returns the current base URL
 func (c *Client) GetBaseURL() string {
 	c.mu.RLock()
@@ -347,7 +572,7 @@ func (c *Client) SetUserAgent(userAgent string) {
 
 // ListVMs retrieves a list of all VPS instances associated with the account.
 //
-// This method performs a GET request to /vms and returns all VPS instances.
+// This method performs a GET request to /vm and returns all VPS instances.
 // The context can be used to cancel the request or set a timeout.
 //
 // Example usage:
@@ -368,8 +593,8 @@ func (c *Client) SetUserAgent(userAgent string) {
 func (c *Client) ListVMs(ctx context.Context) ([]VPS, error) {
 	var response ListVPSResponse
 
-	// Perform GET request to /vms endpoint
-	if err := c.get(ctx, "/vms", &response); err != nil {
+	// Perform GET request to /vm endpoint
+	if err := c.get(ctx, "/vm", &response); err != nil {
 		return nil, fmt.Errorf("failed to list VMs: %w", err)
 	}
 
@@ -378,7 +603,7 @@ func (c *Client) ListVMs(ctx context.Context) ([]VPS, error) {
 
 // CreateVM creates a new VPS instance with the specified configuration.
 //
-// This method performs a POST request to /vms with the provided configuration.
+// This method performs a POST request to /vm with the provided configuration.
 // The request includes CPU, RAM, disk size, datacenter, OS image, and other parameters.
 // The context can be used to cancel the request or set a timeout.
 //
@@ -439,8 +664,8 @@ func (c *Client) CreateVM(ctx context.Context, req CreateVPSRequest) (*VPS, erro
 
 	var vps VPS
 
-	// Perform POST request to /vms endpoint
-	if err := c.post(ctx, "/vms", req, &vps); err != nil {
+	// Perform POST request to /vm endpoint
+	if err := c.post(ctx, "/vm", req, &vps); err != nil {
 		return nil, fmt.Errorf("failed to create VM '%s': %w", req.Name, err)
 	}
 
@@ -449,7 +674,7 @@ func (c *Client) CreateVM(ctx context.Context, req CreateVPSRequest) (*VPS, erro
 
 // GetVM retrieves detailed information about a specific VPS instance.
 //
-// This method performs a GET request to /vms/{id} and returns the full VPS details
+// This method performs a GET request to /vm/{id} and returns the full VPS details
 // including status, IP addresses, resource allocation, and metadata.
 // The context can be used to cancel the request or set a timeout.
 //
@@ -469,17 +694,17 @@ func (c *Client) CreateVM(ctx context.Context, req CreateVPSRequest) (*VPS, erro
 //   - *VPS: The VPS instance with full details
 //   - error: An error if the VM is not found, the request fails, or the API returns an error
 //     Use IsNotFound(err) to check if the error is a 404 Not Found error
-func (c *Client) GetVM(ctx context.Context, vmID string) (*VPS, error) {
-	if vmID == "" {
+func (c *Client) GetVM(ctx context.Context, vmID int) (*VPS, error) {
+	if vmID == 0 {
 		return nil, NewConfigError("vm_id", "VM ID is required")
 	}
 
 	var vps VPS
 
-	// Perform GET request to /vms/{id} endpoint
-	path := fmt.Sprintf("/vms/%s", vmID)
+	// Perform GET request to /vm/{id} endpoint
+	path := fmt.Sprintf("/vm/%d", vmID)
 	if err := c.get(ctx, path, &vps); err != nil {
-		return nil, fmt.Errorf("failed to get VM '%s': %w", vmID, err)
+		return nil, fmt.Errorf("failed to get VM %d: %w", vmID, err)
 	}
 
 	return &vps, nil
@@ -487,7 +712,7 @@ func (c *Client) GetVM(ctx context.Context, vmID string) (*VPS, error) {
 
 // DeleteVM deletes a VPS instance.
 //
-// This method performs a DELETE request to /vms/{id} to permanently delete the VPS.
+// This method performs a DELETE request to /vm/{id} to permanently delete the VPS.
 // The deletion is asynchronous - the API will accept the request and the VPS will be
 // deleted in the background. The context can be used to cancel the request or set a timeout.
 //
@@ -520,13 +745,13 @@ func (c *Client) GetVM(ctx context.Context, vmID string) (*VPS, error) {
 // Returns:
 //   - error: An error if the request fails or the API returns an error (except 404)
 //     Returns nil if the VM is successfully deleted or already doesn't exist (404)
-func (c *Client) DeleteVM(ctx context.Context, vmID string) error {
-	if vmID == "" {
+func (c *Client) DeleteVM(ctx context.Context, vmID int) error {
+	if vmID == 0 {
 		return NewConfigError("vm_id", "VM ID is required")
 	}
 
-	// Perform DELETE request to /vms/{id} endpoint
-	path := fmt.Sprintf("/vms/%s", vmID)
+	// Perform DELETE request to /vm/{id} endpoint
+	path := fmt.Sprintf("/vm/%d", vmID)
 	err := c.delete(ctx, path)
 
 	// If the VM is not found (404), consider it a success since the VM is already deleted
