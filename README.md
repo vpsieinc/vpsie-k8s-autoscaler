@@ -9,23 +9,30 @@ Event-driven Kubernetes node autoscaler that dynamically provisions and optimize
 
 ## 🚧 Project Status
 
-**Current Phase:** Foundation Implementation (v0.1.0-alpha)
+**Current Phase:** Foundation Complete, Controller Implementation Ready (v0.1.0-alpha)
 
 ✅ **Completed:**
-- VPSie API client with OAuth 2.0 authentication
-- Custom Resource Definitions (NodeGroup, VPSieNode)
-- Comprehensive test coverage (81.5%)
+- VPSie API client with custom authentication and automatic token refresh
+- Custom Resource Definitions (NodeGroup, VPSieNode) with OpenAPI v3 validation
+- Comprehensive test coverage (72 tests, 81.5% coverage)
 - CRD manifests and example configurations
-- Product Requirements Document
-- Docker images and CI/CD pipeline
+- Complete documentation (PRD, API reference, development guide)
+- Docker multi-arch images (amd64, arm64) published to ghcr.io
+- CI/CD pipeline with automated testing, linting, and image builds
+- GitHub Actions workflows fully configured and passing
 
-🚧 **In Progress:**
-- Controller implementation (see [NEXT_STEPS.md](NEXT_STEPS.md))
+🚧 **Ready to Start:**
+- Phase 2: Controller implementation (see [NEXT_STEPS.md](NEXT_STEPS.md))
+  - Controller scaffold with manager setup
+  - NodeGroup controller with reconciliation loop
+  - VPSieNode controller with lifecycle management
 
-📋 **Planned:**
+📋 **Planned (Phases 3-5):**
 - Event-driven autoscaling logic
+- Scale-down with utilization monitoring
 - Cost optimization engine
 - Helm charts and deployment manifests
+- Prometheus metrics and observability
 
 ## 📦 Container Images
 
@@ -52,13 +59,26 @@ docker pull ghcr.io/vpsie/vpsie-k8s-autoscaler:main
 - `linux/amd64`
 - `linux/arm64`
 
+## Recent Updates
+
+### October 2025 - Foundation Phase Complete ✅
+- **Fixed CI/CD Pipeline**: Resolved Go version mismatch and duplicate workflow files
+- **Authentication**: Implemented VPSie custom authentication with automatic token refresh
+- **Multi-arch Docker Images**: Automated builds for linux/amd64 and linux/arm64
+- **Documentation**: Complete API reference, development guide, and migration docs
+- **Test Coverage**: 72 passing tests with 81.5% coverage, zero failures
+
+All CI/CD workflows are now passing, and the project is ready for Phase 2 controller implementation.
+
 ## Features
 
 ### Implemented ✅
-- 🔐 **VPSie API Integration:** OAuth 2.0 client with automatic token refresh
+- 🔐 **VPSie API Integration:** Custom authentication with automatic token refresh (RFC3339 expiry)
 - 📦 **Custom Resources:** NodeGroup and VPSieNode CRDs for declarative management
-- 🧪 **Comprehensive Testing:** 74 tests with 81.5% coverage
+- 🧪 **Comprehensive Testing:** 72 tests with 81.5% coverage, fully automated in CI
 - 📝 **Full OpenAPI Validation:** Kubernetes-native validation with kubebuilder markers
+- 🐳 **Container Images:** Multi-arch Docker images published to ghcr.io
+- 🔄 **CI/CD Pipeline:** Automated testing, linting, building, and image publishing
 
 ### Planned 🚧
 - 🚀 **Event-Driven Scaling:** React to pod scheduling failures and resource shortages
