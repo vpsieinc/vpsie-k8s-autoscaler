@@ -40,6 +40,31 @@
 
 **Foundation Status:** ✅ **COMPLETE** - Ready for controller implementation!
 
+5. **Observability Framework** (`pkg/metrics/`, `pkg/logging/`, `pkg/events/`)
+   - ✅ Prometheus metrics package with 22 metrics (311 lines)
+     - NodeGroup metrics (desired/current/ready/min/max nodes)
+     - VPSieNode metrics (phase tracking, transitions, provisioning/termination duration)
+     - Controller metrics (reconcile duration/errors/totals)
+     - VPSie API metrics (requests/duration/errors)
+     - Scaling metrics (scale-up/down operations and node counts)
+     - Pod metrics (unschedulable/pending counts)
+     - Event emission metrics
+   - ✅ Structured logging package with zap (234 lines)
+     - Request ID tracking (UUID v4)
+     - Scaling decision logging
+     - API operation logging
+     - Node lifecycle logging
+     - Phase transition logging
+     - Reconciliation logging
+   - ✅ Kubernetes event emitter (308 lines)
+     - 20+ event types for NodeGroup and VPSieNode
+     - Automatic metrics recording for all events
+   - ✅ VPSie API client fully instrumented with metrics and logging
+   - ⏳ Controller integration pending (NodeGroup, VPSieNode, Event Watcher)
+   - ✅ Comprehensive documentation (OBSERVABILITY.md - 409 lines)
+
+**Observability Status:** ✅ **FRAMEWORK COMPLETE** - Ready for controller integration!
+
 ## Phase 2: Controller Implementation
 
 ### Overview
@@ -443,31 +468,90 @@ Implement the core Kubernetes controller that watches NodeGroup and VPSieNode re
    - [ ] Create `deploy/kustomize/base/`
    - [ ] Create overlays for different environments (dev, staging, prod)
 
-### Priority 7: Observability
+### Priority 7: Observability ✅ Framework Complete
 
-#### Tasks:
+**Status:** Observability framework fully implemented and documented. Controller integration pending.
 
-1. **Metrics**
-   - [ ] Create `pkg/metrics/metrics.go`
-   - [ ] Expose Prometheus metrics endpoint
-   - [ ] Add controller-specific metrics:
-     - `nodegroup_desired_nodes{nodegroup="..."}`
-     - `nodegroup_current_nodes{nodegroup="..."}`
-     - `nodegroup_ready_nodes{nodegroup="..."}`
-     - `vpsienode_phase{phase="..."}`
-     - `controller_reconcile_duration_seconds{controller="..."}`
-     - `controller_reconcile_errors_total{controller="..."}`
-     - `vpsie_api_requests_total{method="...", status="..."}`
-     - `vpsie_api_request_duration_seconds{method="..."}`
+#### Completed Tasks:
 
-2. **Structured Logging**
-   - [ ] Update `pkg/log/logger.go` with controller-runtime integration
-   - [ ] Add request ID tracking
-   - [ ] Log level configuration via flags
+1. **Metrics** ✅
+   - ✅ Created `pkg/metrics/metrics.go` with 22 comprehensive metrics
+   - ✅ Metrics registration with controller-runtime
+   - ✅ All controller-specific metrics implemented:
+     - ✅ `nodegroup_desired_nodes{nodegroup, namespace}`
+     - ✅ `nodegroup_current_nodes{nodegroup, namespace}`
+     - ✅ `nodegroup_ready_nodes{nodegroup, namespace}`
+     - ✅ `nodegroup_min_nodes{nodegroup, namespace}`
+     - ✅ `nodegroup_max_nodes{nodegroup, namespace}`
+     - ✅ `vpsienode_phase{phase, nodegroup, namespace}`
+     - ✅ `vpsienode_phase_transitions_total{from_phase, to_phase, nodegroup, namespace}`
+     - ✅ `controller_reconcile_duration_seconds{controller}` (histogram)
+     - ✅ `controller_reconcile_errors_total{controller, error_type}`
+     - ✅ `controller_reconcile_total{controller, result}`
+     - ✅ `vpsie_api_requests_total{method, status}`
+     - ✅ `vpsie_api_request_duration_seconds{method}` (histogram)
+     - ✅ `vpsie_api_errors_total{method, error_type}`
+     - ✅ `scale_up_total{nodegroup, namespace}`
+     - ✅ `scale_down_total{nodegroup, namespace}`
+     - ✅ `scale_up_nodes_added{nodegroup, namespace}` (histogram)
+     - ✅ `scale_down_nodes_removed{nodegroup, namespace}` (histogram)
+     - ✅ `unschedulable_pods_total{constraint, namespace}`
+     - ✅ `pending_pods_current{namespace}`
+     - ✅ `events_emitted_total{event_type, reason, object_kind}`
+   - ✅ Created `pkg/metrics/recorder.go` with helper functions for recording metrics
+
+2. **Structured Logging** ✅
+   - ✅ Created `pkg/logging/logger.go` with zap integration
+   - ✅ Request ID tracking with UUID v4 (WithRequestID, GetRequestID)
+   - ✅ Comprehensive logging functions:
+     - ✅ LogScaleUpDecision / LogScaleDownDecision
+     - ✅ LogAPICall / LogAPIResponse / LogAPIError
+     - ✅ LogNodeProvisioningStart/Complete/Failed
+     - ✅ LogNodeTerminationStart/Complete/Failed
+     - ✅ LogPhaseTransition
+     - ✅ LogUnschedulablePods
+     - ✅ LogReconciliationStart/Complete/Error
+   - ⏳ Log level configuration via flags (pending - will be added to controller main.go)
+
+3. **Kubernetes Events** ✅
+   - ✅ Created `pkg/events/emitter.go` with EventEmitter
+   - ✅ 20+ event types for NodeGroup and VPSieNode lifecycle
+   - ✅ Automatic metrics recording for all emitted events
+   - ✅ Event reasons:
+     - ✅ NodeGroup: ScaleUpTriggered/Completed/Failed, ScaleDownTriggered/Completed/Failed
+     - ✅ VPSieNode: NodeProvisioning/Provisioned/ProvisioningFailed, NodeJoining/Ready/JoinFailed
+     - ✅ VPSieNode: NodeTerminating/Terminated/TerminationFailed, NodeDraining/Drained/DrainFailed
+     - ✅ VPS: VPSCreated/CreateFailed, VPSDeleted/DeleteFailed
+     - ✅ Pods: UnschedulablePods
+
+4. **VPSie API Client Integration** ✅
+   - ✅ Fully instrumented with metrics (request duration, counts, errors)
+   - ✅ Debug logging for all API calls and responses
+   - ✅ Error logging with full context
+   - ✅ Request ID tracking throughout request lifecycle
+
+5. **Documentation** ✅
+   - ✅ Created comprehensive OBSERVABILITY.md (409 lines)
+   - ✅ Sample Prometheus queries and alerts
+   - ✅ Recommended Grafana dashboard panels
+   - ✅ Integration guide and best practices
+
+#### Pending Tasks:
+
+1. **Controller Integration** ⏳
+   - [ ] Integrate metrics into NodeGroup controller (reconciliation, scaling operations)
+   - [ ] Integrate metrics into VPSieNode controller (phase tracking, provisioning/termination duration)
+   - [ ] Integrate metrics into Event Watcher (unschedulable pod detection)
+   - [ ] Add event emission to controllers (scale-up/down, provisioning, termination)
+   - [ ] Add structured logging to all controller operations
+
+2. **Metrics Endpoint** ⏳
+   - [ ] Expose Prometheus metrics endpoint in controller (via controller-runtime)
+   - [ ] Add --metrics-addr flag to controller
 
 3. **Dashboards** (Optional)
-   - [ ] Create Grafana dashboard JSON
-   - [ ] Create alert rules for Prometheus
+   - [ ] Create Grafana dashboard JSON (deploy/grafana/autoscaler-dashboard.json)
+   - [ ] Create Prometheus alert rule templates (deploy/prometheus/alerts.yaml)
 
 ### Priority 8: Documentation
 

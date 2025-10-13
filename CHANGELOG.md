@@ -7,12 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+#### Observability Framework
+- Comprehensive Prometheus metrics package (`pkg/metrics/`)
+  - 22 metrics across 7 categories (NodeGroup, VPSieNode, Controller, API, Scaling, Pods, Events)
+  - Histograms for duration tracking (reconciliation, API requests, node provisioning/termination)
+  - Counters for operations and errors
+  - Gauges for current state
+  - Helper functions in `recorder.go` for easy metric recording
+- Structured logging package (`pkg/logging/`)
+  - zap logger integration with structured fields
+  - Request ID tracking (UUID v4) for distributed tracing
+  - Comprehensive logging functions for scaling, API, nodes, phases, reconciliation
+  - ISO8601 time encoding and caller info
+- Kubernetes event emitter (`pkg/events/`)
+  - 20+ event types for NodeGroup and VPSieNode lifecycle
+  - Automatic metrics recording for all emitted events
+  - Normal and Warning event types
+- VPSie API client observability integration
+  - Metrics tracking for all API methods (GET, POST, PUT, DELETE)
+  - Request duration histograms (10ms to 40s buckets)
+  - Error categorization (unauthorized, forbidden, rate_limited, etc.)
+  - Debug logging for API calls and responses
+  - Error logging with full context
+- Comprehensive observability documentation (OBSERVABILITY.md - 409 lines)
+  - All metrics documented with labels and purposes
+  - Sample Prometheus queries and alert rules
+  - Grafana dashboard recommendations
+  - Integration guide and best practices
+
 ### Phase 2: Controller Implementation (Planned)
 - Controller manager with leader election
 - NodeGroup controller with reconciliation loop
 - VPSieNode controller with lifecycle management
 - Event-driven scale-up logic
 - Safe scale-down with utilization monitoring
+- Integration of observability framework into controllers
 
 ## [0.1.0-alpha] - 2025-10-12
 

@@ -16,10 +16,11 @@ Event-driven Kubernetes node autoscaler that dynamically provisions and optimize
 - Custom Resource Definitions (NodeGroup, VPSieNode) with OpenAPI v3 validation
 - Comprehensive test coverage (72 tests, 81.5% coverage)
 - CRD manifests and example configurations
-- Complete documentation (PRD, API reference, development guide)
+- Complete documentation (PRD, API reference, development guide, observability guide)
 - Docker multi-arch images (amd64, arm64) published to ghcr.io
 - CI/CD pipeline with automated testing, linting, and image builds
 - GitHub Actions workflows fully configured and passing
+- Comprehensive observability framework (metrics, logging, events)
 
 🚧 **Ready to Start:**
 - Phase 2: Controller implementation (see [NEXT_STEPS.md](NEXT_STEPS.md))
@@ -65,8 +66,9 @@ docker pull ghcr.io/vpsie/vpsie-k8s-autoscaler:main
 - **Fixed CI/CD Pipeline**: Resolved Go version mismatch and duplicate workflow files
 - **Authentication**: Implemented VPSie custom authentication with automatic token refresh
 - **Multi-arch Docker Images**: Automated builds for linux/amd64 and linux/arm64
-- **Documentation**: Complete API reference, development guide, and migration docs
+- **Documentation**: Complete API reference, development guide, observability guide, and migration docs
 - **Test Coverage**: 72 passing tests with 81.5% coverage, zero failures
+- **Observability Framework**: Comprehensive metrics (22 Prometheus metrics), structured logging (zap), and Kubernetes events
 
 All CI/CD workflows are now passing, and the project is ready for Phase 2 controller implementation.
 
@@ -79,6 +81,7 @@ All CI/CD workflows are now passing, and the project is ready for Phase 2 contro
 - 📝 **Full OpenAPI Validation:** Kubernetes-native validation with kubebuilder markers
 - 🐳 **Container Images:** Multi-arch Docker images published to ghcr.io
 - 🔄 **CI/CD Pipeline:** Automated testing, linting, building, and image publishing
+- 📊 **Observability Framework:** 22 Prometheus metrics, structured logging (zap), Kubernetes events
 
 ### Planned 🚧
 - 🚀 **Event-Driven Scaling:** React to pod scheduling failures and resource shortages
@@ -206,6 +209,7 @@ vpsie-k8s-autoscaler/
 ## Documentation
 
 - **[NEXT_STEPS.md](NEXT_STEPS.md)** - Implementation roadmap and next steps
+- **[OBSERVABILITY.md](OBSERVABILITY.md)** - Metrics, logging, and events guide
 - **[Product Requirements Document](docs/PRD.md)** - Complete requirements and architecture
 - **[CRD Examples](deploy/examples/)** - NodeGroup and VPSieNode examples
 - **[API Client Documentation](pkg/vpsie/client/)** - VPSie API integration

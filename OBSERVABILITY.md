@@ -252,38 +252,65 @@ emitter.EmitVPSCreated(vpsieNode, vpsID)
 
 ## Integration
 
-### VPSie API Client
+### VPSie API Client ✅ Complete
 
-The VPSie API client automatically tracks:
+The VPSie API client is fully instrumented with comprehensive observability:
 
 ✅ **Metrics:**
 - API request duration for all methods (GET, POST, PUT, DELETE)
-- API request counts by status code
-- API errors by type
+  - Histogram with buckets optimized for API latency (10ms to 40s)
+- API request counts by method and HTTP status code
+- API errors categorized by type (unauthorized, forbidden, not_found, rate_limited, server_error, client_error, request_failed)
 
 ✅ **Logging:**
 - Debug logs for all API calls (method, endpoint, request ID)
 - Debug logs for all API responses (status code, duration, request ID)
 - Error logs for API failures (status code, error message, request ID)
+- Request ID tracking throughout request lifecycle
 
-### Controllers (To Be Integrated)
+✅ **Integration Details:**
+- Added logger field to Client struct with optional Logger option
+- Instrumented doRequest() method with start time tracking
+- Request ID retrieval from context
+- Success/error metrics recording
+- Error categorization for metrics
+- Uses no-op logger if none provided (backward compatible)
+
+### Controllers ⏳ Pending Integration
 
 **NodeGroup Controller** - Will track:
-- Reconciliation duration and errors
-- NodeGroup state metrics
-- Scale-up/down operations
-- Events for scaling operations
+- Reconciliation duration and errors (using RecordReconcileDuration, RecordReconcileError, RecordReconcileResult)
+- NodeGroup state metrics (using RecordNodeGroupMetrics)
+- Scale-up/down operations (using RecordScaleUp, RecordScaleDown)
+- Events for scaling operations (using EventEmitter.EmitScaleUpTriggered, etc.)
+- Structured logging for all reconciliation steps
 
 **VPSieNode Controller** - Will track:
 - Reconciliation duration and errors
-- Phase distribution and transitions
-- Node provisioning/termination duration
-- Events for node lifecycle
+- Phase distribution and transitions (using RecordVPSieNodePhase, RecordPhaseTransition)
+- Node provisioning/termination duration (using RecordNodeProvisioningDuration, RecordNodeTerminationDuration)
+- Events for node lifecycle (using EventEmitter.EmitNodeProvisioning, EmitNodeReady, etc.)
+- Structured logging for phase transitions and operations
 
 **Event Watcher** - Will track:
-- Unschedulable pod detection
-- Pending pod counts
-- Events for scheduling issues
+- Unschedulable pod detection (using RecordUnschedulablePod)
+- Pending pod counts (using RecordPendingPods)
+- Events for scheduling issues (using EventEmitter.EmitUnschedulablePods)
+- Structured logging for scheduling failures
+
+### Framework Status Summary
+
+| Component | Metrics | Logging | Events | Status |
+|-----------|---------|---------|--------|--------|
+| VPSie API Client | ✅ | ✅ | N/A | ✅ Complete |
+| NodeGroup Controller | ⏳ | ⏳ | ⏳ | ⏳ Pending |
+| VPSieNode Controller | ⏳ | ⏳ | ⏳ | ⏳ Pending |
+| Event Watcher | ⏳ | ⏳ | ⏳ | ⏳ Pending |
+
+**Legend:**
+- ✅ Complete - Fully implemented and integrated
+- ⏳ Pending - Framework ready, integration straightforward with helper functions available
+- N/A - Not applicable for this component
 
 ## Prometheus Integration
 
