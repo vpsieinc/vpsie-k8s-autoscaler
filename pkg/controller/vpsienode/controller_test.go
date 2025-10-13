@@ -28,8 +28,8 @@ func TestPendingPhaseTransition(t *testing.T) {
 
 	vn := &v1alpha1.VPSieNode{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-vn",
-			Namespace: "default",
+			Name:       "test-vn",
+			Namespace:  "default",
 			Finalizers: []string{FinalizerName},
 		},
 		Spec: v1alpha1.VPSieNodeSpec{
@@ -89,8 +89,8 @@ func TestProvisioningPhaseTransition(t *testing.T) {
 
 	vn := &v1alpha1.VPSieNode{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-vn",
-			Namespace: "default",
+			Name:       "test-vn",
+			Namespace:  "default",
 			Finalizers: []string{FinalizerName},
 		},
 		Spec: v1alpha1.VPSieNodeSpec{
@@ -167,8 +167,8 @@ func TestProvisioningPhaseWithExistingVPS(t *testing.T) {
 
 	vn := &v1alpha1.VPSieNode{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-vn",
-			Namespace: "default",
+			Name:       "test-vn",
+			Namespace:  "default",
 			Finalizers: []string{FinalizerName},
 		},
 		Spec: v1alpha1.VPSieNodeSpec{
@@ -245,8 +245,8 @@ func TestProvisionedPhaseTransition(t *testing.T) {
 
 	vn := &v1alpha1.VPSieNode{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-vn",
-			Namespace: "default",
+			Name:       "test-vn",
+			Namespace:  "default",
 			Finalizers: []string{FinalizerName},
 		},
 		Spec: v1alpha1.VPSieNodeSpec{
@@ -308,8 +308,8 @@ func TestJoiningPhaseTransitionWithNode(t *testing.T) {
 
 	vn := &v1alpha1.VPSieNode{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-vn",
-			Namespace: "default",
+			Name:       "test-vn",
+			Namespace:  "default",
 			Finalizers: []string{FinalizerName},
 		},
 		Spec: v1alpha1.VPSieNodeSpec{
@@ -401,8 +401,8 @@ func TestJoiningPhaseWaitingForNode(t *testing.T) {
 
 	vn := &v1alpha1.VPSieNode{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-vn",
-			Namespace: "default",
+			Name:       "test-vn",
+			Namespace:  "default",
 			Finalizers: []string{FinalizerName},
 		},
 		Spec: v1alpha1.VPSieNodeSpec{
@@ -465,8 +465,8 @@ func TestProvisioningTimeout(t *testing.T) {
 
 	vn := &v1alpha1.VPSieNode{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-vn",
-			Namespace: "default",
+			Name:       "test-vn",
+			Namespace:  "default",
 			Finalizers: []string{FinalizerName},
 		},
 		Spec: v1alpha1.VPSieNodeSpec{
@@ -540,8 +540,8 @@ func TestJoiningTimeout(t *testing.T) {
 
 	vn := &v1alpha1.VPSieNode{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-vn",
-			Namespace: "default",
+			Name:       "test-vn",
+			Namespace:  "default",
 			Finalizers: []string{FinalizerName},
 		},
 		Spec: v1alpha1.VPSieNodeSpec{
@@ -604,8 +604,8 @@ func TestVPSNotFoundError(t *testing.T) {
 
 	vn := &v1alpha1.VPSieNode{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-vn",
-			Namespace: "default",
+			Name:       "test-vn",
+			Namespace:  "default",
 			Finalizers: []string{FinalizerName},
 		},
 		Spec: v1alpha1.VPSieNodeSpec{

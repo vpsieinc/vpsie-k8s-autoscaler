@@ -34,11 +34,11 @@ func TestTerminationFlow(t *testing.T) {
 			DeletionTimestamp: &metav1.Time{Time: time.Now()}, // Deletion requested
 		},
 		Spec: v1alpha1.VPSieNodeSpec{
-			InstanceType:      "offering-1",
-			NodeGroupName:     "test-ng",
-			DatacenterID:      "dc-1",
-			VPSieInstanceID:   1000,
-			NodeName:          "test-node",
+			InstanceType:    "offering-1",
+			NodeGroupName:   "test-ng",
+			DatacenterID:    "dc-1",
+			VPSieInstanceID: 1000,
+			NodeName:        "test-node",
 		},
 		Status: v1alpha1.VPSieNodeStatus{
 			Phase:    v1alpha1.VPSieNodePhaseReady,

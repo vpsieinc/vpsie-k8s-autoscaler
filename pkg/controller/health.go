@@ -12,13 +12,13 @@ import (
 
 // HealthChecker provides health checking functionality for the controller
 type HealthChecker struct {
-	vpsieClient      *client.Client
-	mu               sync.RWMutex
-	healthy          bool
-	ready            bool
-	lastCheck        time.Time
-	lastError        error
-	checkInterval    time.Duration
+	vpsieClient       *client.Client
+	mu                sync.RWMutex
+	healthy           bool
+	ready             bool
+	lastCheck         time.Time
+	lastError         error
+	checkInterval     time.Duration
 	shutdownInitiated bool
 }
 

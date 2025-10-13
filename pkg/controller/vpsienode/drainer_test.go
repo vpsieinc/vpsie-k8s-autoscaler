@@ -220,8 +220,8 @@ func TestFilterPodsToEvict(t *testing.T) {
 	drainer := &Drainer{}
 
 	tests := []struct {
-		name     string
-		pod      corev1.Pod
+		name        string
+		pod         corev1.Pod
 		shouldEvict bool
 	}{
 		{

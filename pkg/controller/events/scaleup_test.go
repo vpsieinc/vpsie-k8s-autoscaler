@@ -33,12 +33,12 @@ func TestMakeScaleUpDecision(t *testing.T) {
 	controller := NewScaleUpController(k8sClient, analyzer, watcher, logger)
 
 	tests := []struct {
-		name            string
-		nodeGroup       *v1alpha1.NodeGroup
-		match           NodeGroupMatch
-		canScale        bool
+		name             string
+		nodeGroup        *v1alpha1.NodeGroup
+		match            NodeGroupMatch
+		canScale         bool
 		expectedDecision bool
-		expectedNodes   int32
+		expectedNodes    int32
 	}{
 		{
 			name: "Scale up from 2 to 3 nodes",
@@ -83,9 +83,9 @@ func TestMakeScaleUpDecision(t *testing.T) {
 					Pods:   2,
 				},
 			},
-			canScale:        true,
+			canScale:         true,
 			expectedDecision: true,
-			expectedNodes:   3, // 2 current + 1 new (based on 4 CPU / 4 CPU per instance)
+			expectedNodes:    3, // 2 current + 1 new (based on 4 CPU / 4 CPU per instance)
 		},
 		{
 			name: "At max capacity, no scale-up",
@@ -121,7 +121,7 @@ func TestMakeScaleUpDecision(t *testing.T) {
 					Pods:   1,
 				},
 			},
-			canScale:        true,
+			canScale:         true,
 			expectedDecision: false,
 		},
 		{
@@ -162,7 +162,7 @@ func TestMakeScaleUpDecision(t *testing.T) {
 					Pods:   1,
 				},
 			},
-			canScale:        false, // Cooldown active
+			canScale:         false, // Cooldown active
 			expectedDecision: false,
 		},
 		{
@@ -205,9 +205,9 @@ func TestMakeScaleUpDecision(t *testing.T) {
 					Pods:   3,
 				},
 			},
-			canScale:        true,
+			canScale:         true,
 			expectedDecision: true,
-			expectedNodes:   5, // Limited by maxNodes (3 + 3 = 6, but max is 5)
+			expectedNodes:    5, // Limited by maxNodes (3 + 3 = 6, but max is 5)
 		},
 	}
 

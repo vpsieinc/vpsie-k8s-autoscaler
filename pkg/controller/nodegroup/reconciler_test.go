@@ -57,10 +57,10 @@ func TestBuildVPSieNodeWithPreferredType(t *testing.T) {
 
 func TestSelectNodesToDelete(t *testing.T) {
 	tests := []struct {
-		name       string
-		nodes      []v1alpha1.VPSieNode
-		count      int
-		expectLen  int
+		name           string
+		nodes          []v1alpha1.VPSieNode
+		count          int
+		expectLen      int
 		expectNonReady bool
 	}{
 		{

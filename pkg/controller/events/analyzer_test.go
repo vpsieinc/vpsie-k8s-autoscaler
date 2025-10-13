@@ -626,10 +626,10 @@ func TestEstimateNodesNeeded(t *testing.T) {
 	}
 
 	tests := []struct {
-		name         string
-		deficit      ResourceDeficit
-		expectedMin  int
-		expectedMax  int
+		name        string
+		deficit     ResourceDeficit
+		expectedMin int
+		expectedMax int
 	}{
 		{
 			name: "CPU-bound",
@@ -703,10 +703,10 @@ func TestSelectInstanceType(t *testing.T) {
 	}
 
 	tests := []struct {
-		name             string
-		nodeGroup        *v1alpha1.NodeGroup
-		expectedType     string
-		expectError      bool
+		name         string
+		nodeGroup    *v1alpha1.NodeGroup
+		expectedType string
+		expectError  bool
 	}{
 		{
 			name: "Use preferred instance type",

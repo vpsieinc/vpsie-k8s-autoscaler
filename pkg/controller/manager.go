@@ -167,7 +167,7 @@ func (cm *ControllerManager) setupControllers() error {
 		cm.scheme,
 		cm.vpsieClient,
 		cm.logger,
-		"", // TODO: Make cloud-init template configurable
+		"",  // TODO: Make cloud-init template configurable
 		nil, // TODO: Make SSH key IDs configurable
 	)
 
