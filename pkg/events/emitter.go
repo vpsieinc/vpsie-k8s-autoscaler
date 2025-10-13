@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/record"
 
 	autoscalermetrics "github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
@@ -59,7 +59,7 @@ type EventEmitter struct {
 func NewEventEmitter(clientset kubernetes.Interface, scheme *runtime.Scheme) *EventEmitter {
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartRecordingToSink(
-		&corev1.EventSinkImpl{
+		&typedcorev1.EventSinkImpl{
 			Interface: clientset.CoreV1().Events(""),
 		},
 	)
@@ -79,13 +79,11 @@ func (e *EventEmitter) emitEvent(object runtime.Object, eventType, reason, messa
 	e.recorder.Event(object, eventType, reason, message)
 
 	// Record metric
-	objectKind := "Unknown"
-	if obj, ok := object.(metav1.Object); ok {
-		objectKind = obj.GetObjectKind().GroupVersionKind().Kind
-		if objectKind == "" {
-			// Fallback to type name
-			objectKind = fmt.Sprintf("%T", object)
-		}
+	gvk := object.GetObjectKind().GroupVersionKind()
+	objectKind := gvk.Kind
+	if objectKind == "" {
+		// Fallback to type name
+		objectKind = fmt.Sprintf("%T", object)
 	}
 	autoscalermetrics.RecordEventEmitted(eventType, reason, objectKind)
 }

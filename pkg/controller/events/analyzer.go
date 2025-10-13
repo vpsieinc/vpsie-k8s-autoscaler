@@ -187,11 +187,23 @@ func (a *ResourceAnalyzer) podMatchesNodeGroup(
 	ng *v1alpha1.NodeGroup,
 ) bool {
 	// Check node selector
-	if len(ng.Spec.Labels) > 0 {
-		for key, value := range ng.Spec.Labels {
-			if podValue, exists := pod.Spec.NodeSelector[key]; !exists || podValue != value {
+	if len(pod.Spec.NodeSelector) > 0 {
+		// Pod has node selector requirements
+		if len(ng.Spec.Labels) == 0 {
+			// NodeGroup has no labels - it's a generic NodeGroup that accepts any pod
+			// This is acceptable as a fallback
+			return true
+		}
+		// Check if all pod's node selector requirements are met by NodeGroup labels
+		for key, value := range pod.Spec.NodeSelector {
+			if ngValue, exists := ng.Spec.Labels[key]; !exists || ngValue != value {
 				return false
 			}
+		}
+	} else {
+		// Pod has no node selector - only match generic NodeGroups (no labels)
+		if len(ng.Spec.Labels) > 0 {
+			return false
 		}
 	}
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"go.uber.org/zap"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
@@ -12,14 +13,14 @@ import (
 
 // ScaleUpDecision represents a decision to scale up a NodeGroup
 type ScaleUpDecision struct {
-	NodeGroup       *v1alpha1.NodeGroup
-	CurrentNodes    int32
-	DesiredNodes    int32
-	NodesToAdd      int32
-	InstanceType    string
-	MatchingPods    int
-	Deficit         ResourceDeficit
-	Reason          string
+	NodeGroup    *v1alpha1.NodeGroup
+	CurrentNodes int32
+	DesiredNodes int32
+	NodesToAdd   int32
+	InstanceType string
+	MatchingPods int
+	Deficit      ResourceDeficit
+	Reason       string
 }
 
 // ScaleUpController handles scale-up decisions and executions
@@ -159,9 +160,9 @@ func (c *ScaleUpController) makeScaleUpDecision(
 	// TODO: Fetch actual instance type info from VPSie API
 	instanceInfo := v1alpha1.InstanceTypeInfo{
 		OfferingID: instanceType,
-		CPU:        4,  // Default
+		CPU:        4,    // Default
 		MemoryMB:   8192, // Default
-		DiskGB:     80,  // Default
+		DiskGB:     80,   // Default
 	}
 
 	// Estimate nodes needed
@@ -190,14 +191,14 @@ func (c *ScaleUpController) makeScaleUpDecision(
 	)
 
 	return &ScaleUpDecision{
-		NodeGroup:       ng,
-		CurrentNodes:    ng.Status.DesiredNodes,
-		DesiredNodes:    desiredNodes,
-		NodesToAdd:      nodesToAdd,
-		InstanceType:    instanceType,
-		MatchingPods:    len(match.MatchingPods),
-		Deficit:         match.Deficit,
-		Reason:          fmt.Sprintf("Scaling up to accommodate %d pending pods", len(match.MatchingPods)),
+		NodeGroup:    ng,
+		CurrentNodes: ng.Status.DesiredNodes,
+		DesiredNodes: desiredNodes,
+		NodesToAdd:   nodesToAdd,
+		InstanceType: instanceType,
+		MatchingPods: len(match.MatchingPods),
+		Deficit:      match.Deficit,
+		Reason:       fmt.Sprintf("Scaling up to accommodate %d pending pods", len(match.MatchingPods)),
 	}, nil
 }
 
@@ -228,14 +229,10 @@ func (c *ScaleUpController) executeScaleUp(ctx context.Context, decision ScaleUp
 		return nil
 	}
 
-	// Update desired nodes
+	// Update desired nodes and last scale time
 	ng.Status.DesiredNodes = decision.DesiredNodes
-	ng.Status.LastScaleTime = &decision.NodeGroup.Status.LastScaleTime
-
-	// Update instance type if using PreferredInstanceType
-	if decision.InstanceType == ng.Spec.PreferredInstanceType {
-		// Already using preferred type, no change needed
-	}
+	now := metav1.Now()
+	ng.Status.LastScaleTime = &now
 
 	// Update status
 	err = c.client.Status().Update(ctx, ng)

@@ -13,26 +13,6 @@ import (
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/client"
 )
 
-// mockVPSieClient is a mock implementation of VPSie client for testing
-type mockVPSieClient struct {
-	listVMsFunc func(ctx context.Context) ([]client.VPS, error)
-}
-
-func (m *mockVPSieClient) ListVMs(ctx context.Context) ([]client.VPS, error) {
-	if m.listVMsFunc != nil {
-		return m.listVMsFunc(ctx)
-	}
-	return []client.VPS{}, nil
-}
-
-// Helper function to create a mock client
-func newMockVPSieClient(listVMsFunc func(ctx context.Context) ([]client.VPS, error)) *client.Client {
-	// This is a workaround since we can't directly mock the client
-	// In real implementation, we would need to create a proper interface
-	// For now, we'll test the health checker with a real client that we can control
-	return nil
-}
-
 func TestNewHealthChecker(t *testing.T) {
 	// Create a mock client (nil is acceptable for this test)
 	var vpsieClient *client.Client
@@ -71,43 +51,43 @@ func TestHealthChecker_SetReady(t *testing.T) {
 
 func TestHealthChecker_HealthzHandler(t *testing.T) {
 	tests := []struct {
-		name               string
-		healthy            bool
-		lastError          error
-		shutdownInitiated  bool
-		expectedStatus     int
+		name                 string
+		healthy              bool
+		lastError            error
+		shutdownInitiated    bool
+		expectedStatus       int
 		expectedBodyContains string
 	}{
 		{
-			name:               "healthy",
-			healthy:            true,
-			lastError:          nil,
-			shutdownInitiated:  false,
-			expectedStatus:     http.StatusOK,
+			name:                 "healthy",
+			healthy:              true,
+			lastError:            nil,
+			shutdownInitiated:    false,
+			expectedStatus:       http.StatusOK,
 			expectedBodyContains: "ok",
 		},
 		{
-			name:               "unhealthy without error",
-			healthy:            false,
-			lastError:          nil,
-			shutdownInitiated:  false,
-			expectedStatus:     http.StatusServiceUnavailable,
+			name:                 "unhealthy without error",
+			healthy:              false,
+			lastError:            nil,
+			shutdownInitiated:    false,
+			expectedStatus:       http.StatusServiceUnavailable,
 			expectedBodyContains: "unhealthy",
 		},
 		{
-			name:               "unhealthy with error",
-			healthy:            false,
-			lastError:          errors.New("API connection failed"),
-			shutdownInitiated:  false,
-			expectedStatus:     http.StatusServiceUnavailable,
+			name:                 "unhealthy with error",
+			healthy:              false,
+			lastError:            errors.New("API connection failed"),
+			shutdownInitiated:    false,
+			expectedStatus:       http.StatusServiceUnavailable,
 			expectedBodyContains: "API connection failed",
 		},
 		{
-			name:               "shutdown initiated",
-			healthy:            false,
-			lastError:          nil,
-			shutdownInitiated:  true,
-			expectedStatus:     http.StatusOK,
+			name:                 "shutdown initiated",
+			healthy:              false,
+			lastError:            nil,
+			shutdownInitiated:    true,
+			expectedStatus:       http.StatusOK,
 			expectedBodyContains: "ok",
 		},
 	}
@@ -134,43 +114,43 @@ func TestHealthChecker_HealthzHandler(t *testing.T) {
 
 func TestHealthChecker_ReadyzHandler(t *testing.T) {
 	tests := []struct {
-		name               string
-		ready              bool
-		lastError          error
-		shutdownInitiated  bool
-		expectedStatus     int
+		name                 string
+		ready                bool
+		lastError            error
+		shutdownInitiated    bool
+		expectedStatus       int
 		expectedBodyContains string
 	}{
 		{
-			name:               "ready",
-			ready:              true,
-			lastError:          nil,
-			shutdownInitiated:  false,
-			expectedStatus:     http.StatusOK,
+			name:                 "ready",
+			ready:                true,
+			lastError:            nil,
+			shutdownInitiated:    false,
+			expectedStatus:       http.StatusOK,
 			expectedBodyContains: "ready",
 		},
 		{
-			name:               "not ready without error",
-			ready:              false,
-			lastError:          nil,
-			shutdownInitiated:  false,
-			expectedStatus:     http.StatusServiceUnavailable,
+			name:                 "not ready without error",
+			ready:                false,
+			lastError:            nil,
+			shutdownInitiated:    false,
+			expectedStatus:       http.StatusServiceUnavailable,
 			expectedBodyContains: "not ready",
 		},
 		{
-			name:               "not ready with error",
-			ready:              false,
-			lastError:          errors.New("initialization failed"),
-			shutdownInitiated:  false,
-			expectedStatus:     http.StatusServiceUnavailable,
+			name:                 "not ready with error",
+			ready:                false,
+			lastError:            errors.New("initialization failed"),
+			shutdownInitiated:    false,
+			expectedStatus:       http.StatusServiceUnavailable,
 			expectedBodyContains: "initialization failed",
 		},
 		{
-			name:               "shutdown initiated",
-			ready:              true,
-			lastError:          nil,
-			shutdownInitiated:  true,
-			expectedStatus:     http.StatusServiceUnavailable,
+			name:                 "shutdown initiated",
+			ready:                true,
+			lastError:            nil,
+			shutdownInitiated:    true,
+			expectedStatus:       http.StatusServiceUnavailable,
 			expectedBodyContains: "shutting down",
 		},
 	}

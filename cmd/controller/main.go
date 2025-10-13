@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
@@ -144,13 +145,13 @@ func run(opts *controller.Options) error {
 
 		// Perform graceful shutdown
 		if err := mgr.Shutdown(shutdownCtx); err != nil {
-			logger.Error("Error during shutdown", err)
+			logger.Error("Error during shutdown", zap.Error(err))
 			return err
 		}
 
 		// Wait for manager to finish
 		if err := <-errCh; err != nil {
-			logger.Error("Manager stopped with error", err)
+			logger.Error("Manager stopped with error", zap.Error(err))
 			return err
 		}
 
@@ -159,7 +160,7 @@ func run(opts *controller.Options) error {
 
 	case err := <-errCh:
 		if err != nil {
-			logger.Error("Manager failed", err)
+			logger.Error("Manager failed", zap.Error(err))
 			return err
 		}
 		logger.Info("Manager stopped")

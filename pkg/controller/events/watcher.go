@@ -61,16 +61,16 @@ type SchedulingEvent struct {
 
 // EventWatcher watches for pod scheduling failure events
 type EventWatcher struct {
-	client           client.Client
-	clientset        kubernetes.Interface
-	logger           *zap.Logger
-	informer         cache.SharedIndexInformer
-	stopCh           chan struct{}
-	eventBuffer      []SchedulingEvent
-	eventBufferMu    sync.RWMutex
-	scaleUpHandler   ScaleUpHandler
-	lastScaleTime    map[string]time.Time
-	lastScaleTimeMu  sync.RWMutex
+	client              client.Client
+	clientset           kubernetes.Interface
+	logger              *zap.Logger
+	informer            cache.SharedIndexInformer
+	stopCh              chan struct{}
+	eventBuffer         []SchedulingEvent
+	eventBufferMu       sync.RWMutex
+	scaleUpHandler      ScaleUpHandler
+	lastScaleTime       map[string]time.Time
+	lastScaleTimeMu     sync.RWMutex
 	stabilizationWindow time.Duration
 }
 
@@ -296,10 +296,15 @@ func parseConstraint(message string) ResourceConstraint {
 	message = strings.ToLower(message)
 
 	// Common patterns in FailedScheduling messages
+	// Check pods first since "too many pods" should be ConstraintPods not ConstraintCPU
+	podsPatterns := []string{
+		"too many pods",
+		"maximum number of pods",
+	}
+
 	cpuPatterns := []string{
 		"insufficient cpu",
 		"insufficient.*cpu",
-		"too many pods",
 	}
 
 	memoryPatterns := []string{
@@ -307,9 +312,11 @@ func parseConstraint(message string) ResourceConstraint {
 		"insufficient.*memory",
 	}
 
-	podsPatterns := []string{
-		"too many pods",
-		"maximum number of pods",
+	// Check pods first (more specific)
+	for _, pattern := range podsPatterns {
+		if matched, _ := regexp.MatchString(pattern, message); matched {
+			return ConstraintPods
+		}
 	}
 
 	// Check CPU
@@ -323,13 +330,6 @@ func parseConstraint(message string) ResourceConstraint {
 	for _, pattern := range memoryPatterns {
 		if matched, _ := regexp.MatchString(pattern, message); matched {
 			return ConstraintMemory
-		}
-	}
-
-	// Check pods
-	for _, pattern := range podsPatterns {
-		if matched, _ := regexp.MatchString(pattern, message); matched {
-			return ConstraintPods
 		}
 	}
 

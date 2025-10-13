@@ -143,6 +143,21 @@ type ScaleDownPolicy struct {
 	CooldownSeconds int32 `json:"cooldownSeconds,omitempty"`
 }
 
+// InstanceTypeInfo contains information about a VPSie offering/instance type
+type InstanceTypeInfo struct {
+	// OfferingID is the VPSie offering ID
+	OfferingID string `json:"offeringID"`
+
+	// CPU is the number of CPU cores
+	CPU int `json:"cpu"`
+
+	// MemoryMB is the amount of memory in megabytes
+	MemoryMB int `json:"memoryMB"`
+
+	// DiskGB is the disk size in gigabytes
+	DiskGB int `json:"diskGB"`
+}
+
 // NodeGroupStatus defines the observed state of NodeGroup
 type NodeGroupStatus struct {
 	// CurrentNodes is the actual number of nodes currently in the group
