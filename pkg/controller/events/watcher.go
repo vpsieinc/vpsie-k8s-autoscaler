@@ -1,0 +1,370 @@
+package events
+
+import (
+	"context"
+	"fmt"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"go.uber.org/zap"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+)
+
+const (
+	// ReasonFailedScheduling is the event reason for failed pod scheduling
+	ReasonFailedScheduling = "FailedScheduling"
+
+	// DefaultStabilizationWindow is the default time to wait before scaling up
+	DefaultStabilizationWindow = 60 * time.Second
+
+	// DefaultEventBufferSize is the default size of the event buffer
+	DefaultEventBufferSize = 100
+
+	// EventProcessInterval is how often to process accumulated events
+	EventProcessInterval = 5 * time.Second
+)
+
+// ResourceConstraint represents a type of resource constraint
+type ResourceConstraint string
+
+const (
+	// ConstraintCPU indicates insufficient CPU
+	ConstraintCPU ResourceConstraint = "cpu"
+
+	// ConstraintMemory indicates insufficient memory
+	ConstraintMemory ResourceConstraint = "memory"
+
+	// ConstraintPods indicates too many pods
+	ConstraintPods ResourceConstraint = "pods"
+
+	// ConstraintUnknown indicates an unknown constraint
+	ConstraintUnknown ResourceConstraint = "unknown"
+)
+
+// SchedulingEvent represents a pod scheduling failure event
+type SchedulingEvent struct {
+	Pod        *corev1.Pod
+	Event      *corev1.Event
+	Timestamp  time.Time
+	Constraint ResourceConstraint
+	Message    string
+}
+
+// EventWatcher watches for pod scheduling failure events
+type EventWatcher struct {
+	client           client.Client
+	clientset        kubernetes.Interface
+	logger           *zap.Logger
+	informer         cache.SharedIndexInformer
+	stopCh           chan struct{}
+	eventBuffer      []SchedulingEvent
+	eventBufferMu    sync.RWMutex
+	scaleUpHandler   ScaleUpHandler
+	lastScaleTime    map[string]time.Time
+	lastScaleTimeMu  sync.RWMutex
+	stabilizationWindow time.Duration
+}
+
+// ScaleUpHandler is called when scale-up is needed
+type ScaleUpHandler func(ctx context.Context, events []SchedulingEvent) error
+
+// NewEventWatcher creates a new event watcher
+func NewEventWatcher(
+	client client.Client,
+	clientset kubernetes.Interface,
+	logger *zap.Logger,
+	scaleUpHandler ScaleUpHandler,
+) *EventWatcher {
+	return &EventWatcher{
+		client:              client,
+		clientset:           clientset,
+		logger:              logger.Named("event-watcher"),
+		stopCh:              make(chan struct{}),
+		eventBuffer:         make([]SchedulingEvent, 0, DefaultEventBufferSize),
+		scaleUpHandler:      scaleUpHandler,
+		lastScaleTime:       make(map[string]time.Time),
+		stabilizationWindow: DefaultStabilizationWindow,
+	}
+}
+
+// Start starts the event watcher
+func (w *EventWatcher) Start(ctx context.Context) error {
+	w.logger.Info("Starting event watcher")
+
+	// Create informer factory
+	informerFactory := informers.NewSharedInformerFactory(w.clientset, 0)
+	w.informer = informerFactory.Core().V1().Events().Informer()
+
+	// Add event handler
+	_, err := w.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			event, ok := obj.(*corev1.Event)
+			if !ok {
+				return
+			}
+			w.handleEvent(ctx, event)
+		},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			event, ok := newObj.(*corev1.Event)
+			if !ok {
+				return
+			}
+			w.handleEvent(ctx, event)
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to add event handler: %w", err)
+	}
+
+	// Start informer
+	go w.informer.Run(w.stopCh)
+
+	// Wait for cache sync
+	if !cache.WaitForCacheSync(w.stopCh, w.informer.HasSynced) {
+		return fmt.Errorf("failed to sync event cache")
+	}
+
+	w.logger.Info("Event watcher started and cache synced")
+
+	// Start event processor
+	go w.processEventsLoop(ctx)
+
+	return nil
+}
+
+// Stop stops the event watcher
+func (w *EventWatcher) Stop() {
+	w.logger.Info("Stopping event watcher")
+	close(w.stopCh)
+}
+
+// handleEvent processes a single event
+func (w *EventWatcher) handleEvent(ctx context.Context, event *corev1.Event) {
+	// Only process FailedScheduling events
+	if event.Reason != ReasonFailedScheduling {
+		return
+	}
+
+	// Check if event is related to a pod
+	if event.InvolvedObject.Kind != "Pod" {
+		return
+	}
+
+	// Parse the constraint type from the message
+	constraint := parseConstraint(event.Message)
+	if constraint == ConstraintUnknown {
+		// Not a resource constraint we care about
+		return
+	}
+
+	w.logger.Debug("Detected scheduling failure",
+		zap.String("pod", event.InvolvedObject.Name),
+		zap.String("namespace", event.InvolvedObject.Namespace),
+		zap.String("constraint", string(constraint)),
+		zap.String("message", event.Message),
+	)
+
+	// Get the pod
+	pod := &corev1.Pod{}
+	err := w.client.Get(ctx, client.ObjectKey{
+		Name:      event.InvolvedObject.Name,
+		Namespace: event.InvolvedObject.Namespace,
+	}, pod)
+	if err != nil {
+		w.logger.Warn("Failed to get pod for event",
+			zap.String("pod", event.InvolvedObject.Name),
+			zap.Error(err),
+		)
+		return
+	}
+
+	// Create scheduling event
+	schedEvent := SchedulingEvent{
+		Pod:        pod,
+		Event:      event,
+		Timestamp:  time.Now(),
+		Constraint: constraint,
+		Message:    event.Message,
+	}
+
+	// Add to buffer
+	w.eventBufferMu.Lock()
+	w.eventBuffer = append(w.eventBuffer, schedEvent)
+	w.eventBufferMu.Unlock()
+}
+
+// processEventsLoop periodically processes accumulated events
+func (w *EventWatcher) processEventsLoop(ctx context.Context) {
+	ticker := time.NewTicker(EventProcessInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-w.stopCh:
+			return
+		case <-ticker.C:
+			w.processEvents(ctx)
+		}
+	}
+}
+
+// processEvents processes accumulated events and triggers scale-up if needed
+func (w *EventWatcher) processEvents(ctx context.Context) {
+	w.eventBufferMu.Lock()
+	if len(w.eventBuffer) == 0 {
+		w.eventBufferMu.Unlock()
+		return
+	}
+
+	// Get events and clear buffer
+	events := make([]SchedulingEvent, len(w.eventBuffer))
+	copy(events, w.eventBuffer)
+	w.eventBuffer = w.eventBuffer[:0]
+	w.eventBufferMu.Unlock()
+
+	w.logger.Info("Processing scheduling failure events",
+		zap.Int("count", len(events)),
+	)
+
+	// Filter out stale events (older than stabilization window)
+	recentEvents := w.filterRecentEvents(events)
+	if len(recentEvents) == 0 {
+		w.logger.Debug("No recent events after filtering")
+		return
+	}
+
+	// Call scale-up handler
+	if w.scaleUpHandler != nil {
+		if err := w.scaleUpHandler(ctx, recentEvents); err != nil {
+			w.logger.Error("Scale-up handler failed",
+				zap.Error(err),
+			)
+		}
+	}
+}
+
+// filterRecentEvents filters events within the stabilization window
+func (w *EventWatcher) filterRecentEvents(events []SchedulingEvent) []SchedulingEvent {
+	now := time.Now()
+	cutoff := now.Add(-w.stabilizationWindow)
+
+	filtered := make([]SchedulingEvent, 0, len(events))
+	for _, event := range events {
+		if event.Timestamp.After(cutoff) {
+			filtered = append(filtered, event)
+		}
+	}
+
+	return filtered
+}
+
+// RecordScaleEvent records a scale event for a NodeGroup
+func (w *EventWatcher) RecordScaleEvent(nodeGroupName string) {
+	w.lastScaleTimeMu.Lock()
+	defer w.lastScaleTimeMu.Unlock()
+	w.lastScaleTime[nodeGroupName] = time.Now()
+}
+
+// CanScale checks if a NodeGroup can be scaled (respects cooldown)
+func (w *EventWatcher) CanScale(nodeGroupName string) bool {
+	w.lastScaleTimeMu.RLock()
+	defer w.lastScaleTimeMu.RUnlock()
+
+	lastScale, exists := w.lastScaleTime[nodeGroupName]
+	if !exists {
+		return true
+	}
+
+	// Check if we're still in cooldown period
+	cooldown := time.Since(lastScale)
+	return cooldown >= w.stabilizationWindow
+}
+
+// parseConstraint extracts the resource constraint type from event message
+func parseConstraint(message string) ResourceConstraint {
+	message = strings.ToLower(message)
+
+	// Common patterns in FailedScheduling messages
+	cpuPatterns := []string{
+		"insufficient cpu",
+		"insufficient.*cpu",
+		"too many pods",
+	}
+
+	memoryPatterns := []string{
+		"insufficient memory",
+		"insufficient.*memory",
+	}
+
+	podsPatterns := []string{
+		"too many pods",
+		"maximum number of pods",
+	}
+
+	// Check CPU
+	for _, pattern := range cpuPatterns {
+		if matched, _ := regexp.MatchString(pattern, message); matched {
+			return ConstraintCPU
+		}
+	}
+
+	// Check memory
+	for _, pattern := range memoryPatterns {
+		if matched, _ := regexp.MatchString(pattern, message); matched {
+			return ConstraintMemory
+		}
+	}
+
+	// Check pods
+	for _, pattern := range podsPatterns {
+		if matched, _ := regexp.MatchString(pattern, message); matched {
+			return ConstraintPods
+		}
+	}
+
+	return ConstraintUnknown
+}
+
+// GetPendingPods returns all currently pending pods
+func (w *EventWatcher) GetPendingPods(ctx context.Context) ([]corev1.Pod, error) {
+	podList := &corev1.PodList{}
+	err := w.client.List(ctx, podList, &client.ListOptions{
+		LabelSelector: labels.Everything(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pods: %w", err)
+	}
+
+	pending := make([]corev1.Pod, 0)
+	for _, pod := range podList.Items {
+		if pod.Status.Phase == corev1.PodPending &&
+			pod.Spec.NodeName == "" &&
+			pod.DeletionTimestamp == nil {
+			pending = append(pending, pod)
+		}
+	}
+
+	return pending, nil
+}
+
+// GetNodeGroups returns all NodeGroups
+func (w *EventWatcher) GetNodeGroups(ctx context.Context) ([]v1alpha1.NodeGroup, error) {
+	nodeGroupList := &v1alpha1.NodeGroupList{}
+	err := w.client.List(ctx, nodeGroupList)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list NodeGroups: %w", err)
+	}
+
+	return nodeGroupList.Items, nil
+}

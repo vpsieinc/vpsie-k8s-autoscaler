@@ -1,0 +1,293 @@
+package nodegroup
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"go.uber.org/zap"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+)
+
+const (
+	// DefaultRequeueAfter is the default requeue time
+	DefaultRequeueAfter = 30 * time.Second
+
+	// FastRequeueAfter is used when operations are in progress
+	FastRequeueAfter = 10 * time.Second
+)
+
+// reconcile handles the main reconciliation logic
+func (r *NodeGroupReconciler) reconcile(ctx context.Context, ng *v1alpha1.NodeGroup, logger *zap.Logger) (ctrl.Result, error) {
+	// Validate the NodeGroup spec
+	if err := ValidateNodeGroupSpec(ng); err != nil {
+		logger.Error("NodeGroup spec validation failed", zap.Error(err))
+		SetErrorCondition(ng, true, ReasonValidationFailed, err.Error())
+		SetReadyCondition(ng, false, ReasonValidationFailed, "Spec validation failed")
+
+		// Update status
+		if statusErr := r.Status().Update(ctx, ng); statusErr != nil {
+			logger.Error("Failed to update status", zap.Error(statusErr))
+			return ctrl.Result{}, statusErr
+		}
+
+		return ctrl.Result{}, err
+	}
+
+	// Update conditions for reconciliation start
+	UpdateConditionsForReconcile(ng)
+
+	// List existing VPSieNodes for this NodeGroup
+	vpsieNodes, err := r.listVPSieNodesForNodeGroup(ctx, ng)
+	if err != nil {
+		logger.Error("Failed to list VPSieNodes", zap.Error(err))
+		SetErrorCondition(ng, true, ReasonKubernetesAPIError, fmt.Sprintf("Failed to list VPSieNodes: %v", err))
+
+		// Update status
+		if statusErr := r.Status().Update(ctx, ng); statusErr != nil {
+			logger.Error("Failed to update status", zap.Error(statusErr))
+		}
+
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("Found VPSieNodes",
+		zap.Int("count", len(vpsieNodes)),
+	)
+
+	// Update status with current state
+	if err := UpdateNodeGroupStatus(ctx, r.Client, ng, vpsieNodes); err != nil {
+		logger.Error("Failed to update NodeGroup status", zap.Error(err))
+		return ctrl.Result{}, err
+	}
+
+	// Calculate desired nodes
+	desired := CalculateDesiredNodes(ng)
+	if ng.Status.DesiredNodes != desired {
+		SetDesiredNodes(ng, desired)
+		logger.Info("Updated desired node count",
+			zap.Int32("desired", desired),
+			zap.Int32("current", ng.Status.CurrentNodes),
+		)
+	}
+
+	// Determine if scaling is needed
+	needsScaleUp := NeedsScaleUp(ng)
+	needsScaleDown := NeedsScaleDown(ng)
+
+	var result ctrl.Result
+	var reconcileErr error
+
+	if needsScaleUp {
+		logger.Info("Scaling up",
+			zap.Int32("current", ng.Status.CurrentNodes),
+			zap.Int32("desired", ng.Status.DesiredNodes),
+		)
+		result, reconcileErr = r.reconcileScaleUp(ctx, ng, vpsieNodes, logger)
+	} else if needsScaleDown {
+		logger.Info("Scaling down",
+			zap.Int32("current", ng.Status.CurrentNodes),
+			zap.Int32("desired", ng.Status.DesiredNodes),
+		)
+		result, reconcileErr = r.reconcileScaleDown(ctx, ng, vpsieNodes, logger)
+	} else {
+		logger.Info("No scaling needed",
+			zap.Int32("current", ng.Status.CurrentNodes),
+			zap.Int32("desired", ng.Status.DesiredNodes),
+			zap.Int32("ready", ng.Status.ReadyNodes),
+		)
+		result = ctrl.Result{RequeueAfter: DefaultRequeueAfter}
+	}
+
+	// Update conditions after scaling decision
+	if needsScaleUp {
+		UpdateConditionsAfterScale(ng, "up")
+	} else if needsScaleDown {
+		UpdateConditionsAfterScale(ng, "down")
+	} else {
+		UpdateConditionsAfterScale(ng, "")
+	}
+
+	// Clear error condition if no error occurred
+	if reconcileErr == nil {
+		SetErrorCondition(ng, false, ReasonReconciling, "")
+	}
+
+	// Update status
+	if err := r.Status().Update(ctx, ng); err != nil {
+		logger.Error("Failed to update status", zap.Error(err))
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("Reconciliation complete",
+		zap.Bool("requeue", result.Requeue || result.RequeueAfter > 0),
+		zap.Duration("requeueAfter", result.RequeueAfter),
+	)
+
+	return result, reconcileErr
+}
+
+// reconcileScaleUp handles scaling up the NodeGroup
+func (r *NodeGroupReconciler) reconcileScaleUp(
+	ctx context.Context,
+	ng *v1alpha1.NodeGroup,
+	vpsieNodes []v1alpha1.VPSieNode,
+	logger *zap.Logger,
+) (ctrl.Result, error) {
+	// Calculate how many nodes to add
+	nodesToAdd := CalculateNodesToAdd(ng)
+	if nodesToAdd <= 0 {
+		logger.Info("No nodes to add")
+		return ctrl.Result{RequeueAfter: DefaultRequeueAfter}, nil
+	}
+
+	logger.Info("Creating new VPSieNodes",
+		zap.Int32("count", nodesToAdd),
+	)
+
+	// Create VPSieNode resources
+	for i := int32(0); i < nodesToAdd; i++ {
+		vpsieNode := r.buildVPSieNode(ng)
+
+		// Set owner reference
+		if err := controllerutil.SetControllerReference(ng, vpsieNode, r.Scheme); err != nil {
+			logger.Error("Failed to set owner reference", zap.Error(err))
+			SetErrorCondition(ng, true, ReasonKubernetesAPIError, fmt.Sprintf("Failed to set owner reference: %v", err))
+			return ctrl.Result{}, err
+		}
+
+		// Create the VPSieNode
+		if err := r.Create(ctx, vpsieNode); err != nil {
+			logger.Error("Failed to create VPSieNode",
+				zap.String("vpsienode", vpsieNode.Name),
+				zap.Error(err),
+			)
+			SetErrorCondition(ng, true, ReasonNodeProvisioningFailed, fmt.Sprintf("Failed to create VPSieNode: %v", err))
+			return ctrl.Result{}, err
+		}
+
+		logger.Info("Created VPSieNode",
+			zap.String("vpsienode", vpsieNode.Name),
+		)
+	}
+
+	// Requeue to check progress
+	return ctrl.Result{RequeueAfter: FastRequeueAfter}, nil
+}
+
+// reconcileScaleDown handles scaling down the NodeGroup
+func (r *NodeGroupReconciler) reconcileScaleDown(
+	ctx context.Context,
+	ng *v1alpha1.NodeGroup,
+	vpsieNodes []v1alpha1.VPSieNode,
+	logger *zap.Logger,
+) (ctrl.Result, error) {
+	// Calculate how many nodes to remove
+	nodesToRemove := CalculateNodesToRemove(ng)
+	if nodesToRemove <= 0 {
+		logger.Info("No nodes to remove")
+		return ctrl.Result{RequeueAfter: DefaultRequeueAfter}, nil
+	}
+
+	logger.Info("Removing VPSieNodes",
+		zap.Int32("count", nodesToRemove),
+	)
+
+	// Find nodes to delete (prefer nodes that are not ready)
+	nodesToDelete := selectNodesToDelete(vpsieNodes, int(nodesToRemove))
+
+	// Delete selected nodes
+	for _, vn := range nodesToDelete {
+		logger.Info("Deleting VPSieNode",
+			zap.String("vpsienode", vn.Name),
+			zap.String("phase", string(vn.Status.Phase)),
+		)
+
+		if err := r.Delete(ctx, &vn); err != nil {
+			logger.Error("Failed to delete VPSieNode",
+				zap.String("vpsienode", vn.Name),
+				zap.Error(err),
+			)
+			SetErrorCondition(ng, true, ReasonKubernetesAPIError, fmt.Sprintf("Failed to delete VPSieNode: %v", err))
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Requeue to check progress
+	return ctrl.Result{RequeueAfter: FastRequeueAfter}, nil
+}
+
+// buildVPSieNode creates a new VPSieNode spec for the NodeGroup
+func (r *NodeGroupReconciler) buildVPSieNode(ng *v1alpha1.NodeGroup) *v1alpha1.VPSieNode {
+	// Generate unique name
+	name := fmt.Sprintf("%s-%s", ng.Name, generateRandomSuffix())
+
+	// Select instance type (use first offering for now)
+	instanceType := ng.Spec.OfferingIDs[0]
+	if ng.Spec.PreferredInstanceType != "" {
+		instanceType = ng.Spec.PreferredInstanceType
+	}
+
+	// Build VPSieNode
+	vpsieNode := &v1alpha1.VPSieNode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: ng.Namespace,
+			Labels:    GetNodeGroupLabels(ng),
+		},
+		Spec: v1alpha1.VPSieNodeSpec{
+			VPSieInstanceID: 0, // Will be set by VPSieNode controller
+			InstanceType:    instanceType,
+			NodeGroupName:   ng.Name,
+			DatacenterID:    ng.Spec.DatacenterID,
+		},
+	}
+
+	return vpsieNode
+}
+
+// selectNodesToDelete selects which nodes should be deleted during scale-down
+// Prioritizes nodes that are not ready
+func selectNodesToDelete(vpsieNodes []v1alpha1.VPSieNode, count int) []v1alpha1.VPSieNode {
+	if count >= len(vpsieNodes) {
+		return vpsieNodes
+	}
+
+	// Sort nodes by priority (not ready first, then oldest)
+	var notReady []v1alpha1.VPSieNode
+	var ready []v1alpha1.VPSieNode
+
+	for i := range vpsieNodes {
+		vn := vpsieNodes[i]
+		if vn.Status.Phase != v1alpha1.VPSieNodePhaseReady {
+			notReady = append(notReady, vn)
+		} else {
+			ready = append(ready, vn)
+		}
+	}
+
+	var result []v1alpha1.VPSieNode
+
+	// First, select not-ready nodes
+	for i := 0; i < count && i < len(notReady); i++ {
+		result = append(result, notReady[i])
+	}
+
+	// If we need more, select from ready nodes (oldest first)
+	remaining := count - len(result)
+	for i := 0; i < remaining && i < len(ready); i++ {
+		result = append(result, ready[i])
+	}
+
+	return result
+}
+
+// generateRandomSuffix generates a random suffix for resource names
+func generateRandomSuffix() string {
+	// Simple implementation - in production, use a proper random string generator
+	return fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+}

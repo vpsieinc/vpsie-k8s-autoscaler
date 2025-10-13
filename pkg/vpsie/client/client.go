@@ -11,9 +11,13 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/logging"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 )
 
 const (
@@ -58,6 +62,7 @@ type Client struct {
 	accessToken    string
 	tokenExpiresAt time.Time
 	userAgent      string
+	logger         *zap.Logger
 	mu             sync.RWMutex
 }
 
@@ -83,6 +88,9 @@ type ClientOptions struct {
 
 	// TokenRefreshBuffer is the time before expiration to refresh the token
 	TokenRefreshBuffer time.Duration
+
+	// Logger is the logger to use (optional, defaults to no-op logger)
+	Logger *zap.Logger
 }
 
 // TokenResponse represents the authentication response from the VPSie API
@@ -188,6 +196,12 @@ func NewClient(ctx context.Context, clientset kubernetes.Interface, opts *Client
 	rps := float64(opts.RateLimit) / 60.0
 	rateLimiter := rate.NewLimiter(rate.Limit(rps), opts.RateLimit)
 
+	// Get logger (default to no-op if not provided)
+	logger := opts.Logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
 	// Create client instance
 	client := &Client{
 		httpClient:   httpClient,
@@ -196,6 +210,7 @@ func NewClient(ctx context.Context, clientset kubernetes.Interface, opts *Client
 		clientID:     clientID,
 		clientSecret: clientSecret,
 		userAgent:    opts.UserAgent,
+		logger:       logger.Named("vpsie-client"),
 	}
 
 	// Obtain initial access token
@@ -259,6 +274,12 @@ func NewClientWithCredentialsAndContext(ctx context.Context, baseURL, clientID, 
 	rps := float64(opts.RateLimit) / 60.0
 	rateLimiter := rate.NewLimiter(rate.Limit(rps), opts.RateLimit)
 
+	// Get logger (default to no-op if not provided)
+	logger := opts.Logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
 	// Create client instance
 	client := &Client{
 		httpClient:   httpClient,
@@ -267,6 +288,7 @@ func NewClientWithCredentialsAndContext(ctx context.Context, baseURL, clientID, 
 		clientID:     clientID,
 		clientSecret: clientSecret,
 		userAgent:    opts.UserAgent,
+		logger:       logger.Named("vpsie-client"),
 	}
 
 	// Obtain initial access token
@@ -370,6 +392,16 @@ func (c *Client) ensureValidToken(ctx context.Context) error {
 
 // doRequest performs an HTTP request with authentication and rate limiting
 func (c *Client) doRequest(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
+	// Track metrics
+	startTime := time.Now()
+	requestID := logging.GetRequestID(ctx)
+
+	// Add request ID to logger if available
+	logger := logging.WithRequestIDField(ctx, c.logger)
+
+	// Log API call (debug level)
+	logging.LogAPICall(logger, method, path, requestID)
+
 	// Ensure we have a valid access token
 	if err := c.ensureValidToken(ctx); err != nil {
 		return nil, fmt.Errorf("failed to ensure valid token: %w", err)
@@ -412,13 +444,44 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 
 	// Perform request
 	resp, err := c.httpClient.Do(req)
+	duration := time.Since(startTime)
+
 	if err != nil {
+		// Record error metrics
+		metrics.RecordAPIError(method, "request_failed")
+		metrics.RecordAPIRequest(method, "error", duration)
+		logging.LogAPIError(logger, method, path, 0, err, requestID)
 		return nil, fmt.Errorf("failed to perform request: %w", err)
 	}
+
+	// Log response (debug level)
+	logging.LogAPIResponse(logger, method, path, resp.StatusCode, duration.String(), requestID)
 
 	// Check for HTTP errors
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
+
+		// Record error metrics
+		status := fmt.Sprintf("%d", resp.StatusCode)
+		metrics.RecordAPIRequest(method, status, duration)
+
+		// Determine error type for metrics
+		var errorType string
+		switch {
+		case resp.StatusCode == http.StatusUnauthorized:
+			errorType = "unauthorized"
+		case resp.StatusCode == http.StatusForbidden:
+			errorType = "forbidden"
+		case resp.StatusCode == http.StatusNotFound:
+			errorType = "not_found"
+		case resp.StatusCode == http.StatusTooManyRequests:
+			errorType = "rate_limited"
+		case resp.StatusCode >= 500:
+			errorType = "server_error"
+		default:
+			errorType = "client_error"
+		}
+		metrics.RecordAPIError(method, errorType)
 
 		// If we get 401 Unauthorized, try refreshing the token once
 		if resp.StatusCode == http.StatusUnauthorized {
@@ -433,13 +496,21 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		if err := json.Unmarshal(bodyBytes, &errResp); err == nil && errResp.Message != "" {
 			requestID := resp.Header.Get("X-Request-ID")
-			return nil, NewAPIErrorWithRequestID(resp.StatusCode, errResp.Error, errResp.Message, requestID)
+			apiErr := NewAPIErrorWithRequestID(resp.StatusCode, errResp.Error, errResp.Message, requestID)
+			logging.LogAPIError(logger, method, path, resp.StatusCode, apiErr, requestID)
+			return nil, apiErr
 		}
 
 		// Fallback to generic error
 		requestID := resp.Header.Get("X-Request-ID")
-		return nil, NewAPIErrorWithRequestID(resp.StatusCode, http.StatusText(resp.StatusCode), string(bodyBytes), requestID)
+		apiErr := NewAPIErrorWithRequestID(resp.StatusCode, http.StatusText(resp.StatusCode), string(bodyBytes), requestID)
+		logging.LogAPIError(logger, method, path, resp.StatusCode, apiErr, requestID)
+		return nil, apiErr
 	}
+
+	// Record success metrics
+	status := fmt.Sprintf("%d", resp.StatusCode)
+	metrics.RecordAPIRequest(method, status, duration)
 
 	return resp, nil
 }

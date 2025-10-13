@@ -1,0 +1,333 @@
+package controller
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/go-logr/zapr"
+	"go.uber.org/zap"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
+
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/nodegroup"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/vpsienode"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/client"
+)
+
+// ControllerManager manages the lifecycle of all controllers
+type ControllerManager struct {
+	config        *rest.Config
+	options       *Options
+	mgr           ctrl.Manager
+	vpsieClient   *client.Client
+	k8sClient     kubernetes.Interface
+	healthChecker *HealthChecker
+	logger        *zap.Logger
+	scheme        *runtime.Scheme
+}
+
+// NewManager creates a new ControllerManager
+func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) {
+	if config == nil {
+		return nil, fmt.Errorf("kubeconfig cannot be nil")
+	}
+
+	if opts == nil {
+		return nil, fmt.Errorf("options cannot be nil")
+	}
+
+	// Validate options
+	if err := opts.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid options: %w", err)
+	}
+
+	// Create logger
+	logger, err := newLogger(opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create logger: %w", err)
+	}
+
+	// Create scheme and register our CRDs
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("failed to add CRDs to scheme: %w", err)
+	}
+
+	// Create controller-runtime manager
+	mgr, err := ctrl.NewManager(config, ctrl.Options{
+		Scheme: scheme,
+		Metrics: server.Options{
+			BindAddress: opts.MetricsAddr,
+		},
+		HealthProbeBindAddress:  opts.HealthProbeAddr,
+		LeaderElection:          opts.EnableLeaderElection,
+		LeaderElectionID:        opts.LeaderElectionID,
+		LeaderElectionNamespace: opts.LeaderElectionNamespace,
+		Logger:                  zapr.NewLogger(logger),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create manager: %w", err)
+	}
+
+	// Create Kubernetes clientset
+	k8sClient, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
+	}
+
+	// Create VPSie API client
+	ctx := context.Background()
+	vpsieClient, err := client.NewClient(ctx, k8sClient, &client.ClientOptions{
+		SecretName:      opts.VPSieSecretName,
+		SecretNamespace: opts.VPSieSecretNamespace,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create VPSie client: %w", err)
+	}
+
+	// Create health checker
+	healthChecker := NewHealthChecker(vpsieClient)
+
+	cm := &ControllerManager{
+		config:        config,
+		options:       opts,
+		mgr:           mgr,
+		vpsieClient:   vpsieClient,
+		k8sClient:     k8sClient,
+		healthChecker: healthChecker,
+		logger:        logger,
+		scheme:        scheme,
+	}
+
+	// Add health checks to manager
+	if err := cm.setupHealthChecks(); err != nil {
+		return nil, fmt.Errorf("failed to setup health checks: %w", err)
+	}
+
+	// Setup controllers
+	if err := cm.setupControllers(); err != nil {
+		return nil, fmt.Errorf("failed to setup controllers: %w", err)
+	}
+
+	return cm, nil
+}
+
+// setupHealthChecks configures the health check endpoints
+func (cm *ControllerManager) setupHealthChecks() error {
+	// Add healthz endpoint (liveness probe)
+	if err := cm.mgr.AddHealthzCheck("healthz", cm.healthzCheck); err != nil {
+		return fmt.Errorf("failed to add healthz check: %w", err)
+	}
+
+	// Add readyz endpoint (readiness probe)
+	if err := cm.mgr.AddReadyzCheck("readyz", cm.readyzCheck); err != nil {
+		return fmt.Errorf("failed to add readyz check: %w", err)
+	}
+
+	// Add ping check
+	if err := cm.mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
+		return fmt.Errorf("failed to add ping check: %w", err)
+	}
+
+	// Add VPSie API check
+	if err := cm.mgr.AddReadyzCheck("vpsie-api", cm.vpsieAPICheck); err != nil {
+		return fmt.Errorf("failed to add VPSie API check: %w", err)
+	}
+
+	return nil
+}
+
+// setupControllers sets up all controllers with the manager
+func (cm *ControllerManager) setupControllers() error {
+	// Setup NodeGroup controller
+	nodeGroupReconciler := nodegroup.NewNodeGroupReconciler(
+		cm.mgr.GetClient(),
+		cm.scheme,
+		cm.vpsieClient,
+		cm.logger,
+	)
+
+	if err := nodeGroupReconciler.SetupWithManager(cm.mgr); err != nil {
+		return fmt.Errorf("failed to setup NodeGroup controller: %w", err)
+	}
+
+	cm.logger.Info("Successfully registered NodeGroup controller")
+
+	// Setup VPSieNode controller
+	vpsieNodeReconciler := vpsienode.NewVPSieNodeReconciler(
+		cm.mgr.GetClient(),
+		cm.scheme,
+		cm.vpsieClient,
+		cm.logger,
+		"", // TODO: Make cloud-init template configurable
+		nil, // TODO: Make SSH key IDs configurable
+	)
+
+	if err := vpsieNodeReconciler.SetupWithManager(cm.mgr); err != nil {
+		return fmt.Errorf("failed to setup VPSieNode controller: %w", err)
+	}
+
+	cm.logger.Info("Successfully registered VPSieNode controller")
+
+	return nil
+}
+
+// healthzCheck implements the liveness probe
+func (cm *ControllerManager) healthzCheck(req *http.Request) error {
+	if !cm.healthChecker.IsHealthy() {
+		lastErr := cm.healthChecker.LastError()
+		if lastErr != nil {
+			return fmt.Errorf("health check failed: %w", lastErr)
+		}
+		return fmt.Errorf("controller is not healthy")
+	}
+	return nil
+}
+
+// readyzCheck implements the readiness probe
+func (cm *ControllerManager) readyzCheck(req *http.Request) error {
+	if !cm.healthChecker.IsReady() {
+		lastErr := cm.healthChecker.LastError()
+		if lastErr != nil {
+			return fmt.Errorf("readiness check failed: %w", lastErr)
+		}
+		return fmt.Errorf("controller is not ready")
+	}
+	return nil
+}
+
+// vpsieAPICheck verifies connectivity to the VPSie API
+func (cm *ControllerManager) vpsieAPICheck(req *http.Request) error {
+	ctx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
+	defer cancel()
+
+	_, err := cm.vpsieClient.ListVMs(ctx)
+	if err != nil {
+		return fmt.Errorf("VPSie API not reachable: %w", err)
+	}
+	return nil
+}
+
+// Start starts the controller manager and blocks until the context is cancelled
+func (cm *ControllerManager) Start(ctx context.Context) error {
+	cm.logger.Info("Starting VPSie Kubernetes Autoscaler",
+		zap.String("version", os.Getenv("VERSION")),
+		zap.String("commit", os.Getenv("COMMIT")),
+		zap.Bool("leader_election", cm.options.EnableLeaderElection),
+		zap.String("metrics_addr", cm.options.MetricsAddr),
+		zap.String("health_addr", cm.options.HealthProbeAddr),
+	)
+
+	// Start health checker
+	if err := cm.healthChecker.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start health checker: %w", err)
+	}
+
+	cm.logger.Info("Health checks initialized successfully")
+
+	// Log VPSie client info
+	cm.logger.Info("VPSie API client initialized",
+		zap.String("endpoint", cm.vpsieClient.GetBaseURL()),
+	)
+
+	// Start the manager (this blocks until context is cancelled)
+	cm.logger.Info("Starting controller-runtime manager")
+	if err := cm.mgr.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start manager: %w", err)
+	}
+
+	return nil
+}
+
+// GetManager returns the controller-runtime manager
+func (cm *ControllerManager) GetManager() ctrl.Manager {
+	return cm.mgr
+}
+
+// GetVPSieClient returns the VPSie API client
+func (cm *ControllerManager) GetVPSieClient() *client.Client {
+	return cm.vpsieClient
+}
+
+// GetKubernetesClient returns the Kubernetes clientset
+func (cm *ControllerManager) GetKubernetesClient() kubernetes.Interface {
+	return cm.k8sClient
+}
+
+// GetLogger returns the logger
+func (cm *ControllerManager) GetLogger() *zap.Logger {
+	return cm.logger
+}
+
+// GetHealthChecker returns the health checker
+func (cm *ControllerManager) GetHealthChecker() *HealthChecker {
+	return cm.healthChecker
+}
+
+// Shutdown gracefully shuts down the controller manager
+func (cm *ControllerManager) Shutdown(ctx context.Context) error {
+	cm.logger.Info("Initiating graceful shutdown")
+
+	// Mark as not ready to stop receiving new traffic
+	cm.healthChecker.SetReady(false)
+
+	// Wait a bit to allow load balancers to remove this instance
+	shutdownDelay := 5 * time.Second
+	cm.logger.Info("Waiting before shutdown", zap.Duration("delay", shutdownDelay))
+
+	select {
+	case <-time.After(shutdownDelay):
+	case <-ctx.Done():
+		cm.logger.Warn("Shutdown deadline exceeded during delay")
+	}
+
+	cm.logger.Info("Shutdown complete")
+	return nil
+}
+
+// newLogger creates a new zap logger based on options
+func newLogger(opts *Options) (*zap.Logger, error) {
+	var config zap.Config
+
+	if opts.DevelopmentMode {
+		config = zap.NewDevelopmentConfig()
+	} else {
+		config = zap.NewProductionConfig()
+	}
+
+	// Set log level
+	switch opts.LogLevel {
+	case "debug":
+		config.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
+	case "info":
+		config.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	case "warn":
+		config.Level = zap.NewAtomicLevelAt(zap.WarnLevel)
+	case "error":
+		config.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+	default:
+		config.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	}
+
+	// Set encoding
+	if opts.LogFormat == "console" {
+		config.Encoding = "console"
+	} else {
+		config.Encoding = "json"
+	}
+
+	logger, err := config.Build()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build logger: %w", err)
+	}
+
+	return logger, nil
+}
