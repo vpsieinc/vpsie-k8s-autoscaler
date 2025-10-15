@@ -348,7 +348,7 @@ func TestPodMatchesNodeGroup(t *testing.T) {
 					Labels: map[string]string{},
 				},
 			},
-			matches: true,
+			matches: false, // Pod requires labels, NodeGroup has none - no match
 		},
 		{
 			name: "Pod tolerates NodeGroup taints",

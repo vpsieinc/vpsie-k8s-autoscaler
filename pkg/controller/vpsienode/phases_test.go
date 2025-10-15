@@ -48,14 +48,8 @@ func TestSetPhase(t *testing.T) {
 			},
 			description: "TerminatingAt should be set",
 		},
-		{
-			name:  "Deleting phase sets DeletedAt",
-			phase: v1alpha1.VPSieNodePhaseDeleting,
-			checkField: func(vn *v1alpha1.VPSieNode) bool {
-				return vn.Status.DeletedAt != nil
-			},
-			description: "DeletedAt should be set",
-		},
+		// Note: DeletedAt is NOT set when entering Deleting phase
+		// It's set by DeleteVPS() after successful VPS deletion
 	}
 
 	for _, tt := range tests {

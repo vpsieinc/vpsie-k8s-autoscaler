@@ -189,10 +189,10 @@ func (a *ResourceAnalyzer) podMatchesNodeGroup(
 	// Check node selector
 	if len(pod.Spec.NodeSelector) > 0 {
 		// Pod has node selector requirements
+		// NodeGroup MUST have labels that satisfy ALL of the pod's requirements
 		if len(ng.Spec.Labels) == 0 {
-			// NodeGroup has no labels - it's a generic NodeGroup that accepts any pod
-			// This is acceptable as a fallback
-			return true
+			// NodeGroup has no labels - cannot satisfy pod's node selector requirements
+			return false
 		}
 		// Check if all pod's node selector requirements are met by NodeGroup labels
 		for key, value := range pod.Spec.NodeSelector {
