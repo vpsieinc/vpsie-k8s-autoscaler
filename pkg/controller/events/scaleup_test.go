@@ -29,8 +29,6 @@ func TestMakeScaleUpDecision(t *testing.T) {
 	logger := zap.NewNop()
 
 	analyzer := NewResourceAnalyzer(logger)
-	watcher := NewEventWatcher(k8sClient, clientset, logger, nil)
-	controller := NewScaleUpController(k8sClient, analyzer, watcher, logger)
 
 	tests := []struct {
 		name             string
@@ -213,6 +211,10 @@ func TestMakeScaleUpDecision(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Create fresh watcher and controller for each test to avoid cooldown state pollution
+			watcher := NewEventWatcher(k8sClient, clientset, logger, nil)
+			controller := NewScaleUpController(k8sClient, analyzer, watcher, logger)
+
 			// Set up cooldown state
 			if !tt.canScale {
 				watcher.RecordScaleEvent(tt.nodeGroup.Name)
