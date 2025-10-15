@@ -227,6 +227,7 @@ func TestGetPendingPods(t *testing.T) {
 			Name:              "deleting-pod",
 			Namespace:         "default",
 			DeletionTimestamp: &metav1.Time{Time: time.Now()},
+			Finalizers:        []string{"test-finalizer"}, // Required for fake client with deletionTimestamp
 		},
 		Spec: corev1.PodSpec{
 			NodeName: "",
