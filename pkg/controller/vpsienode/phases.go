@@ -105,7 +105,7 @@ func SetPhase(vn *v1alpha1.VPSieNode, phase v1alpha1.VPSieNodePhase, reason, mes
 		if vn.Status.TerminatingAt == nil {
 			vn.Status.TerminatingAt = &now
 		}
-	// Note: DeletedAt is NOT set here - it's set by DeleteVPS() after successful deletion
+		// Note: DeletedAt is NOT set here - it's set by DeleteVPS() after successful deletion
 	}
 }
 
