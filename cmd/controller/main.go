@@ -10,10 +10,16 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
+	"k8s.io/apimachinery/pkg/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	ctrl "sigs.k8s.io/controller-runtime"
 
+	autoscalerv1alpha1 "github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/logging"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 )
 
 var (
@@ -21,9 +27,24 @@ var (
 	Version   = "dev"
 	Commit    = "unknown"
 	BuildDate = "unknown"
+
+	// Scheme for all Kubernetes API types
+	scheme = runtime.NewScheme()
 )
 
+func init() {
+	// Register standard Kubernetes types
+	_ = clientgoscheme.AddToScheme(scheme)
+	// Register our custom resources
+	_ = autoscalerv1alpha1.AddToScheme(scheme)
+}
+
 func main() {
+	// Set version info in environment for controller manager to use
+	os.Setenv("VERSION", Version)
+	os.Setenv("COMMIT", Commit)
+	os.Setenv("BUILD_DATE", BuildDate)
+
 	if err := newRootCommand().Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -104,13 +125,55 @@ func run(opts *controller.Options) error {
 		return fmt.Errorf("invalid options: %w", err)
 	}
 
+	// Initialize structured logger using the logging package
+	logger, err := logging.NewLogger(opts.DevelopmentMode)
+	if err != nil {
+		return fmt.Errorf("failed to create logger: %w", err)
+	}
+	defer logger.Sync()
+
+	// Set log level based on options
+	logger = configureLogLevel(logger, opts.LogLevel)
+
+	logger.Info("Initializing VPSie Kubernetes Autoscaler",
+		zap.String("version", Version),
+		zap.String("commit", Commit),
+		zap.String("buildDate", BuildDate),
+		zap.String("logLevel", opts.LogLevel),
+		zap.String("logFormat", opts.LogFormat),
+		zap.Bool("development", opts.DevelopmentMode),
+	)
+
+	// Register Prometheus metrics
+	logger.Info("Registering Prometheus metrics")
+	metrics.RegisterMetrics()
+
+	// Set controller-runtime logger
+	ctrl.SetLogger(logging.NewZapLogger(logger, opts.DevelopmentMode))
+
 	// Build kubeconfig
+	logger.Info("Building Kubernetes client configuration",
+		zap.String("kubeconfig", getKubeconfigPath(opts.Kubeconfig)),
+	)
 	config, err := buildKubeConfig(opts.Kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to build kubeconfig: %w", err)
 	}
 
+	// Log configuration details
+	logger.Info("Controller configuration",
+		zap.String("metricsAddr", opts.MetricsAddr),
+		zap.String("healthProbeAddr", opts.HealthProbeAddr),
+		zap.Bool("leaderElection", opts.EnableLeaderElection),
+		zap.String("leaderElectionID", opts.LeaderElectionID),
+		zap.String("leaderElectionNamespace", opts.LeaderElectionNamespace),
+		zap.Duration("syncPeriod", opts.SyncPeriod),
+		zap.String("vpsieSecretName", opts.VPSieSecretName),
+		zap.String("vpsieSecretNamespace", opts.VPSieSecretNamespace),
+	)
+
 	// Create controller manager
+	logger.Info("Creating controller manager")
 	mgr, err := controller.NewManager(config, opts)
 	if err != nil {
 		return fmt.Errorf("failed to create controller manager: %w", err)
@@ -121,12 +184,22 @@ func run(opts *controller.Options) error {
 	defer cancel()
 
 	// Start the controller manager
-	logger := mgr.GetLogger()
-	logger.Info("Starting VPSie Kubernetes Autoscaler")
+	mgrLogger := mgr.GetLogger()
+	mgrLogger.Info("Starting VPSie Kubernetes Autoscaler",
+		zap.String("version", Version),
+		zap.String("commit", Commit),
+		zap.Bool("leaderElection", opts.EnableLeaderElection),
+		zap.String("metricsAddr", opts.MetricsAddr),
+		zap.String("healthAddr", opts.HealthProbeAddr),
+	)
 
 	// Start manager in a goroutine
 	errCh := make(chan error, 1)
 	go func() {
+		mgrLogger.Info("Starting controller-runtime manager",
+			zap.String("metricsAddress", opts.MetricsAddr),
+			zap.String("healthAddress", opts.HealthProbeAddr),
+		)
 		if err := mgr.Start(ctx); err != nil {
 			errCh <- fmt.Errorf("manager exited with error: %w", err)
 		} else {
@@ -137,33 +210,38 @@ func run(opts *controller.Options) error {
 	// Wait for shutdown signal or error
 	select {
 	case <-ctx.Done():
-		logger.Info("Received shutdown signal")
+		mgrLogger.Info("Received shutdown signal, initiating graceful shutdown")
 
 		// Create shutdown context with timeout
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		shutdownTimeout := 30 * time.Second
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer shutdownCancel()
+
+		mgrLogger.Info("Performing graceful shutdown",
+			zap.Duration("timeout", shutdownTimeout),
+		)
 
 		// Perform graceful shutdown
 		if err := mgr.Shutdown(shutdownCtx); err != nil {
-			logger.Error("Error during shutdown", zap.Error(err))
+			mgrLogger.Error("Error during shutdown", zap.Error(err))
 			return err
 		}
 
 		// Wait for manager to finish
 		if err := <-errCh; err != nil {
-			logger.Error("Manager stopped with error", zap.Error(err))
+			mgrLogger.Error("Manager stopped with error", zap.Error(err))
 			return err
 		}
 
-		logger.Info("Controller stopped gracefully")
+		mgrLogger.Info("Controller stopped gracefully")
 		return nil
 
 	case err := <-errCh:
 		if err != nil {
-			logger.Error("Manager failed", zap.Error(err))
+			mgrLogger.Error("Manager failed", zap.Error(err))
 			return err
 		}
-		logger.Info("Manager stopped")
+		mgrLogger.Info("Manager stopped normally")
 		return nil
 	}
 }
@@ -189,23 +267,51 @@ func buildKubeConfig(kubeconfig string) (*rest.Config, error) {
 }
 
 // setupSignalHandler creates a context that is cancelled when the process receives
-// SIGTERM or SIGINT signals
+// SIGTERM or SIGINT signals. It handles graceful shutdown and forced exit on second signal.
 func setupSignalHandler() (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	sigCh := make(chan os.Signal, 2)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 
 	go func() {
-		<-sigCh
-		fmt.Println("\nReceived shutdown signal, starting graceful shutdown...")
+		sig := <-sigCh
+		fmt.Printf("\nReceived signal %v, starting graceful shutdown...\n", sig)
 		cancel()
 
 		// Force exit on second signal
-		<-sigCh
-		fmt.Println("\nReceived second signal, forcing exit...")
+		sig = <-sigCh
+		fmt.Printf("\nReceived second signal %v, forcing immediate exit...\n", sig)
 		os.Exit(1)
 	}()
 
 	return ctx, cancel
+}
+
+// configureLogLevel adjusts the logger's level based on the provided log level string
+func configureLogLevel(logger *zap.Logger, logLevel string) *zap.Logger {
+	var level zap.AtomicLevel
+
+	switch logLevel {
+	case "debug":
+		level = zap.NewAtomicLevelAt(zap.DebugLevel)
+	case "info":
+		level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	case "warn":
+		level = zap.NewAtomicLevelAt(zap.WarnLevel)
+	case "error":
+		level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+	default:
+		level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	}
+
+	return logger.WithOptions(zap.IncreaseLevel(level))
+}
+
+// getKubeconfigPath returns the kubeconfig path for logging purposes
+func getKubeconfigPath(kubeconfig string) string {
+	if kubeconfig != "" {
+		return kubeconfig
+	}
+	return "in-cluster"
 }
