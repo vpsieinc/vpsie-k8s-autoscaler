@@ -3,6 +3,8 @@ package logging
 import (
 	"context"
 
+	"github.com/go-logr/logr"
+	"github.com/go-logr/zapr"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -38,6 +40,11 @@ func NewLogger(development bool) (*zap.Logger, error) {
 	}
 
 	return logger, nil
+}
+
+// NewZapLogger creates a logr.Logger from a zap.Logger for use with controller-runtime
+func NewZapLogger(zapLogger *zap.Logger, development bool) logr.Logger {
+	return zapr.NewLogger(zapLogger)
 }
 
 // WithRequestID adds a request ID to the context
