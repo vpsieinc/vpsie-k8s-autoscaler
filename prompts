@@ -1,0 +1,302 @@
+Create a mock VPSie API server for integration testing in the VPSie Kubernetes Node Autoscaler project.
+
+  Requirements:
+  1. Create a mock HTTP server that simulates VPSie API endpoints in test/integration/mock_vpsie_server.go
+  2. Implement the following endpoints:
+     - POST /oauth/token - Mock OAuth authentication
+     - GET /v2/vms - List VMs
+     - POST /v2/vms - Create VM
+     - GET /v2/vms/{id} - Get VM details
+     - DELETE /v2/vms/{id} - Delete VM
+     - GET /v2/offerings - List available instance types
+     - GET /v2/datacenters - List datacenters
+  3. Add rate limiting simulation (return 429 when exceeded)
+  4. Add configurable delays to simulate network latency
+  5. Support error injection for testing error handling
+  6. Include VM state transitions (provisioning -> running -> ready)
+  7. Return realistic response structures matching vpsieclient.VPS type
+
+  The mock should:
+  - Run on a random available port during tests
+  - Support concurrent requests
+  - Track request counts for assertions
+  - Allow setting custom responses per test
+  - Simulate authentication token expiration
+
+  Test scenarios to support:
+  - Successful VM creation and lifecycle
+  - Rate limiting (429 errors)
+  - Authentication failures
+  - Network timeouts
+  - VM provisioning failures
+  - Quota exceeded errors
+
+  Note: Use the existing MockVPSieClient in pkg/controller/vpsienode/mock_vpsie_client.go as reference for VM structure.
+
+  Prompt 2: Controller Runtime Integration Tests with Health/Metrics
+
+  Implement integration tests for the controller runtime with health check and metrics endpoints.
+
+  Requirements:
+  1. Update test/integration/controller_integration_test.go to add:
+     - TestHealthEndpoints_Integration - Test /healthz, /readyz, /ping endpoints
+     - TestMetricsEndpoint_Integration - Test Prometheus metrics exposure
+     - TestControllerReconciliation_Integration - End-to-end reconciliation test
+
+  2. TestHealthEndpoints_Integration should:
+     - Start the controller manager in background
+     - Wait for controller to be ready
+     - Test GET /healthz returns 200 OK
+     - Test GET /readyz returns 200 OK after controller is ready
+     - Test GET /ping returns "pong"
+     - Verify health status changes when controller shuts down
+     - Use the mock VPSie server from Prompt 1
+
+  3. TestMetricsEndpoint_Integration should:
+     - Start controller with metrics enabled on port 18080
+     - Verify GET /metrics returns Prometheus format
+     - Verify all 22 registered metrics are exposed
+     - Check specific metrics:
+       * vpsie_autoscaler_nodegroup_desired_nodes
+       * vpsie_autoscaler_nodegroup_current_nodes
+       * vpsie_autoscaler_controller_reconcile_duration_seconds
+       * vpsie_autoscaler_vpsie_api_requests_total
+     - Create a NodeGroup and verify metrics update
+     - Parse metrics output and validate values
+
+  4. TestControllerReconciliation_Integration should:
+     - Use mock VPSie API server
+     - Create a NodeGroup with minNodes=2
+     - Verify controller creates 2 VPSieNode resources
+     - Verify controller calls mock API to create VMs
+     - Simulate VM state transition to "running"
+     - Verify VPSieNode status updates to Ready
+     - Update NodeGroup to minNodes=3
+     - Verify controller creates additional VPSieNode
+     - Delete NodeGroup and verify cleanup
+
+  Note: Controller should run in background with test-specific ports to avoid conflicts.
+
+  Prompt 3: Graceful Shutdown and Signal Handling Tests
+
+  Implement graceful shutdown and signal handling integration tests.
+
+  Requirements:
+  1. Implement TestGracefulShutdown_Integration in test/integration/controller_integration_test.go
+
+  2. Test should:
+     - Start controller manager in background
+     - Wait for controller to be fully running
+     - Create active resources (NodeGroup with VPSieNodes)
+     - Send SIGTERM signal to controller process
+     - Verify controller enters shutdown state
+     - Verify health endpoints reflect shutdown state
+     - Verify controller stops accepting new work
+     - Verify existing reconciliations complete
+     - Verify controller exits within 30 second timeout
+     - Verify no resource leaks
+
+  3. Add TestSignalHandling_MultipleSignals:
+     - Start controller
+     - Send first SIGTERM - verify graceful shutdown starts
+     - Send second SIGTERM - verify immediate exit
+     - Test SIGINT and SIGQUIT signals similarly
+
+  4. Add TestShutdownWithActiveReconciliation:
+     - Start controller
+     - Create NodeGroup triggering long reconciliation
+     - Send SIGTERM during reconciliation
+     - Verify reconciliation completes before shutdown
+     - Verify status is saved correctly
+
+  5. Add helper functions:
+     - startControllerInBackground() - Returns process ID
+     - waitForControllerReady() - Polls health endpoint
+     - sendSignal(pid, signal) - Send signal to process
+     - waitForShutdown() - Wait for process to exit
+
+  Note: Use exec.Command to run controller as separate process for realistic signal testing.
+
+  Prompt 4: Leader Election Integration Tests
+
+  Implement leader election integration tests with multiple controller instances.
+
+  Requirements:
+  1. Create TestLeaderElection_Integration in test/integration/controller_integration_test.go
+
+  2. Test should:
+     - Start 3 controller instances with leader election enabled
+     - Use same leader-election-id "test-leader"
+     - Verify only one instance becomes leader
+     - Verify non-leaders have /readyz returning 503
+     - Verify leader has /readyz returning 200
+     - Create NodeGroup and verify only leader reconciles
+
+  3. Add TestLeaderElection_Handoff:
+     - Start 2 controllers with leader election
+     - Identify current leader
+     - Stop leader controller
+     - Verify remaining controller becomes leader within 15 seconds
+     - Verify new leader takes over reconciliation
+     - Verify no work is lost during handoff
+
+  4. Add TestLeaderElection_SplitBrain:
+     - Start 3 controllers
+     - Simulate network partition (block one controller)
+     - Verify system maintains single leader
+     - Restore network connectivity
+     - Verify leader election converges correctly
+
+  5. Helper functions needed:
+     - startMultipleControllers(count) - Start N controllers
+     - identifyLeader(controllers) - Find which is leader
+     - blockNetworkAccess(controller) - Simulate partition
+     - verifyLeaderMetrics() - Check leader election metrics
+
+  Note: Use different ports for each controller instance. Use Kubernetes Lease objects for leader election.
+
+  Prompt 5: End-to-End Scale Testing with Mock VPSie
+
+  Implement comprehensive end-to-end scaling tests using the mock VPSie API.
+
+  Requirements:
+  1. Create TestScaleUp_EndToEnd in test/integration/controller_integration_test.go
+
+  2. Test scale-up scenario:
+     - Start controller with mock VPSie server
+     - Create NodeGroup with minNodes=1, maxNodes=5
+     - Verify initial VPSieNode creation
+     - Simulate unschedulable pod events
+     - Verify controller scales up to 2 nodes
+     - Verify VPSie API CreateVM called
+     - Simulate VM becoming ready
+     - Verify VPSieNode status updates
+     - Continue scaling up to maxNodes
+     - Verify scaling stops at maxNodes
+
+  3. Add TestScaleDown_EndToEnd:
+     - Start with NodeGroup at 5 nodes
+     - Simulate low utilization
+     - Verify controller identifies underutilized nodes
+     - Verify scale-down respects cooldown period
+     - Verify graceful node draining
+     - Verify VPSie API DeleteVM called
+     - Scale down to minNodes
+     - Verify won't scale below minNodes
+
+  4. Add TestMixedScaling_EndToEnd:
+     - Rapid scale-up followed by scale-down
+     - Verify no race conditions
+     - Verify metrics accurately track changes
+     - Test concurrent NodeGroups scaling
+
+  5. Add TestScalingWithFailures:
+     - Simulate VPSie API failures during scale-up
+     - Verify retry with exponential backoff
+     - Verify partial success handling
+     - Test recovery after API comes back
+
+  Note: Use mock server request tracking to verify correct API call sequence and parameters.
+
+  Prompt 6: Performance and Load Testing
+
+  Create performance and load tests for the autoscaler controller.
+
+  Requirements:
+  1. Create test/integration/performance_test.go with load tests
+
+  2. TestControllerLoad_100NodeGroups:
+     - Create 100 NodeGroups rapidly
+     - Measure reconciliation latency for each
+     - Verify all NodeGroups reconcile within 5 minutes
+     - Track memory usage and verify no leaks
+     - Verify metrics endpoint responds under load
+
+  3. TestHighChurnRate:
+     - Continuously create and delete NodeGroups
+     - 10 creates/deletes per second for 1 minute
+     - Verify no deadlocks or race conditions
+     - Verify eventual consistency
+     - Check error rate stays below 1%
+
+  4. TestLargeScaleReconciliation:
+     - Create NodeGroup with 100 nodes
+     - Trigger reconciliation of all nodes
+     - Measure time to complete
+     - Verify VPSie API calls are rate limited properly
+     - Verify no thundering herd problem
+
+  5. Add benchmarks:
+     - BenchmarkNodeGroupReconciliation
+     - BenchmarkVPSieNodeStatusUpdate
+     - BenchmarkMetricsCollection
+     - BenchmarkHealthCheckLatency
+
+  6. Resource tracking:
+     - Monitor CPU usage
+     - Track memory allocations
+     - Count goroutines
+     - Measure API call latency
+     - Generate performance report
+
+  Note: These tests should be tagged with // +build performance to run separately.
+
+  Prompt 7: Documentation and Test Utilities
+
+  Create comprehensive test utilities and documentation for Phase 3 testing.
+
+  Requirements:
+  1. Create test/integration/utils_test.go with shared utilities:
+     - TestCluster struct with setup/teardown
+     - ControllerInstance with start/stop/health methods
+     - MockVPSieServer management
+     - Metric parsing utilities
+     - Event watching utilities
+     - Resource creation helpers
+
+  2. Add test fixtures in test/integration/fixtures/:
+     - sample-nodegroup.yaml
+     - sample-vpsienode.yaml
+     - invalid-configs.yaml
+     - stress-test-configs.yaml
+
+  3. Update test/integration/README.md with:
+     - Complete list of integration tests
+     - Performance test results
+     - Troubleshooting common issues
+     - How to run specific test suites
+     - CI/CD integration guide
+     - Mock server configuration
+     - Environment variables needed
+
+  4. Create Makefile targets:
+     - make test-integration-basic (CRUD tests only)
+     - make test-integration-runtime (controller runtime tests)
+     - make test-integration-scale (scaling tests)
+     - make test-integration-performance (load tests)
+     - make test-integration-all (complete suite)
+     - make test-coverage-integration (with coverage report)
+
+  5. Add GitHub Actions workflow:
+     - .github/workflows/integration-tests.yml
+     - Run on PR and main branch
+     - Set up test cluster
+     - Run integration tests in parallel
+     - Upload test results and coverage
+     - Performance regression detection
+
+  Note: Include examples of running tests locally vs CI environment.
+
+  Summary Usage
+
+  To implement Phase 3 completely, execute these prompts in order:
+
+  1. First: Implement the mock VPSie API server (Prompt 1)
+  2. Second: Add controller runtime tests with health/metrics (Prompt 2)
+  3. Third: Add graceful shutdown tests (Prompt 3)
+  4. Fourth: Implement leader election tests (Prompt 4)
+  5. Fifth: Create end-to-end scaling tests (Prompt 5)
+  6. Sixth: Add performance tests (Prompt 6)
+  7. Finally: Create utilities and documentation (Prompt 7)
+
+  Each prompt builds on the previous ones, creating a comprehensive integration test suite that validates all aspects of the autoscaler's functionality against a real Kubernetes cluster with mocked VPSie API.
