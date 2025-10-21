@@ -1,0 +1,169 @@
+# Sample VPSieNode fixture for integration testing
+# Represents a node in Provisioning state
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: VPSieNode
+metadata:
+  name: sample-vpsienode-provisioning
+  namespace: vpsie-autoscaler-test
+  labels:
+    app: vpsie-autoscaler
+    nodegroup: sample-nodegroup
+  ownerReferences:
+  - apiVersion: autoscaler.vpsie.com/v1alpha1
+    kind: NodeGroup
+    name: sample-nodegroup
+    uid: "00000000-0000-0000-0000-000000000000"
+    controller: true
+    blockOwnerDeletion: true
+spec:
+  vmID: 1001
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+  firewallID: "fw-456"
+  backupEnabled: false
+  tags:
+    - "kubernetes"
+    - "autoscaler"
+    - "test"
+  notes: "Test VPSieNode - Provisioning"
+status:
+  phase: Provisioning
+  conditions:
+  - type: Provisioned
+    status: "False"
+    reason: "Creating"
+    message: "VM is being provisioned"
+    lastTransitionTime: "2024-01-01T00:00:00Z"
+  lastUpdated: "2024-01-01T00:00:00Z"
+
+---
+# Sample VPSieNode in Running state
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: VPSieNode
+metadata:
+  name: sample-vpsienode-running
+  namespace: vpsie-autoscaler-test
+  labels:
+    app: vpsie-autoscaler
+    nodegroup: sample-nodegroup
+spec:
+  vmID: 1002
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+  firewallID: "fw-456"
+  backupEnabled: false
+  tags:
+    - "kubernetes"
+    - "autoscaler"
+status:
+  phase: Running
+  ipAddress: "192.168.1.100"
+  ipv6Address: "2001:db8::1"
+  hostname: "k8s-node-1002"
+  conditions:
+  - type: Provisioned
+    status: "True"
+    reason: "VMReady"
+    message: "VM has been successfully provisioned"
+    lastTransitionTime: "2024-01-01T00:01:00Z"
+  - type: NetworkConfigured
+    status: "True"
+    reason: "NetworkReady"
+    message: "Network interfaces configured"
+    lastTransitionTime: "2024-01-01T00:02:00Z"
+  lastUpdated: "2024-01-01T00:05:00Z"
+
+---
+# Sample VPSieNode in Ready state (joined cluster)
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: VPSieNode
+metadata:
+  name: sample-vpsienode-ready
+  namespace: vpsie-autoscaler-test
+  labels:
+    app: vpsie-autoscaler
+    nodegroup: sample-nodegroup
+spec:
+  vmID: 1003
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+status:
+  phase: Ready
+  ipAddress: "192.168.1.101"
+  ipv6Address: "2001:db8::2"
+  hostname: "k8s-node-1003"
+  nodeName: "k8s-node-1003"
+  conditions:
+  - type: Provisioned
+    status: "True"
+    reason: "VMReady"
+    message: "VM has been successfully provisioned"
+    lastTransitionTime: "2024-01-01T00:01:00Z"
+  - type: NetworkConfigured
+    status: "True"
+    reason: "NetworkReady"
+    message: "Network interfaces configured"
+    lastTransitionTime: "2024-01-01T00:02:00Z"
+  - type: KubernetesJoined
+    status: "True"
+    reason: "NodeJoined"
+    message: "Node has joined the Kubernetes cluster"
+    lastTransitionTime: "2024-01-01T00:10:00Z"
+  lastUpdated: "2024-01-01T00:15:00Z"
+
+---
+# Sample VPSieNode in Failed state
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: VPSieNode
+metadata:
+  name: sample-vpsienode-failed
+  namespace: vpsie-autoscaler-test
+  labels:
+    app: vpsie-autoscaler
+    nodegroup: sample-nodegroup
+spec:
+  vmID: 1004
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+status:
+  phase: Failed
+  conditions:
+  - type: Provisioned
+    status: "False"
+    reason: "ProvisioningFailed"
+    message: "Failed to provision VM: quota exceeded"
+    lastTransitionTime: "2024-01-01T00:01:00Z"
+  lastUpdated: "2024-01-01T00:01:30Z"
+
+---
+# Sample VPSieNode being terminated
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: VPSieNode
+metadata:
+  name: sample-vpsienode-terminating
+  namespace: vpsie-autoscaler-test
+  labels:
+    app: vpsie-autoscaler
+    nodegroup: sample-nodegroup
+  finalizers:
+  - vpsienode.autoscaler.vpsie.com/finalizer
+spec:
+  vmID: 1005
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+status:
+  phase: Terminating
+  ipAddress: "192.168.1.102"
+  hostname: "k8s-node-1005"
+  conditions:
+  - type: Terminating
+    status: "True"
+    reason: "DeletionRequested"
+    message: "Node is being terminated"
+    lastTransitionTime: "2024-01-01T01:00:00Z"
+  lastUpdated: "2024-01-01T01:00:05Z"

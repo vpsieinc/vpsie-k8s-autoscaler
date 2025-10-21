@@ -1,0 +1,369 @@
+# Stress test configurations for load and performance testing
+# These configurations are designed to test controller behavior under high load
+
+---
+# Stress Test 1: 10 NodeGroups with varying sizes
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: stress-nodegroup-01
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    test-batch: "1"
+spec:
+  minNodes: 5
+  maxNodes: 20
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: stress-nodegroup-02
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    test-batch: "1"
+spec:
+  minNodes: 3
+  maxNodes: 15
+  datacenterID: "dc-eu-west-1"
+  offeringID: "medium-4cpu-8gb"
+  sshKeyID: "key-123"
+
+---
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: stress-nodegroup-03
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    test-batch: "1"
+spec:
+  minNodes: 2
+  maxNodes: 10
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: stress-nodegroup-04
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    test-batch: "1"
+spec:
+  minNodes: 1
+  maxNodes: 5
+  datacenterID: "dc-us-east-1"
+  offeringID: "medium-4cpu-8gb"
+  sshKeyID: "key-123"
+
+---
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: stress-nodegroup-05
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    test-batch: "1"
+spec:
+  minNodes: 10
+  maxNodes: 30
+  datacenterID: "dc-eu-west-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: stress-nodegroup-06
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    test-batch: "2"
+spec:
+  minNodes: 4
+  maxNodes: 12
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: stress-nodegroup-07
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    test-batch: "2"
+spec:
+  minNodes: 2
+  maxNodes: 8
+  datacenterID: "dc-eu-west-1"
+  offeringID: "medium-4cpu-8gb"
+  sshKeyID: "key-123"
+
+---
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: stress-nodegroup-08
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    test-batch: "2"
+spec:
+  minNodes: 6
+  maxNodes: 18
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: stress-nodegroup-09
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    test-batch: "2"
+spec:
+  minNodes: 3
+  maxNodes: 9
+  datacenterID: "dc-us-east-1"
+  offeringID: "medium-4cpu-8gb"
+  sshKeyID: "key-123"
+
+---
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: stress-nodegroup-10
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    test-batch: "2"
+spec:
+  minNodes: 8
+  maxNodes: 25
+  datacenterID: "dc-eu-west-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+# Stress Test 2: Large single NodeGroup (100 nodes)
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: stress-large-nodegroup
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress-large
+    test-scenario: single-large
+spec:
+  minNodes: 100
+  maxNodes: 100
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+  tags:
+    - "stress-test"
+    - "large-scale"
+  notes: "Stress test: 100 nodes in single NodeGroup"
+
+---
+# Stress Test 3: NodeGroup with maximum features enabled
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: stress-full-featured-nodegroup
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    test-scenario: full-featured
+spec:
+  minNodes: 5
+  maxNodes: 15
+  datacenterID: "dc-us-east-1"
+  offeringID: "medium-4cpu-8gb"
+  sshKeyID: "key-123"
+  firewallID: "fw-456"
+  backupEnabled: true
+  nodeLabels:
+    node.kubernetes.io/instance-type: "medium-4cpu-8gb"
+    topology.kubernetes.io/region: "us-east-1"
+    workload-type: "stress-test"
+    stress-test-id: "full-featured"
+    test-timestamp: "2024-01-01"
+  nodeTaints:
+  - key: "dedicated"
+    value: "stress-test"
+    effect: "NoSchedule"
+  - key: "workload"
+    value: "intensive"
+    effect: "NoExecute"
+  tags:
+    - "kubernetes"
+    - "autoscaler"
+    - "stress-test"
+    - "full-featured"
+    - "test-batch-3"
+  notes: "Stress test NodeGroup with all optional features enabled for maximum complexity"
+
+---
+# Stress Test 4: Rapid churn test - minimal configuration for fast creation/deletion
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: stress-churn-template
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress-churn
+    test-scenario: rapid-churn
+spec:
+  minNodes: 1
+  maxNodes: 2
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+# Stress Test 5: VPSieNodes for concurrent operations testing
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: VPSieNode
+metadata:
+  name: stress-vpsienode-01
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    nodegroup: stress-nodegroup-01
+spec:
+  vmID: 2001
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: VPSieNode
+metadata:
+  name: stress-vpsienode-02
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    nodegroup: stress-nodegroup-01
+spec:
+  vmID: 2002
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: VPSieNode
+metadata:
+  name: stress-vpsienode-03
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    nodegroup: stress-nodegroup-01
+spec:
+  vmID: 2003
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: VPSieNode
+metadata:
+  name: stress-vpsienode-04
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    nodegroup: stress-nodegroup-02
+spec:
+  vmID: 2004
+  datacenterID: "dc-eu-west-1"
+  offeringID: "medium-4cpu-8gb"
+  sshKeyID: "key-123"
+
+---
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: VPSieNode
+metadata:
+  name: stress-vpsienode-05
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    nodegroup: stress-nodegroup-02
+spec:
+  vmID: 2005
+  datacenterID: "dc-eu-west-1"
+  offeringID: "medium-4cpu-8gb"
+  sshKeyID: "key-123"
+
+---
+# Stress Test 6: Edge case - NodeGroup at exactly the limit
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: stress-at-limit
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    test-scenario: at-limit
+spec:
+  minNodes: 50
+  maxNodes: 50
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+  notes: "NodeGroup configured at exactly minNodes=maxNodes to test edge case"
+
+---
+# Stress Test 7: Different datacenters for multi-region testing
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: stress-multi-region-us
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    test-scenario: multi-region
+    region: us
+spec:
+  minNodes: 3
+  maxNodes: 10
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: stress-multi-region-eu
+  namespace: vpsie-autoscaler-test
+  labels:
+    test-type: stress
+    test-scenario: multi-region
+    region: eu
+spec:
+  minNodes: 3
+  maxNodes: 10
+  datacenterID: "dc-eu-west-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"

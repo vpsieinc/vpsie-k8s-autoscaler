@@ -61,6 +61,53 @@ test-integration:
 	@echo "Running integration tests..."
 	@go test -v -tags=integration ./test/integration/...
 
+## test-integration-basic: Run basic CRUD integration tests only
+test-integration-basic:
+	@echo "Running basic integration tests (CRUD)..."
+	@go test -v -tags=integration ./test/integration/ -run "TestNodeGroup_CRUD|TestVPSieNode_CRUD|TestConfigurationValidation"
+
+## test-integration-runtime: Run controller runtime integration tests
+test-integration-runtime:
+	@echo "Running controller runtime integration tests..."
+	@go test -v -tags=integration -timeout 10m ./test/integration/ -run "TestHealth|TestMetrics|TestReconciliation"
+
+## test-integration-shutdown: Run graceful shutdown integration tests
+test-integration-shutdown:
+	@echo "Running graceful shutdown integration tests..."
+	@go test -v -tags=integration -timeout 10m ./test/integration/ -run "TestGracefulShutdown|TestSignalHandling|TestShutdownWithActive"
+
+## test-integration-leader: Run leader election integration tests
+test-integration-leader:
+	@echo "Running leader election integration tests..."
+	@go test -v -tags=integration -timeout 10m ./test/integration/ -run "TestLeaderElection"
+
+## test-integration-scale: Run scaling integration tests
+test-integration-scale:
+	@echo "Running scaling integration tests..."
+	@go test -v -tags=integration -timeout 15m ./test/integration/ -run "TestScale"
+
+## test-integration-all: Run complete integration test suite
+test-integration-all:
+	@echo "Running all integration tests..."
+	@go test -v -tags=integration -timeout 30m ./test/integration/
+
+## test-integration-performance: Run performance and load tests
+test-integration-performance: build
+	@echo "Running performance tests..."
+	@go test -v -tags=performance -timeout 30m ./test/integration/
+
+## test-performance-benchmarks: Run benchmarks only
+test-performance-benchmarks: build
+	@echo "Running performance benchmarks..."
+	@go test -v -tags=performance -bench=. -benchmem -timeout 30m ./test/integration/
+
+## test-coverage-integration: Run integration tests with coverage
+test-coverage-integration:
+	@echo "Running integration tests with coverage..."
+	@go test -v -tags=integration -coverprofile=coverage-integration.out -timeout 30m ./test/integration/
+	@go tool cover -html=coverage-integration.out -o coverage-integration.html
+	@echo "Integration coverage report: coverage-integration.html"
+
 ## test-e2e: Run end-to-end tests
 test-e2e:
 	@echo "Running E2E tests..."

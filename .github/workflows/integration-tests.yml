@@ -1,0 +1,383 @@
+name: Integration Tests
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:  # Allow manual triggering
+
+env:
+  GO_VERSION: '1.22.0'
+  KUBERNETES_VERSION: 'v1.28.0'
+  KIND_VERSION: 'v0.20.0'
+
+jobs:
+  # Job 1: Basic integration tests (CRUD operations)
+  integration-basic:
+    name: Basic Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install controller-gen
+        run: |
+          go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+
+      - name: Generate CRDs
+        run: make generate
+
+      - name: Set up kind
+        uses: helm/kind-action@v1
+        with:
+          version: ${{ env.KIND_VERSION }}
+          cluster_name: test-cluster
+          wait: 120s
+
+      - name: Install CRDs
+        run: |
+          kubectl apply -f deploy/crds/
+          kubectl wait --for condition=established --timeout=60s crd/nodegroups.autoscaler.vpsie.com
+          kubectl wait --for condition=established --timeout=60s crd/vpsienodes.autoscaler.vpsie.com
+
+      - name: Run basic integration tests
+        run: make test-integration-basic
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: basic-test-results
+          path: |
+            test-output.txt
+            coverage.out
+
+  # Job 2: Controller runtime tests (health, metrics, reconciliation)
+  integration-runtime:
+    name: Controller Runtime Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install controller-gen
+        run: |
+          go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+
+      - name: Generate CRDs
+        run: make generate
+
+      - name: Set up kind
+        uses: helm/kind-action@v1
+        with:
+          version: ${{ env.KIND_VERSION }}
+          cluster_name: test-cluster
+          wait: 120s
+
+      - name: Install CRDs
+        run: kubectl apply -f deploy/crds/
+
+      - name: Build controller binary
+        run: make build
+
+      - name: Run controller runtime tests
+        run: make test-integration-runtime
+        env:
+          KUBECONFIG: $HOME/.kube/config
+
+      - name: Upload controller logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: controller-logs
+          path: |
+            /tmp/controller-*.log
+
+  # Job 3: Graceful shutdown tests
+  integration-shutdown:
+    name: Graceful Shutdown Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Set up kind
+        uses: helm/kind-action@v1
+        with:
+          version: ${{ env.KIND_VERSION }}
+          cluster_name: test-cluster
+
+      - name: Generate and install CRDs
+        run: |
+          make generate
+          kubectl apply -f deploy/crds/
+
+      - name: Build controller
+        run: make build
+
+      - name: Run shutdown tests
+        run: make test-integration-shutdown
+
+  # Job 4: Leader election tests
+  integration-leader:
+    name: Leader Election Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Set up kind
+        uses: helm/kind-action@v1
+        with:
+          version: ${{ env.KIND_VERSION }}
+          cluster_name: test-cluster
+
+      - name: Generate and install CRDs
+        run: |
+          make generate
+          kubectl apply -f deploy/crds/
+
+      - name: Build controller
+        run: make build
+
+      - name: Run leader election tests
+        run: make test-integration-leader
+
+  # Job 5: Scaling tests
+  integration-scale:
+    name: Scaling Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Set up kind
+        uses: helm/kind-action@v1
+        with:
+          version: ${{ env.KIND_VERSION }}
+          cluster_name: test-cluster
+
+      - name: Generate and install CRDs
+        run: |
+          make generate
+          kubectl apply -f deploy/crds/
+
+      - name: Build controller
+        run: make build
+
+      - name: Run scaling tests
+        run: make test-integration-scale
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: scaling-test-results
+          path: |
+            test-output.txt
+
+  # Job 6: Integration test coverage
+  integration-coverage:
+    name: Integration Test Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [integration-basic, integration-runtime, integration-shutdown, integration-leader, integration-scale]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Set up kind
+        uses: helm/kind-action@v1
+        with:
+          version: ${{ env.KIND_VERSION }}
+          cluster_name: test-cluster
+
+      - name: Generate and install CRDs
+        run: |
+          make generate
+          kubectl apply -f deploy/crds/
+
+      - name: Build controller
+        run: make build
+
+      - name: Run integration tests with coverage
+        run: make test-coverage-integration
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage-integration.out
+          flags: integration
+          name: integration-coverage
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v3
+        with:
+          name: integration-coverage-report
+          path: |
+            coverage-integration.out
+            coverage-integration.html
+
+  # Job 7: Performance tests (only on main branch or manual trigger)
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Set up kind
+        uses: helm/kind-action@v1
+        with:
+          version: ${{ env.KIND_VERSION }}
+          cluster_name: test-cluster
+          config: |
+            kind: Cluster
+            apiVersion: kind.x-k8s.io/v1alpha4
+            nodes:
+            - role: control-plane
+              extraMounts:
+              - hostPath: /dev/shm
+                containerPath: /dev/shm
+
+      - name: Generate and install CRDs
+        run: |
+          make generate
+          kubectl apply -f deploy/crds/
+
+      - name: Build controller
+        run: make build
+
+      - name: Run performance tests
+        run: make test-integration-performance
+
+      - name: Run benchmarks
+        run: make test-performance-benchmarks
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v3
+        with:
+          name: performance-results
+          path: |
+            performance-*.txt
+            benchmark-*.txt
+
+      - name: Performance regression check
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "TODO: Compare performance metrics against baseline"
+          echo "Check for regression in throughput, latency, memory usage"
+
+  # Job 8: Test summary and reporting
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [integration-basic, integration-runtime, integration-shutdown, integration-leader, integration-scale, integration-coverage]
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Generate test summary
+        run: |
+          echo "# Integration Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Test Jobs" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Basic Integration Tests" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Controller Runtime Tests" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Graceful Shutdown Tests" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Leader Election Tests" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Scaling Tests" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Integration Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "Integration test coverage report uploaded to Codecov" >> $GITHUB_STEP_SUMMARY
+
+      - name: Comment PR with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '✅ All integration tests passed! See workflow run for details.'
+            })

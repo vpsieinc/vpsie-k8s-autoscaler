@@ -1,0 +1,213 @@
+# Invalid NodeGroup configurations for negative testing
+# These configurations should fail validation
+
+---
+# Invalid: minNodes > maxNodes
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: invalid-min-greater-than-max
+  namespace: vpsie-autoscaler-test
+  annotations:
+    test.error: "minNodes cannot be greater than maxNodes"
+spec:
+  minNodes: 10
+  maxNodes: 5  # Invalid: less than minNodes
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+# Invalid: minNodes is negative
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: invalid-negative-min-nodes
+  namespace: vpsie-autoscaler-test
+  annotations:
+    test.error: "minNodes must be >= 0"
+spec:
+  minNodes: -1  # Invalid: negative value
+  maxNodes: 5
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+# Invalid: maxNodes is zero
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: invalid-zero-max-nodes
+  namespace: vpsie-autoscaler-test
+  annotations:
+    test.error: "maxNodes must be > 0"
+spec:
+  minNodes: 0
+  maxNodes: 0  # Invalid: must be at least 1
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+# Invalid: missing required field datacenterID
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: invalid-missing-datacenter
+  namespace: vpsie-autoscaler-test
+  annotations:
+    test.error: "datacenterID is required"
+spec:
+  minNodes: 1
+  maxNodes: 5
+  # datacenterID: missing  # Invalid: required field
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+# Invalid: missing required field offeringID
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: invalid-missing-offering
+  namespace: vpsie-autoscaler-test
+  annotations:
+    test.error: "offeringID is required"
+spec:
+  minNodes: 1
+  maxNodes: 5
+  datacenterID: "dc-us-east-1"
+  # offeringID: missing  # Invalid: required field
+  sshKeyID: "key-123"
+
+---
+# Invalid: missing required field sshKeyID
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: invalid-missing-sshkey
+  namespace: vpsie-autoscaler-test
+  annotations:
+    test.error: "sshKeyID is required"
+spec:
+  minNodes: 1
+  maxNodes: 5
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  # sshKeyID: missing  # Invalid: required field
+
+---
+# Invalid: empty datacenterID
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: invalid-empty-datacenter
+  namespace: vpsie-autoscaler-test
+  annotations:
+    test.error: "datacenterID cannot be empty"
+spec:
+  minNodes: 1
+  maxNodes: 5
+  datacenterID: ""  # Invalid: empty string
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+# Invalid: extremely large maxNodes (over reasonable limit)
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: invalid-excessive-max-nodes
+  namespace: vpsie-autoscaler-test
+  annotations:
+    test.error: "maxNodes exceeds reasonable limit"
+spec:
+  minNodes: 1
+  maxNodes: 10000  # Invalid: unreasonably large
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+# Invalid VPSieNode: missing required vmID
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: VPSieNode
+metadata:
+  name: invalid-vpsienode-no-vmid
+  namespace: vpsie-autoscaler-test
+  annotations:
+    test.error: "vmID is required"
+spec:
+  # vmID: missing  # Invalid: required field
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+# Invalid VPSieNode: negative vmID
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: VPSieNode
+metadata:
+  name: invalid-vpsienode-negative-vmid
+  namespace: vpsie-autoscaler-test
+  annotations:
+    test.error: "vmID must be positive"
+spec:
+  vmID: -100  # Invalid: negative
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+# Invalid VPSieNode: zero vmID
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: VPSieNode
+metadata:
+  name: invalid-vpsienode-zero-vmid
+  namespace: vpsie-autoscaler-test
+  annotations:
+    test.error: "vmID must be positive"
+spec:
+  vmID: 0  # Invalid: zero
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+
+---
+# Invalid: malformed node labels (invalid key)
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: invalid-malformed-labels
+  namespace: vpsie-autoscaler-test
+  annotations:
+    test.error: "invalid label key format"
+spec:
+  minNodes: 1
+  maxNodes: 3
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+  nodeLabels:
+    "invalid label key with spaces": "value"  # Invalid: label key with spaces
+
+---
+# Invalid: malformed node taints (missing required fields)
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: invalid-malformed-taints
+  namespace: vpsie-autoscaler-test
+  annotations:
+    test.error: "taint missing required fields"
+spec:
+  minNodes: 1
+  maxNodes: 3
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"
+  nodeTaints:
+  - key: "dedicated"
+    # value: missing
+    # effect: missing  # Invalid: missing required fields

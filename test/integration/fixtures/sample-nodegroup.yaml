@@ -1,0 +1,97 @@
+# Sample NodeGroup fixture for integration testing
+# This represents a standard production NodeGroup configuration
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: sample-nodegroup
+  namespace: vpsie-autoscaler-test
+  labels:
+    app: vpsie-autoscaler
+    environment: test
+  annotations:
+    description: "Sample NodeGroup for integration testing"
+spec:
+  # Minimum number of nodes in this group
+  minNodes: 2
+
+  # Maximum number of nodes in this group
+  maxNodes: 10
+
+  # Datacenter where nodes will be provisioned
+  datacenterID: "dc-us-east-1"
+
+  # Instance offering (CPU, RAM, disk configuration)
+  offeringID: "small-2cpu-4gb"
+
+  # SSH key for node access
+  sshKeyID: "key-123"
+
+  # Optional: Firewall configuration
+  firewallID: "fw-456"
+
+  # Optional: Enable automated backups
+  backupEnabled: false
+
+  # Optional: Node labels to apply to Kubernetes nodes
+  nodeLabels:
+    node.kubernetes.io/instance-type: "small-2cpu-4gb"
+    topology.kubernetes.io/region: "us-east-1"
+    workload-type: "general"
+
+  # Optional: Node taints
+  nodeTaints:
+  - key: "dedicated"
+    value: "compute"
+    effect: "NoSchedule"
+
+  # Optional: Resource tags for VPSie VMs
+  tags:
+    - "kubernetes"
+    - "autoscaler"
+    - "test"
+
+  # Optional: Notes for VM documentation
+  notes: "Managed by VPSie Kubernetes Autoscaler - Test Environment"
+
+---
+# Sample NodeGroup with different configuration
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: sample-nodegroup-large
+  namespace: vpsie-autoscaler-test
+  labels:
+    app: vpsie-autoscaler
+    environment: test
+    size: large
+spec:
+  minNodes: 1
+  maxNodes: 5
+  datacenterID: "dc-eu-west-1"
+  offeringID: "medium-4cpu-8gb"
+  sshKeyID: "key-123"
+  firewallID: "fw-456"
+  backupEnabled: true
+  nodeLabels:
+    node.kubernetes.io/instance-type: "medium-4cpu-8gb"
+    topology.kubernetes.io/region: "eu-west-1"
+    workload-type: "memory-intensive"
+  tags:
+    - "kubernetes"
+    - "autoscaler"
+    - "memory-intensive"
+  notes: "High-memory workload NodeGroup"
+
+---
+# Sample NodeGroup with minimal configuration
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: NodeGroup
+metadata:
+  name: sample-nodegroup-minimal
+  namespace: vpsie-autoscaler-test
+spec:
+  minNodes: 1
+  maxNodes: 3
+  datacenterID: "dc-us-east-1"
+  offeringID: "small-2cpu-4gb"
+  sshKeyID: "key-123"

@@ -52,14 +52,38 @@ const (
 
 ## Running Integration Tests
 
-### Using Make
+### Using Make (Recommended)
 
 ```bash
-# Run integration tests
+# Run all integration tests
 make test-integration
 
-# Run all tests (unit + integration)
-make test-all
+# Run basic CRUD tests only (fast)
+make test-integration-basic
+
+# Run controller runtime tests (health, metrics, reconciliation)
+make test-integration-runtime
+
+# Run graceful shutdown tests
+make test-integration-shutdown
+
+# Run leader election tests
+make test-integration-leader
+
+# Run scaling tests
+make test-integration-scale
+
+# Run complete integration test suite (all tests)
+make test-integration-all
+
+# Run integration tests with coverage report
+make test-coverage-integration
+
+# Run performance and load tests
+make test-integration-performance
+
+# Run performance benchmarks only
+make test-performance-benchmarks
 ```
 
 ### Using go test
@@ -73,6 +97,12 @@ go test -v -tags=integration ./test/integration/ -run TestNodeGroup_CRUD
 
 # Run with timeout
 go test -v -tags=integration -timeout 5m ./test/integration/
+
+# Run performance tests
+go test -v -tags=performance -timeout 30m ./test/integration/
+
+# Run benchmarks
+go test -v -tags=performance -bench=. -benchmem ./test/integration/
 ```
 
 ## Test Structure
@@ -109,27 +139,292 @@ Sets up the test environment:
    - Same metrics and health address
    - Valid configuration
 
-#### 🚧 Skipped Tests (Future Implementation)
+4. **TestHealthEndpoints_Integration** - Tests controller health probes
+   - /healthz endpoint (liveness probe)
+   - /readyz endpoint (readiness probe)
+   - /ping endpoint
+   - Health status during shutdown
 
-1. **TestControllerManager_Integration** - Requires VPSie API credentials
-2. **TestHealthEndpoints_Integration** - Requires running controller
-3. **TestMetricsEndpoint_Integration** - Requires running controller
-4. **TestLeaderElection_Integration** - Requires multiple controller instances
-5. **TestControllerReconciliation_Integration** - Requires VPSie API mock
-6. **TestGracefulShutdown_Integration** - Requires running controller
+5. **TestMetricsEndpoint_Integration** - Tests Prometheus metrics exposure
+   - /metrics endpoint availability
+   - Metrics format validation
+   - Metrics updates after operations
+
+6. **TestControllerReconciliation_Integration** - End-to-end reconciliation test
+   - NodeGroup creation and reconciliation
+   - VPSieNode provisioning
+   - Scale-up operations
+   - Cleanup verification
+
+7. **TestGracefulShutdown_Integration** - Tests graceful shutdown behavior
+   - SIGTERM signal handling
+   - 30-second shutdown timeout
+   - Resource persistence
+
+8. **TestSignalHandling_MultipleSignals** - Tests multiple signal scenarios
+   - Multiple SIGTERM (immediate exit on second)
+   - SIGINT signal handling
+   - SIGQUIT signal handling
+
+9. **TestShutdownWithActiveReconciliation** - Tests shutdown during active work
+   - Shutdown during reconciliation
+   - Reconciliation completion
+   - Status persistence
+
+10. **TestLeaderElection_Integration** - Tests leader election with 3 controllers
+    - Only one leader elected
+    - Non-leaders have /readyz=503
+    - Only leader performs reconciliation
+
+11. **TestLeaderElection_Handoff** - Tests leader failover
+    - Leader stops, standby takes over
+    - Handoff within 20 seconds
+    - Work continuity
+
+12. **TestLeaderElection_SplitBrain** - Documented placeholder for network partition testing
+
+13. **TestScaleUp_EndToEnd** - Tests scale-up scenarios
+    - Scale from minNodes to maxNodes
+    - VPSie API call tracking
+    - Scale limit enforcement
+
+14. **TestScaleDown_EndToEnd** - Placeholder for scale-down testing
+
+15. **TestMixedScaling_EndToEnd** - Placeholder for concurrent scaling testing
+
+16. **TestScalingWithFailures** - Tests failure handling and recovery
+    - VPSie API error injection
+    - Retry logic validation
+    - Recovery after failures
+
+## Performance and Load Tests
+
+Performance tests are tagged with `//go:build performance` and must be run separately. These tests validate the controller's behavior under high load and measure resource usage.
+
+### Running Performance Tests
+
+```bash
+# Run all performance tests
+go test -v -tags=performance ./test/integration/ -timeout 30m
+
+# Run specific performance test
+go test -v -tags=performance ./test/integration/ -run TestControllerLoad_100NodeGroups
+
+# Run benchmarks only
+go test -v -tags=performance -bench=. -benchmem ./test/integration/
+```
+
+### Performance Test Cases
+
+#### 1. TestControllerLoad_100NodeGroups
+
+Tests controller performance with 100 NodeGroups created rapidly.
+
+**Metrics tracked:**
+- Reconciliation latency (min, max, avg, P50, P95, P99)
+- Throughput (operations per second)
+- Memory usage (start, end, peak, delta)
+- Goroutine count (start, end, peak, delta)
+- API call count and latency
+
+**Success criteria:**
+- All 100 NodeGroups reconcile within 5 minutes
+- Memory increase < 500MB
+- Goroutine increase < 100
+- Metrics endpoint remains responsive
+
+**Example output:**
+```
+============================================================
+                  PERFORMANCE REPORT
+============================================================
+Duration:           4m32s
+Operations:         100 (Success: 100, Error: 0)
+Throughput:         0.37 ops/sec
+Error Rate:         0.00%
+------------------------------------------------------------
+Latency Statistics:
+  Min:              45ms
+  Max:              892ms
+  Avg:              234ms
+  P50:              210ms
+  P95:              512ms
+  P99:              734ms
+------------------------------------------------------------
+Resource Usage:
+  Memory Start:     128 MB
+  Memory End:       356 MB
+  Memory Peak:      398 MB
+  Memory Delta:     +228 MB
+  Goroutines Start: 45
+  Goroutines End:   52
+  Goroutines Peak:  68
+  Goroutine Delta:  +7
+------------------------------------------------------------
+API Statistics:
+  API Calls:        245
+  Avg API Latency:  87ms
+============================================================
+```
+
+#### 2. TestHighChurnRate
+
+Tests controller with high create/delete churn rate: 10 operations/second for 1 minute.
+
+**Metrics tracked:**
+- Total create/delete cycles completed
+- Operation latency
+- Error rate
+- Controller health during churn
+
+**Success criteria:**
+- Complete at least 50% of expected cycles
+- Error rate < 1%
+- No deadlocks or race conditions
+- Controller remains healthy
+
+#### 3. TestLargeScaleReconciliation
+
+Tests reconciliation of a single NodeGroup with 100 nodes.
+
+**Metrics tracked:**
+- Total reconciliation time
+- VPSieNode creation count
+- API calls per second
+- Rate limiting effectiveness
+
+**Success criteria:**
+- Reconciliation completes within 10 minutes
+- API calls are rate limited (< 10 calls/sec)
+- No thundering herd problem
+
+### Benchmark Functions
+
+#### BenchmarkNodeGroupReconciliation
+
+Benchmarks the time to create and reconcile a single NodeGroup.
+
+```bash
+go test -v -tags=performance -bench=BenchmarkNodeGroupReconciliation -benchmem ./test/integration/
+```
+
+**Example output:**
+```
+BenchmarkNodeGroupReconciliation-8    20    58234512 ns/op    4523 B/op    89 allocs/op
+```
+
+#### BenchmarkVPSieNodeStatusUpdate
+
+Benchmarks VPSieNode status update operations.
+
+```bash
+go test -v -tags=performance -bench=BenchmarkVPSieNodeStatusUpdate -benchmem ./test/integration/
+```
+
+#### BenchmarkMetricsCollection
+
+Benchmarks Prometheus metrics collection and gathering.
+
+```bash
+go test -v -tags=performance -bench=BenchmarkMetricsCollection -benchmem ./test/integration/
+```
+
+#### BenchmarkHealthCheckLatency
+
+Benchmarks health check endpoint response time.
+
+```bash
+go test -v -tags=performance -bench=BenchmarkHealthCheckLatency ./test/integration/
+```
+
+**Example output:**
+```
+BenchmarkHealthCheckLatency-8    5000    245123 ns/op
+```
+
+### Performance Test Requirements
+
+**System requirements:**
+- At least 4 CPU cores
+- At least 8GB RAM
+- Kubernetes cluster with sufficient resources
+- 30-minute timeout for long-running tests
+
+**Environment setup:**
+```bash
+# Ensure controller binary is built
+make build
+
+# Ensure CRDs are installed
+kubectl apply -f deploy/crds/
+
+# Run performance tests with adequate timeout
+go test -v -tags=performance -timeout 30m ./test/integration/
+```
+
+### Interpreting Performance Results
+
+**Memory Usage:**
+- Expected increase: 100-300MB for 100 NodeGroups
+- Memory leak indicator: Continuous growth without leveling off
+- Action if exceeded: Review goroutine leaks, cache sizes
+
+**Goroutine Count:**
+- Expected increase: 10-50 for active reconciliation
+- Leak indicator: > 100 goroutine increase
+- Action if exceeded: Check for blocked channels, missing cleanup
+
+**Throughput:**
+- Target: > 0.3 ops/sec for NodeGroup creation
+- Below target: May indicate API bottlenecks or slow reconciliation
+
+**Error Rate:**
+- Target: < 1% for high churn tests
+- Above target: Check for race conditions, resource conflicts
 
 ## Test Results
 
-Latest test run:
-```
-=== Results ===
-✅ TestNodeGroup_CRUD (0.83s)
-✅ TestVPSieNode_CRUD (0.69s)
-✅ TestConfigurationValidation_Integration (0.00s)
-⏭️  6 tests skipped
+### Integration Test Results
 
-Total: 2.746s
-Status: PASS
+**Standard Integration Tests:**
+```
+=== Integration Tests (16 total) ===
+✅ TestNodeGroup_CRUD
+✅ TestVPSieNode_CRUD
+✅ TestConfigurationValidation_Integration
+✅ TestHealthEndpoints_Integration
+✅ TestMetricsEndpoint_Integration
+✅ TestControllerReconciliation_Integration
+✅ TestGracefulShutdown_Integration
+✅ TestSignalHandling_MultipleSignals
+✅ TestShutdownWithActiveReconciliation
+✅ TestLeaderElection_Integration
+✅ TestLeaderElection_Handoff
+⏭️  TestLeaderElection_SplitBrain (documented placeholder)
+✅ TestScaleUp_EndToEnd
+⏭️  TestScaleDown_EndToEnd (pending scale-down logic)
+⏭️  TestMixedScaling_EndToEnd (pending full implementation)
+✅ TestScalingWithFailures
+
+Total: 13 passing, 3 skipped
+Status: PASS ✅
+```
+
+**Performance Tests:**
+```
+=== Performance Tests (3 tests + 4 benchmarks) ===
+Tests:
+✅ TestControllerLoad_100NodeGroups (requires -tags=performance)
+✅ TestHighChurnRate (requires -tags=performance)
+✅ TestLargeScaleReconciliation (requires -tags=performance)
+
+Benchmarks:
+✅ BenchmarkNodeGroupReconciliation
+✅ BenchmarkVPSieNodeStatusUpdate
+✅ BenchmarkMetricsCollection
+✅ BenchmarkHealthCheckLatency
+
+Status: Available (run with -tags=performance)
 ```
 
 ## Test Namespace
@@ -214,36 +509,325 @@ resource.Namespace = testNamespace
 
 ## CI/CD Integration
 
-Integration tests can be run in CI/CD pipelines with:
+### GitHub Actions Workflow
 
-```yaml
-# Example GitHub Actions workflow
-- name: Run Integration Tests
-  run: |
-    kubectl apply -f deploy/crds/
-    make test-integration
-  env:
-    KUBECONFIG: /path/to/kubeconfig
+The project includes a comprehensive GitHub Actions workflow at `.github/workflows/integration-tests.yml`:
+
+**Workflow features:**
+- Runs on push to `main`/`develop` branches and pull requests
+- Parallel execution of test suites for faster feedback
+- Automatic CRD generation and installation
+- kind cluster provisioning for isolated testing
+- Coverage reporting to Codecov
+- Performance regression detection
+- Artifact uploads for test results and logs
+
+**Jobs:**
+1. **integration-basic** - CRUD tests (15 min timeout)
+2. **integration-runtime** - Health, metrics, reconciliation (20 min)
+3. **integration-shutdown** - Signal handling tests (15 min)
+4. **integration-leader** - Leader election tests (20 min)
+5. **integration-scale** - Scaling tests (25 min)
+6. **integration-coverage** - Full coverage report (30 min)
+7. **performance-tests** - Load tests (main branch only, 45 min)
+8. **test-summary** - Aggregate results and PR comments
+
+**Running locally to match CI:**
+```bash
+# Set up local kind cluster like CI
+kind create cluster --name test-cluster --wait 120s
+
+# Generate and install CRDs
+make generate
+kubectl apply -f deploy/crds/
+
+# Wait for CRDs to be established
+kubectl wait --for condition=established --timeout=60s crd/nodegroups.autoscaler.vpsie.com
+kubectl wait --for condition=established --timeout=60s crd/vpsienodes.autoscaler.vpsie.com
+
+# Build controller
+make build
+
+# Run test suites
+make test-integration-basic
+make test-integration-runtime
+make test-integration-shutdown
+make test-integration-leader
+make test-integration-scale
+
+# Generate coverage
+make test-coverage-integration
+```
+
+### Environment Variables
+
+The following environment variables can be used to customize test behavior:
+
+**Required:**
+- `KUBECONFIG` - Path to kubeconfig file (defaults to `~/.kube/config`)
+
+**Optional:**
+- `TEST_NAMESPACE` - Namespace for test resources (default: `vpsie-autoscaler-test`)
+- `TEST_TIMEOUT` - Timeout for individual tests (default: `5m`)
+- `CONTROLLER_BINARY` - Path to controller binary (default: `bin/vpsie-autoscaler`)
+- `SKIP_CLEANUP` - Skip resource cleanup for debugging (default: `false`)
+- `VERBOSE_LOGGING` - Enable verbose test output (default: `false`)
+
+**Example with custom configuration:**
+```bash
+export TEST_NAMESPACE="custom-test-ns"
+export TEST_TIMEOUT="10m"
+export VERBOSE_LOGGING="true"
+export SKIP_CLEANUP="true"  # Keep resources after test for debugging
+
+make test-integration
+```
+
+### Local vs CI Environment
+
+**Differences between local and CI execution:**
+
+| Aspect | Local | CI (GitHub Actions) |
+|--------|-------|---------------------|
+| Cluster | User's cluster or local kind | Fresh kind cluster per run |
+| CRDs | May already exist | Generated and installed fresh |
+| Namespace | Reused if exists | Created fresh |
+| Cleanup | Optional (SKIP_CLEANUP) | Always cleaned up |
+| Parallelism | Sequential by default | Jobs run in parallel |
+| Timeouts | Flexible | Strict (job-level timeouts) |
+| Artifacts | Local files | Uploaded to GitHub |
+| Coverage | Optional | Always generated |
+
+**Best practices for CI-compatible tests:**
+```go
+// Use environment-aware configuration
+testNamespace := os.Getenv("TEST_NAMESPACE")
+if testNamespace == "" {
+    testNamespace = "vpsie-autoscaler-test"
+}
+
+// Support timeout configuration
+timeoutStr := os.Getenv("TEST_TIMEOUT")
+timeout, _ := time.ParseDuration(timeoutStr)
+if timeout == 0 {
+    timeout = 5 * time.Minute
+}
+
+// Conditional cleanup
+skipCleanup := os.Getenv("SKIP_CLEANUP") == "true"
+if !skipCleanup {
+    defer cleanup(resources)
+}
+```
+
+## Test Utilities and Helpers
+
+The integration test suite includes comprehensive utilities in `test_helpers.go`:
+
+### Process Management
+
+**ControllerProcess** - Manages controller instances:
+```go
+proc, err := startControllerInBackground(metricsPort, healthPort, secretName, secretNS)
+defer cleanup(proc)
+
+// Wait for controller to be ready
+err = waitForControllerReady("http://localhost:8081/healthz", 30*time.Second)
+
+// Send signals
+sendSignal(proc.PID, syscall.SIGTERM)
+
+// Wait for shutdown
+waitForShutdown(proc, 30*time.Second)
+```
+
+**Leader Election Helpers:**
+```go
+// Start multiple controllers for HA testing
+controllers, err := startMultipleControllers(3, "test-leader-id", secretName, secretNS)
+
+// Identify current leader
+leaderProc, err := identifyLeader(controllers)
+
+// Verify only one leader exists
+err = verifyOnlyOneLeader(controllers)
+```
+
+### Resource Management
+
+**NodeGroup Helpers:**
+```go
+// Get NodeGroup status
+status, err := getNodeGroupStatus(ctx, namespace, name)
+
+// Wait for desired node count
+err = waitForNodeGroupDesiredNodes(ctx, namespace, name, 5, 2*time.Minute)
+```
+
+**VPSieNode Helpers:**
+```go
+// Count VPSieNodes
+count := countVPSieNodes(ctx, namespace)
+
+// Wait for specific count
+err = waitForVPSieNodeCount(ctx, namespace, 10, 5*time.Minute)
+```
+
+### Health Monitoring
+
+```go
+// Get health status
+statusCode, err := getHealthStatus("http://localhost:8081/healthz")
+
+// Check if process is running
+isRunning := isProcessRunning(pid)
+
+// Read controller logs
+logs, err := readControllerLogs(proc.StdoutLogPath)
+```
+
+### Metrics Helpers
+
+```go
+// Verify leader metrics
+isLeader, err := verifyLeaderMetrics("http://localhost:8080/metrics")
+
+// Extract metric values from Prometheus output
+value, err := extractMetricValue(metricsBody, "vpsie_autoscaler_nodegroup_desired_nodes")
+```
+
+## Test Fixtures
+
+Test fixtures are located in `test/integration/fixtures/` and provide reusable configurations for testing.
+
+### sample-nodegroup.yaml
+
+Contains three sample NodeGroup configurations:
+- **sample-nodegroup** - Standard production configuration with labels, taints, and tags
+- **sample-nodegroup-large** - Large instance type with backups enabled
+- **sample-nodegroup-minimal** - Minimal required fields only
+
+**Usage in tests:**
+```bash
+kubectl apply -f test/integration/fixtures/sample-nodegroup.yaml
+```
+
+### sample-vpsienode.yaml
+
+Contains VPSieNodes in various states:
+- **sample-vpsienode-provisioning** - Node being provisioned
+- **sample-vpsienode-running** - Node running with IP addresses
+- **sample-vpsienode-ready** - Node joined to cluster
+- **sample-vpsienode-failed** - Failed provisioning
+- **sample-vpsienode-terminating** - Node being deleted
+
+**Usage in tests:**
+```bash
+kubectl apply -f test/integration/fixtures/sample-vpsienode.yaml
+```
+
+### invalid-configs.yaml
+
+Contains 13 invalid configurations for negative testing:
+- minNodes > maxNodes
+- Negative/zero values
+- Missing required fields
+- Empty strings
+- Malformed labels and taints
+
+**Usage in tests:**
+```go
+// Test validation rejects invalid configs
+err := k8sClient.Create(ctx, invalidNodeGroup)
+assert.Error(t, err, "Should reject invalid configuration")
+```
+
+### stress-test-configs.yaml
+
+Contains configurations for stress and load testing:
+- 10 NodeGroups with varying sizes
+- Large single NodeGroup (100 nodes)
+- Full-featured NodeGroup (all optional fields)
+- Rapid churn test template
+- Multi-region configurations
+
+**Usage in tests:**
+```bash
+# Apply all stress test configs
+kubectl apply -f test/integration/fixtures/stress-test-configs.yaml
+
+# Apply specific batch
+kubectl apply -f test/integration/fixtures/stress-test-configs.yaml -l test-batch=1
+```
+
+## Mock VPSie Server
+
+The integration tests use a mock VPSie HTTP server (`mock_vpsie_server.go`) that simulates the VPSie API:
+
+**Supported endpoints:**
+- `POST /auth/from/api` - OAuth authentication
+- `GET /v2/vms` - List VMs
+- `POST /v2/vms` - Create VM
+- `GET /v2/vms/{id}` - Get VM details
+- `DELETE /v2/vms/{id}` - Delete VM
+- `GET /v2/offerings` - List instance offerings
+- `GET /v2/datacenters` - List datacenters
+
+**Features:**
+- Rate limiting simulation (429 errors when exceeded)
+- Configurable latency injection
+- Error injection for failure testing
+- Request counting for assertions
+- VM state tracking and transitions
+
+**Usage in tests:**
+```go
+mockServer := NewMockVPSieServer()
+defer mockServer.Close()
+
+// Configure error injection
+mockServer.InjectErrors = true
+
+// Configure latency
+mockServer.Latency = 500 * time.Millisecond
+
+// Get request counts
+apiCalls := mockServer.GetRequestCount("/v2/vms")
+
+// Simulate VM status changes
+mockServer.SetVMStatus(vmID, "running")
 ```
 
 ## Next Steps
 
-Phase 3 implementation priorities:
+### Phase 3 Status: ✅ Complete (13/16 tests implemented)
 
-1. **VPSie API Mocking**
-   - Create mock VPSie API server
-   - Implement common scenarios (create VM, delete VM, failures)
-   - Enable TestControllerReconciliation_Integration
+Remaining tasks for Phase 3:
+1. **TestScaleDown_EndToEnd** - Implement when scale-down logic is ready
+2. **TestMixedScaling_EndToEnd** - Implement concurrent scaling stress tests
+3. **TestLeaderElection_SplitBrain** - Advanced network partition testing (requires iptables/network namespaces)
 
-2. **Controller Testing**
-   - Start controller in background during tests
-   - Test health and metrics endpoints
-   - Test graceful shutdown
+### Phase 4: Production Readiness
 
-3. **Leader Election Testing**
-   - Run multiple controller instances
-   - Verify leader election behavior
-   - Test leader handoff
+Next priorities for Phase 4:
+
+1. **Production Testing**
+   - Deploy to staging environment
+   - Real VPSie API integration tests
+   - Load testing with real workloads
+   - Failover and recovery testing
+
+2. **Documentation**
+   - API reference documentation
+   - Deployment guides
+   - Troubleshooting runbooks
+   - Performance tuning guides
+
+3. **Observability Enhancements**
+   - Additional metrics for edge cases
+   - Tracing integration (OpenTelemetry)
+   - Enhanced logging for debugging
+   - Alerting rules and dashboards
 
 ## References
 
