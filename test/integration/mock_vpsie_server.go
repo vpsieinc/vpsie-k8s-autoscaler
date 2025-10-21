@@ -18,21 +18,21 @@ import (
 
 // MockVPSieServer is a mock HTTP server that simulates the VPSie API
 type MockVPSieServer struct {
-	server         *httptest.Server
-	mu             sync.RWMutex
-	vms            map[int]*vpsieclient.VPS
-	nextVMID       int
-	requestCounts  map[string]int
-	rateLimit      int
-	rateLimitReset time.Time
+	server          *httptest.Server
+	mu              sync.RWMutex
+	vms             map[int]*vpsieclient.VPS
+	nextVMID        int
+	requestCounts   map[string]int
+	rateLimit       int
+	rateLimitReset  time.Time
 	currentRequests int
 
 	// Configuration
-	AuthToken      string
-	TokenExpiry    time.Time
-	InjectErrors   bool
-	ErrorRate      float64 // 0.0 to 1.0
-	Latency        time.Duration
+	AuthToken    string
+	TokenExpiry  time.Time
+	InjectErrors bool
+	ErrorRate    float64 // 0.0 to 1.0
+	Latency      time.Duration
 }
 
 // NewMockVPSieServer creates and starts a new mock VPSie API server
@@ -279,22 +279,22 @@ func (m *MockVPSieServer) handleCreateVM(w http.ResponseWriter, r *http.Request)
 
 	// Create new VM
 	vm := &vpsieclient.VPS{
-		ID:           m.nextVMID,
-		Name:         req.Name,
-		Hostname:     req.Hostname,
-		Status:       "provisioning",
-		CPU:          4,
-		RAM:          8192,
-		Disk:         80,
-		Bandwidth:    1000,
-		IPAddress:    fmt.Sprintf("192.168.%d.%d", (m.nextVMID/256)%256, m.nextVMID%256),
-		IPv6Address:  fmt.Sprintf("2001:db8::%x", m.nextVMID),
-		OSName:       "Ubuntu",
-		OSVersion:    "22.04",
-		Tags:         req.Tags,
-		Notes:        req.Notes,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+		ID:          m.nextVMID,
+		Name:        req.Name,
+		Hostname:    req.Hostname,
+		Status:      "provisioning",
+		CPU:         4,
+		RAM:         8192,
+		Disk:        80,
+		Bandwidth:   1000,
+		IPAddress:   fmt.Sprintf("192.168.%d.%d", (m.nextVMID/256)%256, m.nextVMID%256),
+		IPv6Address: fmt.Sprintf("2001:db8::%x", m.nextVMID),
+		OSName:      "Ubuntu",
+		OSVersion:   "22.04",
+		Tags:        req.Tags,
+		Notes:       req.Notes,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
 	}
 
 	m.vms[m.nextVMID] = vm

@@ -9,9 +9,9 @@ Event-driven Kubernetes node autoscaler that dynamically provisions and optimize
 
 ## 🚧 Project Status
 
-**Current Phase:** Main Controller Integration Complete (v0.2.0-alpha) ✅
+**Current Phase:** Integration Testing Complete (v0.3.0-alpha) ✅
 
-**Last Updated:** October 20, 2025
+**Last Updated:** October 22, 2025
 
 ### ✅ Phase 1-2 Complete: Controller Implementation & Integration
 
@@ -35,14 +35,43 @@ Event-driven Kubernetes node autoscaler that dynamically provisions and optimize
 - ✅ CI/CD pipeline with automated testing, linting, and image builds
 - ✅ **Complete documentation and integration guides**
 
-### 🚧 Phase 3: Integration Testing (In Progress)
+### ✅ Phase 3 Complete: Integration Testing
 
-**Next Steps:**
-- [ ] Set up controller-runtime envtest framework
-- [ ] Implement full integration test suite
-- [ ] Add VPSie API mocking for testing
-- [ ] Test leader election with multiple replicas
-- [ ] End-to-end reconciliation testing
+**Comprehensive Integration Test Suite:**
+- ✅ **16 integration tests** (13 passing, 3 placeholders)
+  - NodeGroup and VPSieNode CRUD operations
+  - Controller runtime (health endpoints, metrics, reconciliation)
+  - Graceful shutdown and signal handling (SIGTERM, SIGINT, SIGQUIT)
+  - Leader election with multiple controller instances
+  - End-to-end scaling tests (scale-up, failure recovery)
+- ✅ **3 performance tests** with resource tracking
+  - 100 NodeGroups load test with latency percentiles (P50, P95, P99)
+  - High churn rate testing (10 ops/sec for 1 minute)
+  - Large-scale reconciliation (100 nodes per NodeGroup)
+- ✅ **4 benchmarks** for performance validation
+  - NodeGroup reconciliation, status updates, metrics collection, health checks
+- ✅ **Mock VPSie API server** (486 lines)
+  - Complete API simulation (OAuth, VM CRUD, offerings, datacenters)
+  - Rate limiting, error injection, latency simulation
+- ✅ **Test utilities and helpers** (592 lines)
+  - Process management for background controller testing
+  - Leader election helpers, resource helpers, health monitoring
+- ✅ **Test fixtures** (848 lines in 4 YAML files)
+  - Sample NodeGroup/VPSieNode configurations
+  - Invalid configs for negative testing
+  - Stress test configurations
+- ✅ **GitHub Actions CI/CD workflow** (383 lines, 8 parallel jobs)
+  - Automatic CRD generation and kind cluster setup
+  - Parallel test execution for faster feedback
+  - Coverage reporting to Codecov
+  - Performance regression detection
+- ✅ **10 new Makefile targets** for different test scenarios
+- ✅ **836 lines of integration test documentation**
+
+**Test Coverage:**
+- Total: 5,083 lines of test code and fixtures
+- Integration tests: 3,852 lines across 4 Go files
+- Documentation: 836 lines with comprehensive guides
 
 ### 📋 Phase 4-5: Production Readiness (Planned)
 
@@ -77,6 +106,51 @@ docker pull ghcr.io/vpsie/vpsie-k8s-autoscaler:main
 - `linux/arm64`
 
 ## Recent Updates
+
+### October 22, 2025 - Phase 3 Integration Testing Complete ✅
+
+**Major Milestone:** Comprehensive integration and performance testing suite
+
+**What's New:**
+- **Complete Integration Test Suite** ([test/integration/README.md](test/integration/README.md))
+  - 16 integration tests covering CRUD, controller runtime, shutdown, leader election, scaling
+  - 3 performance tests with resource tracking (memory, goroutines, latency percentiles)
+  - 4 benchmarks for performance validation
+  - Mock VPSie API server with complete endpoint simulation
+  - 5,083 lines of test code and fixtures
+
+- **GitHub Actions CI/CD Workflow** ([.github/workflows/integration-tests.yml](.github/workflows/integration-tests.yml))
+  - 8 parallel jobs for different test suites
+  - Automatic CRD generation and kind cluster provisioning
+  - Coverage reporting to Codecov
+  - Performance regression detection
+  - Artifact uploads for logs and test results
+
+- **Test Utilities and Fixtures**
+  - Process management for background controller testing
+  - Leader election helpers with multi-instance support
+  - Test fixtures with sample, invalid, and stress test configs
+  - Comprehensive test helpers (592 lines)
+
+- **Enhanced Makefile**
+  - 10 new test targets (`test-integration-basic`, `test-integration-runtime`, etc.)
+  - Performance benchmarks (`test-performance-benchmarks`)
+  - Coverage reporting (`test-coverage-integration`)
+
+**Running Tests:**
+```bash
+# Run basic integration tests
+make test-integration-basic
+
+# Run all integration tests
+make test-integration-all
+
+# Run performance tests
+make test-integration-performance
+
+# Run benchmarks
+make test-performance-benchmarks
+```
 
 ### October 20, 2025 - Controller Integration Complete ✅
 
@@ -126,13 +200,20 @@ docker pull ghcr.io/vpsie/vpsie-k8s-autoscaler:main
 - ⚡ **Leader Election:** HA deployment support with Kubernetes Lease objects
 - 🚀 **Event-Driven Scale-Up:** Automatic scaling based on unschedulable pods
 - 🔄 **Node Lifecycle Management:** 8-phase VPS provisioning and termination
-- 🧪 **Comprehensive Testing:** 66 tests with 60.2% overall coverage (97.1% for logging)
+- 🧪 **Comprehensive Testing:** 66 unit tests + 16 integration tests + 3 performance tests + 4 benchmarks
+  - Unit test coverage: 60.2% overall (97.1% for logging)
+  - Integration tests: 5,083 lines across 4 Go files and 4 fixture files
+  - Mock VPSie API server for isolated testing
+  - Performance tracking: memory, goroutines, latency percentiles (P50/P95/P99)
+- 🤖 **CI/CD Pipeline:** GitHub Actions with 8 parallel jobs
+  - Automated testing, linting, building, and image publishing
+  - Integration test workflow with kind cluster provisioning
+  - Coverage reporting to Codecov
+  - Performance regression detection
 - 🐳 **Container Images:** Multi-arch Docker images published to ghcr.io
-- 🔄 **CI/CD Pipeline:** Automated testing, linting, building, and image publishing
-- 📖 **Complete Documentation:** Integration guides, test reports, visual diagrams
+- 📖 **Complete Documentation:** Integration guides, test reports, visual diagrams, 836-line test README
 
 ### In Progress 🚧
-- 🧪 **Integration Testing:** envtest setup with full E2E scenarios
 - 🔽 **Scale-Down Logic:** Utilization-based node removal
 - 💰 **Cost Optimization:** VPSie instance type selection and rebalancing
 - 📦 **Helm Charts:** Production-ready deployment manifests
@@ -273,7 +354,14 @@ vpsie-k8s-autoscaler/
 ## Documentation
 
 ### Integration & Testing
-- **[INTEGRATION_COMPLETE.md](INTEGRATION_COMPLETE.md)** ⭐ - Quick reference guide
+- **[test/integration/README.md](test/integration/README.md)** ⭐ - **Complete integration testing guide (836 lines)**
+  - 16 integration tests + 3 performance tests + 4 benchmarks
+  - Test utilities and helpers documentation
+  - Test fixtures usage guide
+  - Performance testing guide with metrics interpretation
+  - CI/CD integration guide
+  - Environment variables reference
+- **[INTEGRATION_COMPLETE.md](INTEGRATION_COMPLETE.md)** - Quick reference guide
 - **[MAIN_CONTROLLER_UPDATE.md](MAIN_CONTROLLER_UPDATE.md)** - Detailed update summary
 - **[TEST_SUMMARY.md](TEST_SUMMARY.md)** - Complete test coverage report
 - **[docs/CONTROLLER_STARTUP_FLOW.md](docs/CONTROLLER_STARTUP_FLOW.md)** - Visual diagrams

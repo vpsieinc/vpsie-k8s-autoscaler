@@ -31,6 +31,21 @@ make coverage
 # Run integration tests (requires cluster)
 make test-integration
 
+# Run specific integration test suites
+make test-integration-basic          # CRUD tests only (fast)
+make test-integration-runtime        # Health, metrics, reconciliation
+make test-integration-shutdown       # Graceful shutdown tests
+make test-integration-leader         # Leader election tests
+make test-integration-scale          # Scaling tests
+make test-integration-all            # Complete integration suite
+
+# Run performance tests (requires cluster)
+make test-integration-performance    # Load tests (100 NodeGroups, high churn, large scale)
+make test-performance-benchmarks     # Benchmarks only
+
+# Run integration tests with coverage
+make test-coverage-integration
+
 # Run end-to-end tests (requires cluster)
 make test-e2e
 
