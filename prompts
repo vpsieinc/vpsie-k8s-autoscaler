@@ -1,302 +1,481 @@
-Create a mock VPSie API server for integration testing in the VPSie Kubernetes Node Autoscaler project.
+# VPSie Kubernetes Node Autoscaler - Phase 4: Production Readiness Prompts
 
-  Requirements:
-  1. Create a mock HTTP server that simulates VPSie API endpoints in test/integration/mock_vpsie_server.go
-  2. Implement the following endpoints:
-     - POST /oauth/token - Mock OAuth authentication
-     - GET /v2/vms - List VMs
-     - POST /v2/vms - Create VM
-     - GET /v2/vms/{id} - Get VM details
-     - DELETE /v2/vms/{id} - Delete VM
-     - GET /v2/offerings - List available instance types
-     - GET /v2/datacenters - List datacenters
-  3. Add rate limiting simulation (return 429 when exceeded)
-  4. Add configurable delays to simulate network latency
-  5. Support error injection for testing error handling
-  6. Include VM state transitions (provisioning -> running -> ready)
-  7. Return realistic response structures matching vpsieclient.VPS type
+## Overview
+These prompts guide the implementation of Phase 4 (Production Readiness) for the VPSie Kubernetes Node Autoscaler. Each prompt addresses critical production requirements identified through comprehensive project analysis. Execute these prompts in priority order to achieve production readiness.
 
-  The mock should:
-  - Run on a random available port during tests
-  - Support concurrent requests
-  - Track request counts for assertions
-  - Allow setting custom responses per test
-  - Simulate authentication token expiration
+---
 
-  Test scenarios to support:
-  - Successful VM creation and lifecycle
-  - Rate limiting (429 errors)
-  - Authentication failures
-  - Network timeouts
-  - VM provisioning failures
-  - Quota exceeded errors
+## Priority 1: Scale-Down Logic Implementation (BLOCKER)
 
-  Note: Use the existing MockVPSieClient in pkg/controller/vpsienode/mock_vpsie_client.go as reference for VM structure.
+**Context:** The pkg/scaler/ directory is empty. Scale-down logic is critical for production as it prevents resource waste and reduces costs.
 
-  Prompt 2: Controller Runtime Integration Tests with Health/Metrics
+**Requirements:**
+1. Implement pkg/scaler/scaler.go with ScaleDownManager:
+   - Identify underutilized nodes (CPU < 50%, Memory < 50%)
+   - Respect scale-down cooldown period (default 10 minutes)
+   - Implement node draining with pod eviction
+   - Verify no PDBs (PodDisruptionBudgets) are violated
+   - Check for non-reschedulable pods (local storage, node selectors)
+   - Implement graceful termination with timeout
 
-  Implement integration tests for the controller runtime with health check and metrics endpoints.
+2. Add pkg/scaler/metrics.go for utilization tracking:
+   - Collect node metrics from metrics-server
+   - Calculate rolling averages over 5-minute windows
+   - Track pod resource requests vs actual usage
+   - Identify cost-saving opportunities
 
-  Requirements:
-  1. Update test/integration/controller_integration_test.go to add:
-     - TestHealthEndpoints_Integration - Test /healthz, /readyz, /ping endpoints
-     - TestMetricsEndpoint_Integration - Test Prometheus metrics exposure
-     - TestControllerReconciliation_Integration - End-to-end reconciliation test
+3. Implement pkg/scaler/drain.go for safe node removal:
+   - Cordon node to prevent new pod scheduling
+   - Evict pods respecting grace periods
+   - Wait for pod termination
+   - Handle DaemonSets and static pods
+   - Verify workload migration success
 
-  2. TestHealthEndpoints_Integration should:
-     - Start the controller manager in background
-     - Wait for controller to be ready
-     - Test GET /healthz returns 200 OK
-     - Test GET /readyz returns 200 OK after controller is ready
-     - Test GET /ping returns "pong"
-     - Verify health status changes when controller shuts down
-     - Use the mock VPSie server from Prompt 1
+4. Create pkg/scaler/policies.go for configurable policies:
+   - Time-based scaling (business hours vs off-hours)
+   - Aggressive vs conservative modes
+   - Protected node annotations
+   - Cost optimization strategies
 
-  3. TestMetricsEndpoint_Integration should:
-     - Start controller with metrics enabled on port 18080
-     - Verify GET /metrics returns Prometheus format
-     - Verify all 22 registered metrics are exposed
-     - Check specific metrics:
-       * vpsie_autoscaler_nodegroup_desired_nodes
-       * vpsie_autoscaler_nodegroup_current_nodes
-       * vpsie_autoscaler_controller_reconcile_duration_seconds
-       * vpsie_autoscaler_vpsie_api_requests_total
-     - Create a NodeGroup and verify metrics update
-     - Parse metrics output and validate values
+5. Add comprehensive tests:
+   - Unit tests with 90% coverage
+   - Integration tests for scale-down scenarios
+   - Test PDB respect, failed evictions, timeout handling
 
-  4. TestControllerReconciliation_Integration should:
-     - Use mock VPSie API server
-     - Create a NodeGroup with minNodes=2
-     - Verify controller creates 2 VPSieNode resources
-     - Verify controller calls mock API to create VMs
-     - Simulate VM state transition to "running"
-     - Verify VPSieNode status updates to Ready
-     - Update NodeGroup to minNodes=3
-     - Verify controller creates additional VPSieNode
-     - Delete NodeGroup and verify cleanup
+**Expected Outcome:** Fully functional scale-down with safe node removal, cost optimization, and configurable policies.
 
-  Note: Controller should run in background with test-specific ports to avoid conflicts.
+---
 
-  Prompt 3: Graceful Shutdown and Signal Handling Tests
+## Priority 2: Deployment Manifests (BLOCKER)
 
-  Implement graceful shutdown and signal handling integration tests.
+**Context:** deploy/ directory lacks production deployment manifests. Helm chart is incomplete.
 
-  Requirements:
-  1. Implement TestGracefulShutdown_Integration in test/integration/controller_integration_test.go
+**Requirements:**
+1. Complete Helm chart in deploy/helm/vpsie-autoscaler/:
+   - Chart.yaml with proper versioning
+   - values.yaml with all configurable options
+   - templates/deployment.yaml with resource limits
+   - templates/rbac.yaml with minimal required permissions
+   - templates/configmap.yaml for configuration
+   - templates/secret.yaml for VPSie credentials
+   - templates/service.yaml for metrics exposure
+   - templates/servicemonitor.yaml for Prometheus
+   - templates/poddisruptionbudget.yaml for HA
+   - templates/networkpolicy.yaml for security
 
-  2. Test should:
-     - Start controller manager in background
-     - Wait for controller to be fully running
-     - Create active resources (NodeGroup with VPSieNodes)
-     - Send SIGTERM signal to controller process
-     - Verify controller enters shutdown state
-     - Verify health endpoints reflect shutdown state
-     - Verify controller stops accepting new work
-     - Verify existing reconciliations complete
-     - Verify controller exits within 30 second timeout
-     - Verify no resource leaks
+2. Create deploy/kubernetes/ for kubectl users:
+   - namespace.yaml
+   - rbac.yaml (ServiceAccount, ClusterRole, ClusterRoleBinding)
+   - deployment.yaml with leader election
+   - configmap.yaml with default configuration
+   - secret.yaml template
+   - service.yaml for metrics
+   - poddisruptionbudget.yaml
 
-  3. Add TestSignalHandling_MultipleSignals:
-     - Start controller
-     - Send first SIGTERM - verify graceful shutdown starts
-     - Send second SIGTERM - verify immediate exit
-     - Test SIGINT and SIGQUIT signals similarly
+3. Add deploy/examples/ with production configs:
+   - small-cluster.yaml (1-10 nodes)
+   - medium-cluster.yaml (10-50 nodes)
+   - large-cluster.yaml (50+ nodes)
+   - multi-region.yaml
+   - spot-instances.yaml
 
-  4. Add TestShutdownWithActiveReconciliation:
-     - Start controller
-     - Create NodeGroup triggering long reconciliation
-     - Send SIGTERM during reconciliation
-     - Verify reconciliation completes before shutdown
-     - Verify status is saved correctly
+4. Create deploy/kustomize/ for GitOps:
+   - base/ with core resources
+   - overlays/dev/
+   - overlays/staging/
+   - overlays/production/
 
-  5. Add helper functions:
-     - startControllerInBackground() - Returns process ID
-     - waitForControllerReady() - Polls health endpoint
-     - sendSignal(pid, signal) - Send signal to process
-     - waitForShutdown() - Wait for process to exit
+5. Add validation and testing:
+   - Helm chart linting
+   - Dry-run installation tests
+   - RBAC permission validation
+   - Resource limit testing
 
-  Note: Use exec.Command to run controller as separate process for realistic signal testing.
+**Expected Outcome:** Production-ready deployment manifests supporting multiple installation methods.
 
-  Prompt 4: Leader Election Integration Tests
+---
 
-  Implement leader election integration tests with multiple controller instances.
+## Priority 3: Node Bootstrapping System (BLOCKER)
 
-  Requirements:
-  1. Create TestLeaderElection_Integration in test/integration/controller_integration_test.go
+**Context:** New VPSie VMs need to join the Kubernetes cluster automatically.
 
-  2. Test should:
-     - Start 3 controller instances with leader election enabled
-     - Use same leader-election-id "test-leader"
-     - Verify only one instance becomes leader
-     - Verify non-leaders have /readyz returning 503
-     - Verify leader has /readyz returning 200
-     - Create NodeGroup and verify only leader reconciles
+**Requirements:**
+1. Create pkg/bootstrap/bootstrapper.go:
+   - Generate kubeadm join tokens
+   - Manage token rotation and expiration
+   - Store bootstrap configuration in ConfigMaps
+   - Track join status and retry failures
 
-  3. Add TestLeaderElection_Handoff:
-     - Start 2 controllers with leader election
-     - Identify current leader
-     - Stop leader controller
-     - Verify remaining controller becomes leader within 15 seconds
-     - Verify new leader takes over reconciliation
-     - Verify no work is lost during handoff
+2. Implement pkg/bootstrap/cloud_init.go:
+   - Generate cloud-init templates
+   - Install Docker/containerd
+   - Install kubelet, kubeadm, kubectl
+   - Configure kernel parameters and sysctl
+   - Set up CNI networking
+   - Join cluster using kubeadm
 
-  4. Add TestLeaderElection_SplitBrain:
-     - Start 3 controllers
-     - Simulate network partition (block one controller)
-     - Verify system maintains single leader
-     - Restore network connectivity
-     - Verify leader election converges correctly
+3. Add pkg/bootstrap/templates/ with cloud-init:
+   - ubuntu-22.04.yaml
+   - ubuntu-20.04.yaml
+   - centos-8.yaml
+   - debian-11.yaml
+   - Custom startup scripts
 
-  5. Helper functions needed:
-     - startMultipleControllers(count) - Start N controllers
-     - identifyLeader(controllers) - Find which is leader
-     - blockNetworkAccess(controller) - Simulate partition
-     - verifyLeaderMetrics() - Check leader election metrics
+4. Create pkg/bootstrap/validation.go:
+   - Verify node joined successfully
+   - Check kubelet health
+   - Validate CNI configuration
+   - Test pod scheduling
+   - Monitor for bootstrap failures
 
-  Note: Use different ports for each controller instance. Use Kubernetes Lease objects for leader election.
+5. Implement recovery mechanisms:
+   - Retry failed joins with backoff
+   - Clean up failed nodes
+   - Alert on repeated failures
+   - Automatic token refresh
 
-  Prompt 5: End-to-End Scale Testing with Mock VPSie
+**Expected Outcome:** Automated node bootstrapping with 99.9% success rate.
 
-  Implement comprehensive end-to-end scaling tests using the mock VPSie API.
+---
 
-  Requirements:
-  1. Create TestScaleUp_EndToEnd in test/integration/controller_integration_test.go
+## Priority 4: Configuration Management (BLOCKER)
 
-  2. Test scale-up scenario:
-     - Start controller with mock VPSie server
-     - Create NodeGroup with minNodes=1, maxNodes=5
-     - Verify initial VPSieNode creation
-     - Simulate unschedulable pod events
-     - Verify controller scales up to 2 nodes
-     - Verify VPSie API CreateVM called
-     - Simulate VM becoming ready
-     - Verify VPSieNode status updates
-     - Continue scaling up to maxNodes
-     - Verify scaling stops at maxNodes
+**Context:** Found 9 TODO comments with hardcoded configuration values throughout the codebase.
 
-  3. Add TestScaleDown_EndToEnd:
-     - Start with NodeGroup at 5 nodes
-     - Simulate low utilization
-     - Verify controller identifies underutilized nodes
-     - Verify scale-down respects cooldown period
-     - Verify graceful node draining
-     - Verify VPSie API DeleteVM called
-     - Scale down to minNodes
-     - Verify won't scale below minNodes
+**Requirements:**
+1. Create internal/config/config.go with Viper:
+   - Load from file, env vars, and flags
+   - Validate configuration on startup
+   - Support hot-reload for non-critical settings
+   - Type-safe configuration structs
 
-  4. Add TestMixedScaling_EndToEnd:
-     - Rapid scale-up followed by scale-down
-     - Verify no race conditions
-     - Verify metrics accurately track changes
-     - Test concurrent NodeGroups scaling
+2. Define configuration structure:
+   ```go
+   type Config struct {
+       Controller ControllerConfig
+       VPSie      VPSieConfig
+       Scaling    ScalingConfig
+       Bootstrap  BootstrapConfig
+       Metrics    MetricsConfig
+       Logging    LoggingConfig
+   }
+   ```
 
-  5. Add TestScalingWithFailures:
-     - Simulate VPSie API failures during scale-up
-     - Verify retry with exponential backoff
-     - Verify partial success handling
-     - Test recovery after API comes back
+3. Fix all hardcoded values:
+   - Controller reconciliation interval (currently 30s)
+   - VPSie API rate limits (currently 100/min)
+   - Scale-up/down thresholds
+   - Timeout values
+   - Port numbers
+   - Resource limits
 
-  Note: Use mock server request tracking to verify correct API call sequence and parameters.
+4. Add configuration validation:
+   - Required fields check
+   - Range validation for numeric values
+   - Format validation for URLs/IPs
+   - Mutual exclusivity rules
+   - Warning for deprecated options
 
-  Prompt 6: Performance and Load Testing
+5. Create config/config.yaml template:
+   - Fully documented with examples
+   - Environment variable mappings
+   - Default values explained
+   - Production recommendations
 
-  Create performance and load tests for the autoscaler controller.
+**Expected Outcome:** Flexible configuration system with no hardcoded values.
 
-  Requirements:
-  1. Create test/integration/performance_test.go with load tests
+---
 
-  2. TestControllerLoad_100NodeGroups:
-     - Create 100 NodeGroups rapidly
-     - Measure reconciliation latency for each
-     - Verify all NodeGroups reconcile within 5 minutes
-     - Track memory usage and verify no leaks
-     - Verify metrics endpoint responds under load
+## Priority 5: Cost Optimization Features
 
-  3. TestHighChurnRate:
-     - Continuously create and delete NodeGroups
-     - 10 creates/deletes per second for 1 minute
-     - Verify no deadlocks or race conditions
-     - Verify eventual consistency
-     - Check error rate stays below 1%
+**Context:** VPSie offers multiple instance types. Intelligent selection can reduce costs by 40%.
 
-  4. TestLargeScaleReconciliation:
-     - Create NodeGroup with 100 nodes
-     - Trigger reconciliation of all nodes
-     - Measure time to complete
-     - Verify VPSie API calls are rate limited properly
-     - Verify no thundering herd problem
+**Requirements:**
+1. Implement pkg/vpsie/cost/calculator.go:
+   - Fetch current VPSie pricing
+   - Calculate hourly/monthly costs
+   - Compare instance types
+   - Predict cost impact of scaling
 
-  5. Add benchmarks:
-     - BenchmarkNodeGroupReconciliation
-     - BenchmarkVPSieNodeStatusUpdate
-     - BenchmarkMetricsCollection
-     - BenchmarkHealthCheckLatency
+2. Create pkg/vpsie/cost/optimizer.go:
+   - Analyze workload requirements
+   - Recommend optimal instance types
+   - Support spot/preemptible instances
+   - Implement bin packing algorithm
+   - Right-size overprovisioned nodes
 
-  6. Resource tracking:
-     - Monitor CPU usage
-     - Track memory allocations
-     - Count goroutines
-     - Measure API call latency
-     - Generate performance report
+3. Add pkg/rebalancer/rebalancer.go:
+   - Periodic cluster rebalancing
+   - Migrate workloads to cheaper instances
+   - Consolidate underutilized nodes
+   - Respect availability requirements
+   - Generate rebalancing reports
 
-  Note: These tests should be tagged with // +build performance to run separately.
+4. Implement cost tracking:
+   - Track spending per NodeGroup
+   - Monitor cost trends
+   - Alert on budget exceeded
+   - Generate cost reports
+   - Export metrics to Prometheus
 
-  Prompt 7: Documentation and Test Utilities
+5. Add optimization policies:
+   - Aggressive cost saving mode
+   - Balanced performance/cost
+   - Performance priority mode
+   - Time-based policies
 
-  Create comprehensive test utilities and documentation for Phase 3 testing.
+**Expected Outcome:** 30-40% cost reduction through intelligent instance selection.
 
-  Requirements:
-  1. Create test/integration/utils_test.go with shared utilities:
-     - TestCluster struct with setup/teardown
-     - ControllerInstance with start/stop/health methods
-     - MockVPSieServer management
-     - Metric parsing utilities
-     - Event watching utilities
-     - Resource creation helpers
+---
 
-  2. Add test fixtures in test/integration/fixtures/:
-     - sample-nodegroup.yaml
-     - sample-vpsienode.yaml
-     - invalid-configs.yaml
-     - stress-test-configs.yaml
+## Priority 6: Production Observability
 
-  3. Update test/integration/README.md with:
-     - Complete list of integration tests
-     - Performance test results
-     - Troubleshooting common issues
-     - How to run specific test suites
-     - CI/CD integration guide
-     - Mock server configuration
-     - Environment variables needed
+**Context:** Current metrics/logging insufficient for production debugging.
 
-  4. Create Makefile targets:
-     - make test-integration-basic (CRUD tests only)
-     - make test-integration-runtime (controller runtime tests)
-     - make test-integration-scale (scaling tests)
-     - make test-integration-performance (load tests)
-     - make test-integration-all (complete suite)
-     - make test-coverage-integration (with coverage report)
+**Requirements:**
+1. Enhance pkg/metrics/ with detailed metrics:
+   - Scaling decision reasons
+   - Node lifecycle durations
+   - API call latencies (P50, P95, P99)
+   - Error rates by category
+   - Cost metrics
+   - Cluster efficiency score
 
-  5. Add GitHub Actions workflow:
-     - .github/workflows/integration-tests.yml
-     - Run on PR and main branch
-     - Set up test cluster
-     - Run integration tests in parallel
-     - Upload test results and coverage
-     - Performance regression detection
+2. Implement distributed tracing:
+   - OpenTelemetry integration
+   - Trace scaling decisions
+   - Track API call chains
+   - Correlate with logs
+   - Export to Jaeger/Zipkin
 
-  Note: Include examples of running tests locally vs CI environment.
+3. Add structured events:
+   - Scaling decisions with reasons
+   - Configuration changes
+   - Error conditions
+   - Cost optimizations
+   - Security events
 
-  Summary Usage
+4. Create dashboards:
+   - Grafana dashboard JSON
+   - Scaling activity overview
+   - Cost tracking dashboard
+   - Error analysis dashboard
+   - Performance metrics
 
-  To implement Phase 3 completely, execute these prompts in order:
+5. Implement alerting rules:
+   - Scaling failures
+   - High error rates
+   - Budget exceeded
+   - Performance degradation
+   - Security violations
 
-  1. First: Implement the mock VPSie API server (Prompt 1)
-  2. Second: Add controller runtime tests with health/metrics (Prompt 2)
-  3. Third: Add graceful shutdown tests (Prompt 3)
-  4. Fourth: Implement leader election tests (Prompt 4)
-  5. Fifth: Create end-to-end scaling tests (Prompt 5)
-  6. Sixth: Add performance tests (Prompt 6)
-  7. Finally: Create utilities and documentation (Prompt 7)
+**Expected Outcome:** Complete observability for production operations.
 
-  Each prompt builds on the previous ones, creating a comprehensive integration test suite that validates all aspects of the autoscaler's functionality against a real Kubernetes cluster with mocked VPSie API.
+---
+
+## Priority 7: E2E Testing Suite
+
+**Context:** Need end-to-end tests for production validation.
+
+**Requirements:**
+1. Create test/e2e/ framework:
+   - Cluster provisioning helpers
+   - VPSie API mocking
+   - Workload generators
+   - Metric collectors
+   - Report generation
+
+2. Implement core scenarios:
+   - Fresh cluster scaling
+   - Upgrade testing
+   - Failure recovery
+   - Multi-region scaling
+   - Cost optimization validation
+
+3. Add chaos testing:
+   - Network partitions
+   - API failures
+   - Node failures
+   - Controller crashes
+   - Resource exhaustion
+
+4. Performance validation:
+   - 1000 node scaling
+   - Rapid scale up/down
+   - Sustained load testing
+   - Memory leak detection
+   - API rate limit testing
+
+5. Security testing:
+   - RBAC validation
+   - Secret management
+   - Network policy enforcement
+   - Admission webhook testing
+   - Audit logging validation
+
+**Expected Outcome:** Comprehensive E2E test suite with 95% scenario coverage.
+
+---
+
+## Priority 8: Documentation Completion
+
+**Context:** Missing critical production documentation.
+
+**Requirements:**
+1. Create docs/production/:
+   - installation.md - Step-by-step guide
+   - configuration.md - All options explained
+   - troubleshooting.md - Common issues
+   - monitoring.md - Metrics and dashboards
+   - security.md - Security best practices
+   - disaster-recovery.md - Backup/restore
+   - migration.md - Version upgrades
+
+2. Add docs/api/:
+   - nodegroup-api.md - CRD reference
+   - vpsienode-api.md - CRD reference
+   - metrics-api.md - Metrics reference
+   - events.md - Event reference
+
+3. Create runbooks:
+   - Scaling not working
+   - High error rates
+   - Cost overruns
+   - Performance issues
+   - Security incidents
+
+4. Add architecture docs:
+   - System design
+   - Component interactions
+   - Scaling algorithms
+   - Cost optimization logic
+   - Security model
+
+5. Generate API documentation:
+   - OpenAPI spec for CRDs
+   - Go doc for packages
+   - Helm chart values documentation
+   - Configuration reference
+
+**Expected Outcome:** Complete documentation for operators and developers.
+
+---
+
+## Priority 9: Security Hardening
+
+**Context:** Production requires security hardening and compliance.
+
+**Requirements:**
+1. Implement admission webhooks:
+   - Validate NodeGroup configurations
+   - Enforce resource limits
+   - Check RBAC permissions
+   - Prevent dangerous configurations
+   - Audit configuration changes
+
+2. Add secret management:
+   - Support external secret stores
+   - Implement secret rotation
+   - Encrypt secrets at rest
+   - Audit secret access
+   - Support HashiCorp Vault
+
+3. Network security:
+   - Implement NetworkPolicies
+   - TLS for all communications
+   - mTLS for controller components
+   - API authentication/authorization
+   - Rate limiting
+
+4. Compliance features:
+   - Audit logging
+   - Change tracking
+   - Compliance reports
+   - Data retention policies
+   - GDPR compliance
+
+5. Security scanning:
+   - Container image scanning
+   - Dependency vulnerability scanning
+   - SAST/DAST integration
+   - Security benchmarks
+   - CIS compliance checks
+
+**Expected Outcome:** Production-grade security meeting enterprise requirements.
+
+---
+
+## Priority 10: Release Preparation
+
+**Context:** Prepare for v1.0.0 production release.
+
+**Requirements:**
+1. Release automation:
+   - Semantic versioning
+   - Automated changelog generation
+   - GitHub release creation
+   - Docker image publishing
+   - Helm chart publishing
+
+2. Release testing:
+   - Upgrade testing
+   - Rollback testing
+   - Compatibility matrix
+   - Performance benchmarks
+   - Security audit
+
+3. Release documentation:
+   - Release notes template
+   - Migration guides
+   - Breaking changes
+   - Known issues
+   - Deprecation notices
+
+4. Support infrastructure:
+   - Issue templates
+   - PR templates
+   - Contributing guidelines
+   - Code of conduct
+   - Support channels
+
+5. Marketing materials:
+   - README badges
+   - Architecture diagrams
+   - Performance benchmarks
+   - Cost savings examples
+   - Case studies
+
+**Expected Outcome:** Professional v1.0.0 release ready for production adoption.
+
+---
+
+## Execution Order
+
+1. **Week 1-2:** Priorities 1-4 (Critical blockers)
+   - Scale-down logic
+   - Deployment manifests
+   - Node bootstrapping
+   - Configuration management
+
+2. **Week 3:** Priorities 5-6 (Optimization & Observability)
+   - Cost optimization
+   - Production observability
+
+3. **Week 4:** Priorities 7-8 (Testing & Documentation)
+   - E2E testing
+   - Documentation
+
+4. **Week 5:** Priorities 9-10 (Security & Release)
+   - Security hardening
+   - Release preparation
+
+## Success Criteria
+
+- ✅ All 10 priority areas implemented
+- ✅ 90% test coverage achieved
+- ✅ Zero critical security vulnerabilities
+- ✅ Documentation complete
+- ✅ E2E tests passing
+- ✅ Performance benchmarks met
+- ✅ Cost optimization validated
+- ✅ Production deployment successful
