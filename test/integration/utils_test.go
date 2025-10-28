@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -635,20 +634,20 @@ func CreateTestPod(ctx context.Context, client client.Client, name, namespace st
 
 // ResourceTracker tracks resource usage during tests
 type ResourceTracker struct {
-	startTime      time.Time
-	measurements   []ResourceMeasurement
-	mu             sync.Mutex
-	stopCh         chan struct{}
-	controllerPID  int
+	startTime     time.Time
+	measurements  []ResourceMeasurement
+	mu            sync.Mutex
+	stopCh        chan struct{}
+	controllerPID int
 }
 
 // ResourceMeasurement represents a point-in-time resource measurement
 type ResourceMeasurement struct {
-	Timestamp   time.Time
-	CPUPercent  float64
-	MemoryMB    float64
-	Goroutines  int
-	OpenFiles   int
+	Timestamp  time.Time
+	CPUPercent float64
+	MemoryMB   float64
+	Goroutines int
+	OpenFiles  int
 }
 
 // NewResourceTracker creates a new resource tracker
@@ -745,12 +744,12 @@ func (rt *ResourceTracker) GetReport() ResourceReport {
 	avgGoroutines = int(float64(totalGoroutines) / count)
 
 	return ResourceReport{
-		Duration:          time.Since(rt.startTime),
-		MaxMemoryMB:       maxMemory,
-		AvgMemoryMB:       avgMemory,
-		MaxGoroutines:     maxGoroutines,
-		AvgGoroutines:     avgGoroutines,
-		MeasurementCount:  len(rt.measurements),
+		Duration:         time.Since(rt.startTime),
+		MaxMemoryMB:      maxMemory,
+		AvgMemoryMB:      avgMemory,
+		MaxGoroutines:    maxGoroutines,
+		AvgGoroutines:    avgGoroutines,
+		MeasurementCount: len(rt.measurements),
 	}
 }
 
