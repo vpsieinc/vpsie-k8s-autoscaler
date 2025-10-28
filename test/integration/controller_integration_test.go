@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,7 +29,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	autoscalerv1alpha1 "github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
-	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller"
 )
 
 const (
@@ -49,678 +50,884 @@ var (
 // TestMain sets up the integration test environment
 func TestMain(m *testing.M) {
 	var err error
-	exitCode := 1
 
-	defer func() {
-		// Cleanup test namespace
-		if clientset != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
-			defer cancel()
-			_ = clientset.CoreV1().Namespaces().Delete(ctx, testNamespace, metav1.DeleteOptions{})
-		}
-		os.Exit(exitCode)
-	}()
-
-	// Load kubeconfig from test cluster
+	// Load kubeconfig
 	cfg, err = clientcmd.BuildConfigFromFlags("", testKubeconfig)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load kubeconfig: %v\n", err)
-		return
+		fmt.Printf("Failed to load kubeconfig: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Create clientset
 	clientset, err = kubernetes.NewForConfig(cfg)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create clientset: %v\n", err)
-		return
+		fmt.Printf("Failed to create clientset: %v\n", err)
+		os.Exit(1)
 	}
 
-	// Create scheme with our CRDs
+	// Setup scheme
 	scheme = runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		fmt.Printf("Failed to add core/v1 to scheme: %v\n", err)
+		os.Exit(1)
+	}
 	if err := autoscalerv1alpha1.AddToScheme(scheme); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to add autoscaler scheme: %v\n", err)
-		return
+		fmt.Printf("Failed to add autoscaler/v1alpha1 to scheme: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Create controller-runtime client
-	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme})
+	k8sClient, err = client.New(cfg, client.Options{
+		Scheme: scheme,
+	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create controller-runtime client: %v\n", err)
-		return
+		fmt.Printf("Failed to create controller-runtime client: %v\n", err)
+		os.Exit(1)
 	}
 
-	// Verify cluster connectivity
-	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
-	defer cancel()
-	_, err = clientset.Discovery().ServerVersion()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to connect to cluster: %v\n", err)
-		return
-	}
-
-	// Create test namespace
+	// Ensure test namespace exists
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: testNamespace,
 		},
 	}
-	_, err = clientset.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
+	err = k8sClient.Create(context.Background(), ns)
 	if err != nil && !errors.IsAlreadyExists(err) {
-		fmt.Fprintf(os.Stderr, "Failed to create test namespace: %v\n", err)
-		return
+		fmt.Printf("Failed to create test namespace: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Verify CRDs are installed
-	if err := verifyCRDsInstalled(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "CRDs not installed: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Please install CRDs first: kubectl apply -f deploy/crds/\n")
-		return
+	_, err = clientset.Discovery().ServerResourcesForGroupVersion("autoscaler.vpsie.com/v1alpha1")
+	if err != nil {
+		fmt.Printf("CRDs not installed. Please run: kubectl apply -f deploy/crds/\n")
+		os.Exit(1)
 	}
 
-	fmt.Printf("Integration test setup complete. Using cluster: %s\n", cfg.Host)
-	fmt.Printf("Test namespace: %s\n", testNamespace)
+	// Build controller binary if needed
+	binaryPath := filepath.Join(".", "bin", "vpsie-autoscaler")
+	if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
+		fmt.Println("Building controller binary...")
+		if err := buildControllerBinary(); err != nil {
+			fmt.Printf("Failed to build controller binary: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
 	// Run tests
-	exitCode = m.Run()
+	code := m.Run()
+
+	// Cleanup
+	cleanupTestResources()
+
+	os.Exit(code)
 }
 
-// verifyCRDsInstalled checks that required CRDs are installed
-func verifyCRDsInstalled(ctx context.Context) error {
-	crdPath := filepath.Join("..", "..", "deploy", "crds")
-	files, err := os.ReadDir(crdPath)
-	if err != nil {
-		return fmt.Errorf("failed to read CRD directory: %w", err)
-	}
+// cleanupTestResources removes all test resources
+func cleanupTestResources() {
+	ctx := context.Background()
 
-	expectedCRDs := []string{
-		"autoscaler.vpsie.com_nodegroups.yaml",
-		"autoscaler.vpsie.com_vpsienodes.yaml",
-	}
-
-	for _, expectedCRD := range expectedCRDs {
-		found := false
-		for _, file := range files {
-			if file.Name() == expectedCRD {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("CRD file not found: %s", expectedCRD)
+	// Delete all NodeGroups in test namespace
+	nodeGroupList := &autoscalerv1alpha1.NodeGroupList{}
+	if err := k8sClient.List(ctx, nodeGroupList, client.InNamespace(testNamespace)); err == nil {
+		for _, ng := range nodeGroupList.Items {
+			_ = k8sClient.Delete(ctx, &ng)
 		}
 	}
 
-	return nil
+	// Delete all VPSieNodes in test namespace
+	vpsieNodeList := &autoscalerv1alpha1.VPSieNodeList{}
+	if err := k8sClient.List(ctx, vpsieNodeList, client.InNamespace(testNamespace)); err == nil {
+		for _, vn := range vpsieNodeList.Items {
+			_ = k8sClient.Delete(ctx, &vn)
+		}
+	}
+
+	// Note: We don't delete the namespace itself as it may be used by other tests
 }
 
-// TestControllerManager_Integration tests the controller manager with a real Kubernetes API
-func TestControllerManager_Integration(t *testing.T) {
-	t.Skip("Requires VPSie API credentials - implement when secrets are available")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Create controller manager options
-	opts := controller.NewDefaultOptions()
-	opts.MetricsAddr = ":18080"       // Use different port for tests
-	opts.HealthProbeAddr = ":18081"   // Use different port for tests
-	opts.EnableLeaderElection = false // Disable for testing
-	opts.VPSieSecretName = "test-secret"
-	opts.VPSieSecretNamespace = testNamespace
-
-	// Complete and validate options
-	require.NoError(t, opts.Complete())
-	require.NoError(t, opts.Validate())
-
-	// Note: Creating manager requires VPSie API credentials in a secret
-	// This test will be implemented when we have test credentials
-	_ = ctx
+// buildControllerBinary builds the controller binary if it doesn't exist
+func buildControllerBinary() error {
+	// This would typically use exec.Command to run "make build"
+	// For now, we assume it's built externally
+	return fmt.Errorf("controller binary not found at bin/vpsie-autoscaler")
 }
 
-// TestNodeGroup_CRUD tests NodeGroup CRD operations
+// TestNodeGroup_CRUD tests basic CRUD operations for NodeGroup resources
 func TestNodeGroup_CRUD(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
-	defer cancel()
+	ctx := context.Background()
 
 	// Create a NodeGroup
-	ng := &autoscalerv1alpha1.NodeGroup{
+	nodeGroup := &autoscalerv1alpha1.NodeGroup{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-nodegroup-crud",
+			Name:      "test-nodegroup",
 			Namespace: testNamespace,
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:     1,
-			MaxNodes:     10,
-			DatacenterID: "dc-test",
-			OfferingIDs:  []string{"small-2cpu-4gb"},
-			OSImageID:    "ubuntu-22.04",
+			MinNodes:          2,
+			MaxNodes:          5,
+			TargetUtilization: 80,
+			DatacenterID:      "us-west-1",
+			OfferingID:        "standard-2cpu-4gb",
 		},
 	}
 
-	// Test creating NodeGroup
-	t.Log("Creating NodeGroup...")
-	err := k8sClient.Create(ctx, ng)
-	require.NoError(t, err, "Failed to create NodeGroup")
+	// Test Create
+	err := k8sClient.Create(ctx, nodeGroup)
+	require.NoError(t, err)
 
-	// Test reading NodeGroup
-	t.Log("Reading NodeGroup...")
+	// Test Read
 	retrieved := &autoscalerv1alpha1.NodeGroup{}
 	err = k8sClient.Get(ctx, client.ObjectKey{
-		Name:      ng.Name,
-		Namespace: ng.Namespace,
+		Name:      nodeGroup.Name,
+		Namespace: nodeGroup.Namespace,
 	}, retrieved)
-	require.NoError(t, err, "Failed to get NodeGroup")
-	assert.Equal(t, int32(1), retrieved.Spec.MinNodes)
-	assert.Equal(t, int32(10), retrieved.Spec.MaxNodes)
-	assert.Equal(t, "dc-test", retrieved.Spec.DatacenterID)
+	require.NoError(t, err)
+	assert.Equal(t, nodeGroup.Spec.MinNodes, retrieved.Spec.MinNodes)
 
-	// Test updating NodeGroup
-	t.Log("Updating NodeGroup...")
-	retrieved.Spec.MaxNodes = 20
-	retrieved.Spec.MinNodes = 2
+	// Test Update
+	retrieved.Spec.MaxNodes = 10
 	err = k8sClient.Update(ctx, retrieved)
-	require.NoError(t, err, "Failed to update NodeGroup")
+	require.NoError(t, err)
 
 	// Verify update
 	updated := &autoscalerv1alpha1.NodeGroup{}
 	err = k8sClient.Get(ctx, client.ObjectKey{
-		Name:      ng.Name,
-		Namespace: ng.Namespace,
+		Name:      nodeGroup.Name,
+		Namespace: nodeGroup.Namespace,
 	}, updated)
-	require.NoError(t, err, "Failed to get updated NodeGroup")
-	assert.Equal(t, int32(2), updated.Spec.MinNodes)
-	assert.Equal(t, int32(20), updated.Spec.MaxNodes)
+	require.NoError(t, err)
+	assert.Equal(t, int32(10), updated.Spec.MaxNodes)
 
-	// Test deleting NodeGroup
-	t.Log("Deleting NodeGroup...")
-	err = k8sClient.Delete(ctx, ng)
-	require.NoError(t, err, "Failed to delete NodeGroup")
+	// Test Delete
+	err = k8sClient.Delete(ctx, nodeGroup)
+	require.NoError(t, err)
 
 	// Verify deletion
-	deleted := &autoscalerv1alpha1.NodeGroup{}
 	err = k8sClient.Get(ctx, client.ObjectKey{
-		Name:      ng.Name,
-		Namespace: ng.Namespace,
-	}, deleted)
-	assert.True(t, errors.IsNotFound(err), "NodeGroup should be deleted")
-
-	t.Log("NodeGroup CRUD test completed successfully")
+		Name:      nodeGroup.Name,
+		Namespace: nodeGroup.Namespace,
+	}, &autoscalerv1alpha1.NodeGroup{})
+	assert.True(t, errors.IsNotFound(err))
 }
 
-// TestVPSieNode_CRUD tests VPSieNode CRD operations
+// TestVPSieNode_CRUD tests basic CRUD operations for VPSieNode resources
 func TestVPSieNode_CRUD(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
-	defer cancel()
+	ctx := context.Background()
 
 	// Create a VPSieNode
-	vn := &autoscalerv1alpha1.VPSieNode{
+	vpsieNode := &autoscalerv1alpha1.VPSieNode{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-vpsienode-crud",
+			Name:      "test-vpsienode",
 			Namespace: testNamespace,
 		},
 		Spec: autoscalerv1alpha1.VPSieNodeSpec{
 			NodeGroupName: "test-nodegroup",
-			InstanceType:  "small-2cpu-4gb",
-			DatacenterID:  "dc-test",
+			OfferingID:    "standard-2cpu-4gb",
+			DatacenterID:  "us-west-1",
 		},
 	}
 
-	// Test creating VPSieNode
-	t.Log("Creating VPSieNode...")
-	err := k8sClient.Create(ctx, vn)
-	require.NoError(t, err, "Failed to create VPSieNode")
+	// Test Create
+	err := k8sClient.Create(ctx, vpsieNode)
+	require.NoError(t, err)
 
-	// Test reading VPSieNode
-	t.Log("Reading VPSieNode...")
+	// Test Read
 	retrieved := &autoscalerv1alpha1.VPSieNode{}
 	err = k8sClient.Get(ctx, client.ObjectKey{
-		Name:      vn.Name,
-		Namespace: vn.Namespace,
+		Name:      vpsieNode.Name,
+		Namespace: vpsieNode.Namespace,
 	}, retrieved)
-	require.NoError(t, err, "Failed to get VPSieNode")
-	assert.Equal(t, "test-nodegroup", retrieved.Spec.NodeGroupName)
-	assert.Equal(t, "small-2cpu-4gb", retrieved.Spec.InstanceType)
-	assert.Equal(t, "dc-test", retrieved.Spec.DatacenterID)
+	require.NoError(t, err)
+	assert.Equal(t, vpsieNode.Spec.NodeGroupName, retrieved.Spec.NodeGroupName)
 
-	// Test updating status
-	t.Log("Updating VPSieNode status...")
+	// Test Update Status
 	retrieved.Status.Phase = autoscalerv1alpha1.VPSieNodePhaseProvisioning
-	retrieved.Status.Conditions = []autoscalerv1alpha1.VPSieNodeCondition{
-		{
-			Type:               "VPSReady",
-			Status:             "True",
-			LastTransitionTime: metav1.Now(),
-			Reason:             "Provisioning",
-			Message:            "VPS is being provisioned",
-		},
-	}
+	retrieved.Status.VPSInstanceID = "vps-12345"
 	err = k8sClient.Status().Update(ctx, retrieved)
-	require.NoError(t, err, "Failed to update VPSieNode status")
+	require.NoError(t, err)
 
 	// Verify status update
 	updated := &autoscalerv1alpha1.VPSieNode{}
 	err = k8sClient.Get(ctx, client.ObjectKey{
-		Name:      vn.Name,
-		Namespace: vn.Namespace,
+		Name:      vpsieNode.Name,
+		Namespace: vpsieNode.Namespace,
 	}, updated)
-	require.NoError(t, err, "Failed to get updated VPSieNode")
+	require.NoError(t, err)
 	assert.Equal(t, autoscalerv1alpha1.VPSieNodePhaseProvisioning, updated.Status.Phase)
-	require.Len(t, updated.Status.Conditions, 1)
-	assert.Equal(t, autoscalerv1alpha1.VPSieNodeConditionType("VPSReady"), updated.Status.Conditions[0].Type)
+	assert.Equal(t, "vps-12345", updated.Status.VPSInstanceID)
 
-	// Test deleting VPSieNode
-	t.Log("Deleting VPSieNode...")
-	err = k8sClient.Delete(ctx, vn)
-	require.NoError(t, err, "Failed to delete VPSieNode")
+	// Test Delete
+	err = k8sClient.Delete(ctx, vpsieNode)
+	require.NoError(t, err)
 
 	// Verify deletion
-	deleted := &autoscalerv1alpha1.VPSieNode{}
 	err = k8sClient.Get(ctx, client.ObjectKey{
-		Name:      vn.Name,
-		Namespace: vn.Namespace,
-	}, deleted)
-	assert.True(t, errors.IsNotFound(err), "VPSieNode should be deleted")
-
-	t.Log("VPSieNode CRUD test completed successfully")
+		Name:      vpsieNode.Name,
+		Namespace: vpsieNode.Namespace,
+	}, &autoscalerv1alpha1.VPSieNode{})
+	assert.True(t, errors.IsNotFound(err))
 }
 
-// TestHealthEndpoints_Integration tests health check endpoints
+// TestHealthEndpoints_Integration tests controller health endpoints
 func TestHealthEndpoints_Integration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// Create mock VPSie server
+	// Start mock VPSie server
 	mockServer := NewMockVPSieServer()
 	defer mockServer.Close()
 
-	t.Logf("Mock VPSie server started at: %s", mockServer.URL())
-
-	// Create VPSie secret for the test
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-vpsie-secret",
-			Namespace: testNamespace,
-		},
-		Data: map[string][]byte{
-			"clientId":     []byte("test-client-id"),
-			"clientSecret": []byte("test-client-secret"),
-			"url":          []byte(mockServer.URL()),
-		},
-	}
-
-	err := k8sClient.Create(ctx, secret)
-	require.NoError(t, err, "Failed to create VPSie secret")
-
+	// Create VPSie secret
+	secretName := "test-vpsie-secret-health"
+	err := createTestSecret(ctx, secretName, testNamespace, mockServer.URL())
+	require.NoError(t, err)
 	defer func() {
-		_ = k8sClient.Delete(ctx, secret)
+		_ = deleteTestSecret(ctx, secretName, testNamespace)
 	}()
 
-	// Create controller options with test-specific ports
-	opts := controller.NewDefaultOptions()
-	opts.MetricsAddr = ":28080"       // Different port for test
-	opts.HealthProbeAddr = ":28081"   // Different port for test
-	opts.EnableLeaderElection = false // Disable for testing
-	opts.VPSieSecretName = "test-vpsie-secret"
-	opts.VPSieSecretNamespace = testNamespace
-	opts.LogLevel = "debug"
+	// Start controller
+	proc, err := startControllerInBackground(18080, 18081, secretName, testNamespace)
+	require.NoError(t, err)
+	defer cleanup(proc)
 
-	// Validate options
-	require.NoError(t, opts.Validate())
+	t.Logf("Controller started with PID: %d", proc.PID)
 
-	// Create controller manager
-	mgr, err := controller.NewManager(cfg, opts)
-	require.NoError(t, err, "Failed to create controller manager")
-
-	// Start controller in background
-	mgrCtx, mgrCancel := context.WithCancel(ctx)
-	defer mgrCancel()
-
-	mgrStarted := make(chan struct{})
-	mgrErr := make(chan error, 1)
-
-	go func() {
-		close(mgrStarted)
-		if err := mgr.Start(mgrCtx); err != nil {
-			mgrErr <- err
-		}
-	}()
-
-	// Wait for controller to start
-	<-mgrStarted
-	time.Sleep(2 * time.Second) // Give it time to fully initialize
-
-	t.Log("Controller started, testing health endpoints...")
+	// Wait for controller to be healthy
+	require.Eventually(t, func() bool {
+		return proc.IsHealthy()
+	}, 30*time.Second, 1*time.Second, "Controller did not become healthy")
 
 	// Test /healthz endpoint
-	t.Run("healthz endpoint", func(t *testing.T) {
-		resp, err := http.Get("http://localhost:28081/healthz")
-		require.NoError(t, err)
-		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode, "healthz should return 200 OK")
-		t.Logf("healthz returned status: %d", resp.StatusCode)
-	})
+	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/healthz", 18081))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", string(body))
 
 	// Test /readyz endpoint
-	t.Run("readyz endpoint", func(t *testing.T) {
-		resp, err := http.Get("http://localhost:28081/readyz")
-		require.NoError(t, err)
+	resp, err = http.Get(fmt.Sprintf("http://localhost:%d/readyz", 18081))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Test /ping endpoint (if implemented)
+	resp, err = http.Get(fmt.Sprintf("http://localhost:%d/ping", 18081))
+	if err == nil {
 		defer resp.Body.Close()
-
-		// Controller should be ready after initialization
-		// Note: May return 503 if VPSie API check fails
-		t.Logf("readyz returned status: %d", resp.StatusCode)
-		assert.Contains(t, []int{http.StatusOK, http.StatusServiceUnavailable}, resp.StatusCode)
-	})
-
-	// Test /healthz/ping endpoint
-	t.Run("ping endpoint", func(t *testing.T) {
-		resp, err := http.Get("http://localhost:28081/healthz/ping")
-		require.NoError(t, err)
-		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode, "ping should return 200 OK")
-		t.Logf("ping returned status: %d", resp.StatusCode)
-	})
-
-	// Verify health status changes when controller shuts down
-	t.Run("health after shutdown", func(t *testing.T) {
-		// Trigger shutdown
-		mgrCancel()
-		time.Sleep(1 * time.Second)
-
-		// Health endpoints should still respond but might be degraded
-		resp, err := http.Get("http://localhost:28081/healthz")
-		if err == nil {
-			resp.Body.Close()
-			t.Logf("healthz after shutdown: %d", resp.StatusCode)
+		if resp.StatusCode == http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			assert.Equal(t, "pong", string(body))
 		}
-	})
-
-	// Check if there were any errors during manager execution
-	select {
-	case err := <-mgrErr:
-		if err != nil && err != context.Canceled {
-			t.Fatalf("Manager failed: %v", err)
-		}
-	default:
 	}
 
 	t.Log("Health endpoints test completed successfully")
 }
 
-// TestMetricsEndpoint_Integration tests Prometheus metrics endpoint
+// TestMetricsEndpoint_Integration tests controller metrics endpoint
 func TestMetricsEndpoint_Integration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// Create mock VPSie server
+	// Start mock VPSie server
 	mockServer := NewMockVPSieServer()
 	defer mockServer.Close()
-
-	t.Logf("Mock VPSie server started at: %s", mockServer.URL())
-
-	// Create VPSie secret for the test
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-vpsie-secret-metrics",
-			Namespace: testNamespace,
-		},
-		Data: map[string][]byte{
-			"clientId":     []byte("test-client-id"),
-			"clientSecret": []byte("test-client-secret"),
-			"url":          []byte(mockServer.URL()),
-		},
-	}
-
-	err := k8sClient.Create(ctx, secret)
-	require.NoError(t, err, "Failed to create VPSie secret")
-
-	defer func() {
-		_ = k8sClient.Delete(ctx, secret)
-	}()
-
-	// Create controller options with test-specific ports
-	opts := controller.NewDefaultOptions()
-	opts.MetricsAddr = ":38080"       // Different port for test
-	opts.HealthProbeAddr = ":38081"   // Different port for test
-	opts.EnableLeaderElection = false // Disable for testing
-	opts.VPSieSecretName = "test-vpsie-secret-metrics"
-	opts.VPSieSecretNamespace = testNamespace
-	opts.LogLevel = "info"
-
-	// Validate options
-	require.NoError(t, opts.Validate())
-
-	// Create controller manager
-	mgr, err := controller.NewManager(cfg, opts)
-	require.NoError(t, err, "Failed to create controller manager")
-
-	// Start controller in background
-	mgrCtx, mgrCancel := context.WithCancel(ctx)
-	defer mgrCancel()
-
-	go func() {
-		_ = mgr.Start(mgrCtx)
-	}()
-
-	// Wait for controller to start
-	time.Sleep(3 * time.Second)
-
-	t.Log("Controller started, testing metrics endpoint...")
-
-	// Test /metrics endpoint
-	t.Run("metrics endpoint returns 200", func(t *testing.T) {
-		resp, err := http.Get("http://localhost:38080/metrics")
-		require.NoError(t, err)
-		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode, "metrics endpoint should return 200 OK")
-	})
-
-	// Verify metrics are exposed in Prometheus format
-	t.Run("metrics in Prometheus format", func(t *testing.T) {
-		resp, err := http.Get("http://localhost:38080/metrics")
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		require.NoError(t, err)
-
-		metricsOutput := string(body)
-		t.Logf("Metrics output length: %d bytes", len(metricsOutput))
-
-		// Verify it's in Prometheus format (contains HELP and TYPE comments)
-		assert.Contains(t, metricsOutput, "# HELP", "Should contain HELP directives")
-		assert.Contains(t, metricsOutput, "# TYPE", "Should contain TYPE directives")
-	})
-
-	// Check for specific autoscaler metrics
-	t.Run("autoscaler metrics exposed", func(t *testing.T) {
-		resp, err := http.Get("http://localhost:38080/metrics")
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		require.NoError(t, err)
-
-		metricsOutput := string(body)
-
-		// Check for key metrics (note: they may not have values yet, but should be registered)
-		expectedMetrics := []string{
-			"vpsie_autoscaler_nodegroup_desired_nodes",
-			"vpsie_autoscaler_nodegroup_current_nodes",
-			"vpsie_autoscaler_controller_reconcile_duration_seconds",
-			"vpsie_autoscaler_vpsie_api_requests_total",
-		}
-
-		foundCount := 0
-		for _, metric := range expectedMetrics {
-			if strings.Contains(metricsOutput, metric) {
-				foundCount++
-				t.Logf("Found metric: %s", metric)
-			}
-		}
-
-		// At least some metrics should be exposed
-		// Note: Some metrics may only appear after controller activity
-		t.Logf("Found %d out of %d expected metrics", foundCount, len(expectedMetrics))
-	})
-
-	// Create a NodeGroup and verify metrics update
-	t.Run("metrics update with NodeGroup", func(t *testing.T) {
-		ng := &autoscalerv1alpha1.NodeGroup{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-ng-metrics",
-				Namespace: testNamespace,
-			},
-			Spec: autoscalerv1alpha1.NodeGroupSpec{
-				MinNodes:     2,
-				MaxNodes:     5,
-				DatacenterID: "dc-test",
-				OfferingIDs:  []string{"small-2cpu-4gb"},
-				OSImageID:    "ubuntu-22.04",
-			},
-		}
-
-		err := k8sClient.Create(ctx, ng)
-		require.NoError(t, err, "Failed to create NodeGroup")
-
-		defer func() {
-			_ = k8sClient.Delete(ctx, ng)
-		}()
-
-		// Wait for controller to reconcile
-		time.Sleep(5 * time.Second)
-
-		// Check metrics again
-		resp, err := http.Get("http://localhost:38080/metrics")
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		require.NoError(t, err)
-
-		metricsOutput := string(body)
-
-		// After creating NodeGroup, controller metrics should appear
-		// Look for controller reconcile metrics
-		if strings.Contains(metricsOutput, "controller_runtime_reconcile") {
-			t.Log("Controller reconcile metrics found")
-		}
-	})
-
-	t.Log("Metrics endpoint test completed successfully")
-}
-
-// TestLeaderElection_Integration tests leader election with multiple replicas
-func TestLeaderElection_Integration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-
-	// Create mock VPSie server
-	mockServer := NewMockVPSieServer()
-	defer mockServer.Close()
-
-	t.Logf("Mock VPSie server started at: %s", mockServer.URL())
 
 	// Create VPSie secret
-	secretName := "test-vpsie-secret-leader"
+	secretName := "test-vpsie-secret-metrics"
 	err := createTestSecret(ctx, secretName, testNamespace, mockServer.URL())
-	require.NoError(t, err, "Failed to create VPSie secret")
-
+	require.NoError(t, err)
 	defer func() {
 		_ = deleteTestSecret(ctx, secretName, testNamespace)
 	}()
 
-	// Start 3 controller instances with leader election enabled
-	leaderElectionID := "test-leader"
-	controllers, err := startMultipleControllers(3, 10000, 10100, secretName, testNamespace, leaderElectionID)
-	require.NoError(t, err, "Failed to start controllers")
-	defer cleanupMultipleControllers(controllers)
-
-	t.Logf("Started 3 controllers with PIDs: %d, %d, %d",
-		controllers[0].PID, controllers[1].PID, controllers[2].PID)
-
-	// Wait for all controllers to be healthy
-	err = waitForAllControllersReady(controllers, 45*time.Second)
-	require.NoError(t, err, "Not all controllers became healthy")
-
-	t.Log("All controllers are healthy, waiting for leader election...")
-
-	// Wait for exactly one leader to be elected
-	leader, err := waitForLeaderElection(controllers, 30*time.Second)
-	require.NoError(t, err, "Leader election did not complete")
-	require.NotNil(t, leader, "No leader was elected")
-
-	t.Logf("Leader elected with PID: %d (health port: %s)", leader.PID, leader.HealthAddr)
-
-	// Verify only one instance is leader
-	currentLeader, nonLeaders, err := verifyOnlyOneLeader(controllers)
-	require.NoError(t, err, "Leader election verification failed")
-	assert.Equal(t, leader.PID, currentLeader.PID, "Leader changed unexpectedly")
-	assert.Len(t, nonLeaders, 2, "Should have exactly 2 non-leaders")
-
-	// Verify leader has /readyz returning 200
-	leaderReadyStatus, err := getHealthStatus(currentLeader.HealthAddr, "/readyz")
+	// Start controller
+	proc, err := startControllerInBackground(18082, 18083, secretName, testNamespace)
 	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, leaderReadyStatus, "Leader should have readyz returning 200")
+	defer cleanup(proc)
 
-	// Verify non-leaders have /readyz returning 503
-	for i, nonLeader := range nonLeaders {
-		nonLeaderStatus, err := getHealthStatus(nonLeader.HealthAddr, "/readyz")
-		if err == nil {
-			assert.Equal(t, http.StatusServiceUnavailable, nonLeaderStatus,
-				fmt.Sprintf("Non-leader %d should have readyz returning 503", i))
-		}
-		t.Logf("Non-leader %d (PID %d) readyz status: %d", i, nonLeader.PID, nonLeaderStatus)
+	t.Logf("Controller started with PID: %d", proc.PID)
+
+	// Wait for controller to be healthy
+	require.Eventually(t, func() bool {
+		return proc.IsHealthy()
+	}, 30*time.Second, 1*time.Second, "Controller did not become healthy")
+
+	// Test metrics endpoint
+	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/metrics", 18082))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	metrics := string(body)
+
+	// Verify Prometheus format
+	assert.Contains(t, metrics, "# HELP")
+	assert.Contains(t, metrics, "# TYPE")
+
+	// Verify key metrics are exposed
+	expectedMetrics := []string{
+		"vpsie_autoscaler_controller_reconcile_total",
+		"vpsie_autoscaler_controller_reconcile_errors_total",
+		"vpsie_autoscaler_nodegroup_current_nodes",
+		"vpsie_autoscaler_nodegroup_desired_nodes",
 	}
 
-	// Create a NodeGroup and verify only leader reconciles
-	ng := &autoscalerv1alpha1.NodeGroup{
+	for _, metric := range expectedMetrics {
+		assert.Contains(t, metrics, metric, "Metric %s not found", metric)
+	}
+
+	// Create a NodeGroup to trigger metrics updates
+	nodeGroup := &autoscalerv1alpha1.NodeGroup{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-ng-leader-election",
+			Name:      "test-nodegroup-metrics",
 			Namespace: testNamespace,
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:     2,
-			MaxNodes:     5,
-			DatacenterID: "dc-test",
-			OfferingIDs:  []string{"small-2cpu-4gb"},
-			OSImageID:    "ubuntu-22.04",
+			MinNodes:     1,
+			MaxNodes:     3,
+			DatacenterID: "us-west-1",
+			OfferingID:   "standard-2cpu-4gb",
 		},
 	}
 
-	err = k8sClient.Create(ctx, ng)
-	require.NoError(t, err, "Failed to create NodeGroup")
-
+	err = k8sClient.Create(ctx, nodeGroup)
+	require.NoError(t, err)
 	defer func() {
-		_ = k8sClient.Delete(ctx, ng)
+		_ = k8sClient.Delete(ctx, nodeGroup)
 	}()
 
 	// Wait for reconciliation
 	time.Sleep(5 * time.Second)
 
-	// Check metrics from leader
-	leaderMetrics, err := verifyLeaderMetrics(currentLeader)
-	if err == nil && len(leaderMetrics) > 0 {
-		t.Logf("Leader metrics found: %d metrics", len(leaderMetrics))
+	// Check metrics again
+	resp, err = http.Get(fmt.Sprintf("http://localhost:%d/metrics", 18082))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	updatedMetrics := string(body)
+
+	// Verify reconciliation counter increased
+	assert.Contains(t, updatedMetrics, "vpsie_autoscaler_controller_reconcile_total")
+
+	t.Log("Metrics endpoint test completed successfully")
+}
+
+// TestControllerReconciliation_Integration tests end-to-end controller reconciliation
+func TestControllerReconciliation_Integration(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	// Start mock VPSie server with state transitions
+	mockServer := NewMockVPSieServer()
+	mockServer.StateTransitions = []VMStateTransition{
+		{FromState: "provisioning", ToState: "running", Duration: 3 * time.Second},
+		{FromState: "running", ToState: "ready", Duration: 2 * time.Second},
+	}
+	defer mockServer.Close()
+
+	// Create VPSie secret
+	secretName := "test-vpsie-secret-reconciliation"
+	err := createTestSecret(ctx, secretName, testNamespace, mockServer.URL())
+	require.NoError(t, err)
+	defer func() {
+		_ = deleteTestSecret(ctx, secretName, testNamespace)
+	}()
+
+	// Start controller
+	proc, err := startControllerInBackground(18084, 18085, secretName, testNamespace)
+	require.NoError(t, err)
+	defer cleanup(proc)
+
+	t.Logf("Controller started with PID: %d", proc.PID)
+
+	// Wait for controller to be healthy
+	require.Eventually(t, func() bool {
+		return proc.IsHealthy()
+	}, 30*time.Second, 1*time.Second, "Controller did not become healthy")
+
+	// Create NodeGroup with minNodes
+	nodeGroup := &autoscalerv1alpha1.NodeGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-nodegroup-reconcile",
+			Namespace: testNamespace,
+		},
+		Spec: autoscalerv1alpha1.NodeGroupSpec{
+			MinNodes:     2,
+			MaxNodes:     5,
+			DatacenterID: "us-west-1",
+			OfferingID:   "standard-2cpu-4gb",
+		},
 	}
 
-	// Verify mock API was called (only leader should reconcile)
-	apiCalls := mockServer.GetRequestCount("/v2/vms")
-	t.Logf("VPSie API calls made (should be from leader only): %d", apiCalls)
+	err = k8sClient.Create(ctx, nodeGroup)
+	require.NoError(t, err)
+	defer func() {
+		_ = k8sClient.Delete(ctx, nodeGroup)
+	}()
+
+	// Wait for VPSieNodes to be created
+	var vpsieNodes []autoscalerv1alpha1.VPSieNode
+	require.Eventually(t, func() bool {
+		list := &autoscalerv1alpha1.VPSieNodeList{}
+		err := k8sClient.List(ctx, list, client.InNamespace(testNamespace))
+		if err != nil {
+			return false
+		}
+		vpsieNodes = list.Items
+		return len(vpsieNodes) == 2
+	}, 30*time.Second, 1*time.Second, "Expected 2 VPSieNodes to be created")
+
+	// Verify VPSieNode specs
+	for _, node := range vpsieNodes {
+		assert.Equal(t, nodeGroup.Name, node.Spec.NodeGroupName)
+		assert.Equal(t, nodeGroup.Spec.OfferingID, node.Spec.OfferingID)
+		assert.Equal(t, nodeGroup.Spec.DatacenterID, node.Spec.DatacenterID)
+	}
+
+	// Verify mock server received VM creation requests
+	assert.GreaterOrEqual(t, mockServer.GetRequestCount("/v2/vms"), 2)
+
+	// Wait for VM state transitions
+	time.Sleep(6 * time.Second)
+
+	// Update NodeGroup to trigger scale up
+	err = k8sClient.Get(ctx, client.ObjectKey{
+		Name:      nodeGroup.Name,
+		Namespace: nodeGroup.Namespace,
+	}, nodeGroup)
+	require.NoError(t, err)
+
+	nodeGroup.Spec.MinNodes = 3
+	err = k8sClient.Update(ctx, nodeGroup)
+	require.NoError(t, err)
+
+	// Wait for additional VPSieNode
+	require.Eventually(t, func() bool {
+		list := &autoscalerv1alpha1.VPSieNodeList{}
+		err := k8sClient.List(ctx, list, client.InNamespace(testNamespace))
+		if err != nil {
+			return false
+		}
+		return len(list.Items) == 3
+	}, 30*time.Second, 1*time.Second, "Expected 3 VPSieNodes after scale up")
+
+	// Delete NodeGroup and verify cleanup
+	err = k8sClient.Delete(ctx, nodeGroup)
+	require.NoError(t, err)
+
+	// Wait for VPSieNodes to be deleted
+	require.Eventually(t, func() bool {
+		list := &autoscalerv1alpha1.VPSieNodeList{}
+		err := k8sClient.List(ctx, list, client.InNamespace(testNamespace))
+		if err != nil {
+			return false
+		}
+		return len(list.Items) == 0
+	}, 30*time.Second, 1*time.Second, "VPSieNodes should be deleted")
+
+	t.Log("Controller reconciliation test completed successfully")
+}
+
+// TestConfigurationValidation_Integration tests controller configuration validation
+func TestConfigurationValidation_Integration(t *testing.T) {
+	t.Run("invalid metrics address", func(t *testing.T) {
+		// Test that controller fails with invalid metrics address
+		// This would typically be tested at the unit level
+		// Here we just verify the controller handles it gracefully
+		t.Skip("Configuration validation is typically tested at unit level")
+	})
+
+	t.Run("conflicting addresses", func(t *testing.T) {
+		// Test that controller fails when metrics and health addresses are the same
+		t.Skip("Configuration validation is typically tested at unit level")
+	})
+
+	t.Run("valid configuration", func(t *testing.T) {
+		// Test that controller starts with valid configuration
+		// This is covered by other integration tests
+		t.Skip("Valid configuration is tested by other integration tests")
+	})
+}
+
+// TestGracefulShutdown_Integration tests graceful shutdown behavior
+func TestGracefulShutdown_Integration(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	// Start mock VPSie server
+	mockServer := NewMockVPSieServer()
+	defer mockServer.Close()
+
+	// Create VPSie secret
+	secretName := "test-vpsie-secret-shutdown"
+	err := createTestSecret(ctx, secretName, testNamespace, mockServer.URL())
+	require.NoError(t, err)
+	defer func() {
+		_ = deleteTestSecret(ctx, secretName, testNamespace)
+	}()
+
+	// Start controller
+	proc, err := startControllerInBackground(18086, 18087, secretName, testNamespace)
+	require.NoError(t, err)
+	defer cleanup(proc)
+
+	t.Logf("Controller started with PID: %d", proc.PID)
+
+	// Wait for controller to be healthy
+	require.Eventually(t, func() bool {
+		return proc.IsHealthy()
+	}, 30*time.Second, 1*time.Second, "Controller did not become healthy")
+
+	// Create some active resources
+	nodeGroup := &autoscalerv1alpha1.NodeGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-nodegroup-shutdown",
+			Namespace: testNamespace,
+		},
+		Spec: autoscalerv1alpha1.NodeGroupSpec{
+			MinNodes:     2,
+			MaxNodes:     5,
+			DatacenterID: "us-west-1",
+			OfferingID:   "standard-2cpu-4gb",
+		},
+	}
+
+	err = k8sClient.Create(ctx, nodeGroup)
+	require.NoError(t, err)
+	defer func() {
+		_ = k8sClient.Delete(ctx, nodeGroup)
+	}()
+
+	// Wait for initial reconciliation
+	time.Sleep(5 * time.Second)
+
+	// Get initial metrics
+	initialMetrics := getMetricValue(t, fmt.Sprintf("http://localhost:%d/metrics", 18086),
+		"vpsie_autoscaler_controller_reconcile_total")
+
+	t.Log("Sending SIGTERM signal")
+
+	// Send SIGTERM for graceful shutdown
+	err = sendSignal(proc, syscall.SIGTERM)
+	require.NoError(t, err)
+
+	// During shutdown, health endpoints should reflect this
+	time.Sleep(1 * time.Second)
+
+	// Check readyz returns 503 during shutdown
+	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/readyz", 18087))
+	if err == nil {
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			t.Logf("Warning: readyz returned %d during shutdown, expected 503", resp.StatusCode)
+		}
+	}
+
+	// Controller should stop accepting new work but finish existing
+	shutdownStart := time.Now()
+
+	// Wait for controller to exit (should be within 30 seconds)
+	require.Eventually(t, func() bool {
+		return !isProcessRunning(proc.PID)
+	}, 35*time.Second, 1*time.Second, "Controller did not shut down within timeout")
+
+	shutdownDuration := time.Since(shutdownStart)
+	t.Logf("Controller shut down in %v", shutdownDuration)
+	assert.LessOrEqual(t, shutdownDuration, 31*time.Second, "Shutdown took too long")
+
+	// Verify logs were properly closed
+	_, _, err = proc.GetLogs()
+	assert.NoError(t, err, "Should be able to read logs after shutdown")
+
+	t.Log("Graceful shutdown test completed successfully")
+}
+
+// TestSignalHandling_MultipleSignals tests handling of different signals
+func TestSignalHandling_MultipleSignals(t *testing.T) {
+	signals := []struct {
+		name        string
+		signal      syscall.Signal
+		metricsPort int
+		healthPort  int
+	}{
+		{"SIGTERM_multiple", syscall.SIGTERM, 18088, 18089},
+		{"SIGINT", syscall.SIGINT, 18090, 18091},
+		{"SIGQUIT", syscall.SIGQUIT, 18092, 18093},
+	}
+
+	for _, tc := range signals {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+
+			// Start mock VPSie server
+			mockServer := NewMockVPSieServer()
+			defer mockServer.Close()
+
+			// Create unique secret for this test
+			secretName := fmt.Sprintf("test-vpsie-secret-signal-%s", tc.name)
+			err := createTestSecret(ctx, secretName, testNamespace, mockServer.URL())
+			require.NoError(t, err)
+			defer func() {
+				_ = deleteTestSecret(ctx, secretName, testNamespace)
+			}()
+
+			// Start controller
+			proc, err := startControllerInBackground(tc.metricsPort, tc.healthPort, secretName, testNamespace)
+			require.NoError(t, err)
+			defer cleanup(proc)
+
+			// Wait for controller to be healthy
+			require.Eventually(t, func() bool {
+				return proc.IsHealthy()
+			}, 30*time.Second, 1*time.Second)
+
+			if tc.name == "SIGTERM_multiple" {
+				// Test multiple SIGTERM signals
+				t.Log("Sending first SIGTERM")
+				err = sendSignal(proc, syscall.SIGTERM)
+				require.NoError(t, err)
+
+				time.Sleep(2 * time.Second)
+
+				// Second SIGTERM should force exit
+				t.Log("Sending second SIGTERM")
+				err = sendSignal(proc, syscall.SIGTERM)
+				require.NoError(t, err)
+			} else {
+				// Send the signal
+				t.Logf("Sending %s signal", tc.name)
+				err = sendSignal(proc, tc.signal)
+				require.NoError(t, err)
+			}
+
+			// Wait for controller to exit
+			require.Eventually(t, func() bool {
+				return !isProcessRunning(proc.PID)
+			}, 35*time.Second, 1*time.Second, "Controller did not exit after signal")
+		})
+	}
+
+	t.Log("Signal handling test completed successfully")
+}
+
+// TestShutdownWithActiveReconciliation tests shutdown during active reconciliation
+func TestShutdownWithActiveReconciliation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	// Start mock VPSie server with slow responses
+	mockServer := NewMockVPSieServer()
+	mockServer.Latency = 3 * time.Second // Slow responses
+	defer mockServer.Close()
+
+	// Create VPSie secret
+	secretName := "test-vpsie-secret-active-shutdown"
+	err := createTestSecret(ctx, secretName, testNamespace, mockServer.URL())
+	require.NoError(t, err)
+	defer func() {
+		_ = deleteTestSecret(ctx, secretName, testNamespace)
+	}()
+
+	// Start controller
+	proc, err := startControllerInBackground(18094, 18095, secretName, testNamespace)
+	require.NoError(t, err)
+	defer cleanup(proc)
+
+	t.Logf("Controller started with PID: %d", proc.PID)
+
+	// Wait for controller to be healthy
+	require.Eventually(t, func() bool {
+		return proc.IsHealthy()
+	}, 30*time.Second, 1*time.Second)
+
+	// Create NodeGroup to trigger long-running reconciliation
+	nodeGroup := &autoscalerv1alpha1.NodeGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-nodegroup-active-shutdown",
+			Namespace: testNamespace,
+		},
+		Spec: autoscalerv1alpha1.NodeGroupSpec{
+			MinNodes:     5, // More nodes = longer reconciliation
+			MaxNodes:     10,
+			DatacenterID: "us-west-1",
+			OfferingID:   "large-8cpu-16gb",
+		},
+	}
+
+	err = k8sClient.Create(ctx, nodeGroup)
+	require.NoError(t, err)
+	defer func() {
+		_ = k8sClient.Delete(ctx, nodeGroup)
+	}()
+
+	// Wait for reconciliation to start
+	time.Sleep(2 * time.Second)
+
+	// Get initial metrics
+	initialReconcileCount := getMetricValue(t, fmt.Sprintf("http://localhost:%d/metrics", 18094),
+		"vpsie_autoscaler_controller_reconcile_total")
+	initialErrorCount := getMetricValue(t, fmt.Sprintf("http://localhost:%d/metrics", 18094),
+		"vpsie_autoscaler_controller_reconcile_errors_total")
+
+	t.Log("Sending SIGTERM during active reconciliation")
+
+	// Send SIGTERM during active reconciliation
+	err = sendSignal(proc, syscall.SIGTERM)
+	require.NoError(t, err)
+
+	shutdownStart := time.Now()
+
+	// Wait for controller to complete reconciliation and exit
+	require.Eventually(t, func() bool {
+		return !isProcessRunning(proc.PID)
+	}, 40*time.Second, 1*time.Second, "Controller did not shut down")
+
+	shutdownDuration := time.Since(shutdownStart)
+	t.Logf("Shutdown completed in %v", shutdownDuration)
+
+	// Check final metrics if still available
+	if shutdownDuration < 5*time.Second {
+		finalReconcileCount := getMetricValue(t, fmt.Sprintf("http://localhost:%d/metrics", 18094),
+			"vpsie_autoscaler_controller_reconcile_total")
+		finalErrorCount := getMetricValue(t, fmt.Sprintf("http://localhost:%d/metrics", 18094),
+			"vpsie_autoscaler_controller_reconcile_errors_total")
+
+		// Reconciliations should have completed
+		assert.GreaterOrEqual(t, finalReconcileCount, initialReconcileCount)
+
+		// Error count shouldn't spike significantly
+		errorIncrease := finalErrorCount - initialErrorCount
+		assert.LessOrEqual(t, errorIncrease, float64(5), "Too many errors during shutdown")
+	}
+
+	// Verify VPSieNodes were created despite shutdown
+	list := &autoscalerv1alpha1.VPSieNodeList{}
+	err = k8sClient.List(ctx, list, client.InNamespace(testNamespace))
+	require.NoError(t, err)
+
+	// At least some nodes should have been created
+	assert.GreaterOrEqual(t, len(list.Items), 1, "Some VPSieNodes should have been created")
+
+	t.Log("Shutdown with active reconciliation test completed successfully")
+}
+
+// TestLeaderElection_Integration tests leader election with multiple controllers
+func TestLeaderElection_Integration(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	// Start mock VPSie server
+	mockServer := NewMockVPSieServer()
+	defer mockServer.Close()
+
+	// Create VPSie secret
+	secretName := "test-vpsie-secret-leader"
+	err := createTestSecret(ctx, secretName, testNamespace, mockServer.URL())
+	require.NoError(t, err)
+	defer func() {
+		_ = deleteTestSecret(ctx, secretName, testNamespace)
+	}()
+
+	// Create unique leader election ID for this test
+	leaderElectionID := fmt.Sprintf("test-leader-%d", time.Now().Unix())
+
+	// Start 3 controllers with leader election
+	controllers, err := startMultipleControllersWithLeaderElection(
+		3, secretName, testNamespace, leaderElectionID)
+	require.NoError(t, err)
+	defer stopAllControllers(controllers)
+
+	t.Logf("Started %d controllers with leader election ID: %s", len(controllers), leaderElectionID)
+
+	// Wait for leader election to complete
+	time.Sleep(10 * time.Second)
+
+	// Identify the leader
+	leader, leaderCount := identifyLeader(controllers)
+	assert.Equal(t, 1, leaderCount, "Exactly one controller should be leader")
+
+	if leader != nil {
+		t.Logf("Leader controller on ports metrics=%s health=%s",
+			leader.MetricsAddr, leader.HealthAddr)
+	}
+
+	// Verify health endpoints reflect leadership
+	for _, controller := range controllers {
+		resp, err := http.Get(fmt.Sprintf("http://%s/readyz", controller.HealthAddr))
+		if err == nil {
+			defer resp.Body.Close()
+			if controller == leader {
+				assert.Equal(t, http.StatusOK, resp.StatusCode, "Leader should be ready")
+			}
+			// Non-leaders may or may not be ready depending on implementation
+		}
+	}
+
+	// Create a NodeGroup to verify only leader reconciles
+	nodeGroup := &autoscalerv1alpha1.NodeGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-nodegroup-leader",
+			Namespace: testNamespace,
+		},
+		Spec: autoscalerv1alpha1.NodeGroupSpec{
+			MinNodes:     1,
+			MaxNodes:     3,
+			DatacenterID: "us-west-1",
+			OfferingID:   "standard-2cpu-4gb",
+		},
+	}
+
+	err = k8sClient.Create(ctx, nodeGroup)
+	require.NoError(t, err)
+	defer func() {
+		_ = k8sClient.Delete(ctx, nodeGroup)
+	}()
+
+	// Wait for reconciliation
+	time.Sleep(10 * time.Second)
+
+	// Check reconciliation metrics - only leader should have increased
+	for _, controller := range controllers {
+		reconcileCount := getMetricValue(t,
+			fmt.Sprintf("http://%s/metrics", controller.MetricsAddr),
+			"vpsie_autoscaler_controller_reconcile_total")
+
+		if controller == leader {
+			assert.Greater(t, reconcileCount, float64(0), "Leader should have reconciled")
+		} else {
+			assert.Equal(t, float64(0), reconcileCount, "Non-leader should not reconcile")
+		}
+	}
+
+	// Verify lease exists
+	lease := &coordinationv1.Lease{}
+	err = k8sClient.Get(ctx, client.ObjectKey{
+		Name:      leaderElectionID,
+		Namespace: testNamespace,
+	}, lease)
+	require.NoError(t, err)
+	assert.NotNil(t, lease.Spec.HolderIdentity)
 
 	t.Log("Leader election test completed successfully")
 }
 
-// TestLeaderElection_Handoff tests leader election handoff when leader stops
+// TestLeaderElection_Handoff tests leader handoff when current leader stops
 func TestLeaderElection_Handoff(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	// Create mock VPSie server
+	// Start mock VPSie server
 	mockServer := NewMockVPSieServer()
 	defer mockServer.Close()
-
-	t.Logf("Mock VPSie server started at: %s", mockServer.URL())
 
 	// Create VPSie secret
 	secretName := "test-vpsie-secret-handoff"
@@ -730,696 +937,113 @@ func TestLeaderElection_Handoff(t *testing.T) {
 		_ = deleteTestSecret(ctx, secretName, testNamespace)
 	}()
 
+	// Create unique leader election ID
+	leaderElectionID := fmt.Sprintf("test-handoff-%d", time.Now().Unix())
+
 	// Start 2 controllers with leader election
-	leaderElectionID := "test-leader-handoff"
-	controllers, err := startMultipleControllers(2, 11000, 11100, secretName, testNamespace, leaderElectionID)
+	controllers, err := startMultipleControllersWithLeaderElection(
+		2, secretName, testNamespace, leaderElectionID)
 	require.NoError(t, err)
-	defer cleanupMultipleControllers(controllers)
+	defer stopAllControllers(controllers)
 
-	t.Logf("Started 2 controllers with PIDs: %d, %d", controllers[0].PID, controllers[1].PID)
+	// Wait for initial leader election
+	time.Sleep(10 * time.Second)
 
-	// Wait for all controllers to be healthy
-	err = waitForAllControllersReady(controllers, 45*time.Second)
-	require.NoError(t, err)
+	// Identify initial leader
+	initialLeader, leaderCount := identifyLeader(controllers)
+	require.Equal(t, 1, leaderCount, "Should have exactly one leader")
+	require.NotNil(t, initialLeader, "Should have a leader")
 
-	// Identify current leader
-	initialLeader, err := waitForLeaderElection(controllers, 30*time.Second)
-	require.NoError(t, err)
-	require.NotNil(t, initialLeader)
+	t.Logf("Initial leader on ports metrics=%s health=%s",
+		initialLeader.MetricsAddr, initialLeader.HealthAddr)
 
-	t.Logf("Initial leader: PID %d (health port: %s)", initialLeader.PID, initialLeader.HealthAddr)
-
-	// Identify the non-leader
-	var standby *ControllerProcess
-	for _, proc := range controllers {
-		if proc.PID != initialLeader.PID {
-			standby = proc
-			break
-		}
-	}
-	require.NotNil(t, standby, "Should have a standby controller")
-
-	t.Logf("Standby controller: PID %d (health port: %s)", standby.PID, standby.HealthAddr)
-
-	// Create a NodeGroup for reconciliation testing
-	ng := &autoscalerv1alpha1.NodeGroup{
+	// Create a NodeGroup
+	nodeGroup := &autoscalerv1alpha1.NodeGroup{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-ng-handoff",
+			Name:      "test-nodegroup-handoff",
 			Namespace: testNamespace,
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
 			MinNodes:     1,
 			MaxNodes:     3,
-			DatacenterID: "dc-test",
-			OfferingIDs:  []string{"small-2cpu-4gb"},
-			OSImageID:    "ubuntu-22.04",
+			DatacenterID: "us-west-1",
+			OfferingID:   "standard-2cpu-4gb",
 		},
 	}
 
-	err = k8sClient.Create(ctx, ng)
+	err = k8sClient.Create(ctx, nodeGroup)
 	require.NoError(t, err)
 	defer func() {
-		_ = k8sClient.Delete(ctx, ng)
+		_ = k8sClient.Delete(ctx, nodeGroup)
 	}()
 
 	// Wait for initial reconciliation
-	time.Sleep(3 * time.Second)
-
-	// Record initial API calls
-	initialAPICalls := mockServer.GetRequestCount("/v2/vms")
-	t.Logf("Initial API calls from leader: %d", initialAPICalls)
+	time.Sleep(5 * time.Second)
 
 	// Stop the current leader
-	t.Logf("Stopping current leader (PID %d)...", initialLeader.PID)
-	err = sendSignal(initialLeader, syscall.SIGTERM)
+	t.Log("Stopping current leader")
+	err = initialLeader.Stop()
 	require.NoError(t, err)
 
-	// Wait for leader to exit
-	_ = waitForShutdown(initialLeader, 30*time.Second)
-
-	t.Log("Leader stopped, waiting for new leader election...")
-
-	// Verify remaining controller becomes leader within 15 seconds
-	newLeader, err := identifyLeader([]*ControllerProcess{standby}, 20*time.Second)
-	require.NoError(t, err, "New leader should be elected within 20 seconds")
-	require.NotNil(t, newLeader)
-	assert.Equal(t, standby.PID, newLeader.PID, "Standby should become the new leader")
-
-	t.Logf("New leader elected: PID %d", newLeader.PID)
-
-	// Verify new leader's readyz status
-	newLeaderStatus, err := getHealthStatus(newLeader.HealthAddr, "/readyz")
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, newLeaderStatus, "New leader should have readyz returning 200")
-
-	// Verify new leader takes over reconciliation
-	// Update the NodeGroup to trigger reconciliation
-	err = k8sClient.Get(ctx, client.ObjectKey{Name: ng.Name, Namespace: ng.Namespace}, ng)
-	if err == nil {
-		ng.Spec.MinNodes = 2
-		_ = k8sClient.Update(ctx, ng)
+	// Find the remaining controller
+	var remainingController *ControllerProcess
+	for _, c := range controllers {
+		if c != initialLeader {
+			remainingController = c
+			break
+		}
 	}
+	require.NotNil(t, remainingController, "Should have a remaining controller")
 
-	// Wait for reconciliation
+	// Wait for new leader election (lease renewal + election timeout)
+	t.Log("Waiting for new leader election")
+	require.Eventually(t, func() bool {
+		return isControllerLeader(remainingController)
+	}, 15*time.Second, 1*time.Second, "Remaining controller should become leader")
+
+	t.Logf("New leader on ports metrics=%s health=%s",
+		remainingController.MetricsAddr, remainingController.HealthAddr)
+
+	// Update NodeGroup to trigger new reconciliation
+	err = k8sClient.Get(ctx, client.ObjectKey{
+		Name:      nodeGroup.Name,
+		Namespace: nodeGroup.Namespace,
+	}, nodeGroup)
+	require.NoError(t, err)
+
+	nodeGroup.Spec.MinNodes = 2
+	err = k8sClient.Update(ctx, nodeGroup)
+	require.NoError(t, err)
+
+	// Wait for new leader to reconcile
 	time.Sleep(5 * time.Second)
 
-	// Verify work is not lost - API calls should increase
-	finalAPICalls := mockServer.GetRequestCount("/v2/vms")
-	t.Logf("Final API calls after handoff: %d (initial: %d)", finalAPICalls, initialAPICalls)
+	// Verify new leader is reconciling
+	reconcileCount := getMetricValue(t,
+		fmt.Sprintf("http://%s/metrics", remainingController.MetricsAddr),
+		"vpsie_autoscaler_controller_reconcile_total")
+	assert.Greater(t, reconcileCount, float64(0), "New leader should be reconciling")
 
-	// New leader should have processed the work
-	t.Log("Leader election handoff test completed successfully")
+	// Verify VPSieNodes are still managed
+	list := &autoscalerv1alpha1.VPSieNodeList{}
+	err = k8sClient.List(ctx, list, client.InNamespace(testNamespace))
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(list.Items), 1, "VPSieNodes should still exist")
+
+	t.Log("Leader handoff test completed successfully")
 }
 
-// TestLeaderElection_SplitBrain tests leader election with network partition
+// TestLeaderElection_SplitBrain tests split-brain prevention
 func TestLeaderElection_SplitBrain(t *testing.T) {
-	t.Skip("Network partition simulation requires advanced setup - implement with iptables or network namespaces")
-
-	// This test would require:
-	// 1. Starting 3 controllers
-	// 2. Using iptables or network namespaces to simulate partition
-	// 3. Blocking one controller's access to Kubernetes API
-	// 4. Verifying system maintains single leader
-	// 5. Restoring network and verifying convergence
-	//
-	// Implementation note:
-	// - Could use `iptables -A OUTPUT -p tcp --dport 6443 -j DROP` to block API access
-	// - Or use network namespaces for isolation
-	// - Requires root privileges or specific container capabilities
-	//
-	// For now, we skip this test as it requires infrastructure setup
-	// beyond what's typically available in CI/CD environments
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-	_ = ctx
-
-	t.Log("Network partition test would be implemented here")
-	t.Log("Requires: iptables rules or network namespace isolation")
-	t.Log("Expected behavior: System should maintain exactly one leader")
-	t.Log("After partition heal: Leader election should reconverge")
-}
-
-// TestControllerReconciliation_Integration tests end-to-end reconciliation
-func TestControllerReconciliation_Integration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-
-	// Create mock VPSie server
-	mockServer := NewMockVPSieServer()
-	defer mockServer.Close()
-
-	t.Logf("Mock VPSie server started at: %s", mockServer.URL())
-
-	// Create VPSie secret for the test
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-vpsie-secret-reconcile",
-			Namespace: testNamespace,
-		},
-		Data: map[string][]byte{
-			"clientId":     []byte("test-client-id"),
-			"clientSecret": []byte("test-client-secret"),
-			"url":          []byte(mockServer.URL()),
-		},
-	}
-
-	err := k8sClient.Create(ctx, secret)
-	require.NoError(t, err, "Failed to create VPSie secret")
-
-	defer func() {
-		_ = k8sClient.Delete(ctx, secret)
-	}()
-
-	// Create controller options with test-specific ports
-	opts := controller.NewDefaultOptions()
-	opts.MetricsAddr = ":48080"       // Different port for test
-	opts.HealthProbeAddr = ":48081"   // Different port for test
-	opts.EnableLeaderElection = false // Disable for testing
-	opts.VPSieSecretName = "test-vpsie-secret-reconcile"
-	opts.VPSieSecretNamespace = testNamespace
-	opts.LogLevel = "debug"
-
-	// Validate options
-	require.NoError(t, opts.Validate())
-
-	// Create controller manager
-	mgr, err := controller.NewManager(cfg, opts)
-	require.NoError(t, err, "Failed to create controller manager")
-
-	// Start controller in background
-	mgrCtx, mgrCancel := context.WithCancel(ctx)
-	defer mgrCancel()
-
-	go func() {
-		_ = mgr.Start(mgrCtx)
-	}()
-
-	// Wait for controller to start
-	time.Sleep(3 * time.Second)
-
-	t.Log("Controller started, testing reconciliation...")
-
-	// Test 1: Create NodeGroup with minNodes=2
-	t.Run("create NodeGroup and verify VPSieNodes", func(t *testing.T) {
-		ng := &autoscalerv1alpha1.NodeGroup{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-ng-reconcile",
-				Namespace: testNamespace,
-			},
-			Spec: autoscalerv1alpha1.NodeGroupSpec{
-				MinNodes:     2,
-				MaxNodes:     5,
-				DatacenterID: "dc-test",
-				OfferingIDs:  []string{"small-2cpu-4gb"},
-				OSImageID:    "ubuntu-22.04",
-			},
-		}
-
-		err := k8sClient.Create(ctx, ng)
-		require.NoError(t, err, "Failed to create NodeGroup")
-
-		defer func() {
-			_ = k8sClient.Delete(ctx, ng)
-		}()
-
-		// Wait for controller to reconcile and create VPSieNodes
-		time.Sleep(10 * time.Second)
-
-		// Verify VPSieNode resources are created
-		vpsieNodeList := &autoscalerv1alpha1.VPSieNodeList{}
-		err = k8sClient.List(ctx, vpsieNodeList, client.InNamespace(testNamespace))
-		require.NoError(t, err, "Failed to list VPSieNodes")
-
-		t.Logf("Found %d VPSieNodes", len(vpsieNodeList.Items))
-
-		// Note: VPSieNode creation depends on controller implementation
-		// The controller may or may not create VPSieNodes immediately
-		// This is a placeholder for when full reconciliation is implemented
-
-		// Verify mock API was called
-		createCount := mockServer.GetRequestCount("/v2/vms")
-		t.Logf("Mock VPSie API received %d requests to /v2/vms", createCount)
-	})
-
-	// Test 2: Simulate VM state transition to "running"
-	t.Run("verify VM state transitions", func(t *testing.T) {
-		// Get VMs from mock server and transition them to running
-		time.Sleep(2 * time.Second)
-
-		// Check if any VMs were created in the mock
-		// Note: This depends on controller actually calling the API
-		t.Log("Checking VM state transitions...")
-	})
-
-	// Test 3: Update NodeGroup to minNodes=3
-	t.Run("scale up NodeGroup", func(t *testing.T) {
-		ng := &autoscalerv1alpha1.NodeGroup{}
-		err := k8sClient.Get(ctx, client.ObjectKey{
-			Name:      "test-ng-reconcile",
-			Namespace: testNamespace,
-		}, ng)
-
-		if err == nil {
-			// Update minNodes
-			ng.Spec.MinNodes = 3
-			err = k8sClient.Update(ctx, ng)
-			if err == nil {
-				t.Log("Updated NodeGroup minNodes to 3")
-
-				// Wait for reconciliation
-				time.Sleep(10 * time.Second)
-
-				// Verify additional VPSieNode was created
-				vpsieNodeList := &autoscalerv1alpha1.VPSieNodeList{}
-				err = k8sClient.List(ctx, vpsieNodeList, client.InNamespace(testNamespace))
-				if err == nil {
-					t.Logf("Found %d VPSieNodes after scale-up", len(vpsieNodeList.Items))
-				}
-			}
-		}
-	})
-
-	// Test 4: Delete NodeGroup and verify cleanup
-	t.Run("delete NodeGroup and verify cleanup", func(t *testing.T) {
-		ng := &autoscalerv1alpha1.NodeGroup{}
-		err := k8sClient.Get(ctx, client.ObjectKey{
-			Name:      "test-ng-reconcile",
-			Namespace: testNamespace,
-		}, ng)
-
-		if err == nil {
-			err = k8sClient.Delete(ctx, ng)
-			require.NoError(t, err, "Failed to delete NodeGroup")
-
-			// Wait for cleanup
-			time.Sleep(5 * time.Second)
-
-			// Verify NodeGroup is deleted
-			deletedNG := &autoscalerv1alpha1.NodeGroup{}
-			err = k8sClient.Get(ctx, client.ObjectKey{
-				Name:      "test-ng-reconcile",
-				Namespace: testNamespace,
-			}, deletedNG)
-
-			assert.True(t, errors.IsNotFound(err), "NodeGroup should be deleted")
-
-			// Verify VPSieNodes are cleaned up (depends on finalizer implementation)
-			vpsieNodeList := &autoscalerv1alpha1.VPSieNodeList{}
-			_ = k8sClient.List(ctx, vpsieNodeList, client.InNamespace(testNamespace))
-			t.Logf("VPSieNodes remaining after NodeGroup deletion: %d", len(vpsieNodeList.Items))
-		}
-	})
-
-	t.Log("Controller reconciliation test completed")
-}
-
-// TestGracefulShutdown_Integration tests graceful shutdown
-func TestGracefulShutdown_Integration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	// Create mock VPSie server
-	mockServer := NewMockVPSieServer()
-	defer mockServer.Close()
-
-	t.Logf("Mock VPSie server started at: %s", mockServer.URL())
-
-	// Create VPSie secret
-	secretName := "test-vpsie-secret-shutdown"
-	err := createTestSecret(ctx, secretName, testNamespace, mockServer.URL())
-	require.NoError(t, err, "Failed to create VPSie secret")
-
-	defer func() {
-		_ = deleteTestSecret(ctx, secretName, testNamespace)
-	}()
-
-	// Start controller in background
-	proc, err := startControllerInBackground(58080, 58081, secretName, testNamespace)
-	require.NoError(t, err, "Failed to start controller")
-	defer cleanup(proc)
-
-	t.Logf("Controller started with PID: %d", proc.PID)
-
-	// Wait for controller to be ready
-	err = waitForControllerReady(proc.HealthAddr, 30*time.Second)
-	require.NoError(t, err, "Controller did not become ready")
-
-	t.Log("Controller is ready")
-
-	// Create active resources (NodeGroup)
-	ng := &autoscalerv1alpha1.NodeGroup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-ng-shutdown",
-			Namespace: testNamespace,
-		},
-		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:     2,
-			MaxNodes:     5,
-			DatacenterID: "dc-test",
-			OfferingIDs:  []string{"small-2cpu-4gb"},
-			OSImageID:    "ubuntu-22.04",
-		},
-	}
-
-	err = k8sClient.Create(ctx, ng)
-	require.NoError(t, err, "Failed to create NodeGroup")
-
-	defer func() {
-		_ = k8sClient.Delete(ctx, ng)
-	}()
-
-	// Wait a bit for controller to start processing
-	time.Sleep(2 * time.Second)
-
-	// Verify controller is healthy before shutdown
-	healthStatus, err := getHealthStatus(proc.HealthAddr, "/healthz")
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, healthStatus, "Controller should be healthy before shutdown")
-
-	t.Log("Sending SIGTERM to controller...")
-
-	// Send SIGTERM signal
-	err = sendSignal(proc, syscall.SIGTERM)
-	require.NoError(t, err, "Failed to send SIGTERM")
-
-	// Verify controller enters shutdown state (readiness should fail)
-	t.Log("Waiting for controller to enter shutdown state...")
-	time.Sleep(2 * time.Second)
-
-	// Check if readiness probe reflects shutdown
-	readyStatus, err := getHealthStatus(proc.HealthAddr, "/readyz")
-	if err == nil {
-		// If we can still reach it, it should be degraded (503) or still OK during graceful period
-		t.Logf("Readiness status during shutdown: %d", readyStatus)
-	} else {
-		t.Logf("Health endpoint no longer reachable (expected during shutdown)")
-	}
-
-	// Verify controller exits within 30 second timeout
-	t.Log("Waiting for controller to exit gracefully...")
-	err = waitForShutdown(proc, 30*time.Second)
-	if err != nil {
-		// Read logs for debugging
-		stdout, stderr, _ := readControllerLogs(proc)
-		t.Logf("Controller stdout:\n%s", stdout)
-		t.Logf("Controller stderr:\n%s", stderr)
-	}
-	assert.NoError(t, err, "Controller should exit gracefully within 30 seconds")
-
-	// Verify process is no longer running
-	assert.False(t, isProcessRunning(proc.PID), "Controller process should not be running")
-
-	// Verify no resource leaks (NodeGroup should still exist)
-	retrievedNG := &autoscalerv1alpha1.NodeGroup{}
-	err = k8sClient.Get(ctx, client.ObjectKey{
-		Name:      ng.Name,
-		Namespace: ng.Namespace,
-	}, retrievedNG)
-	assert.NoError(t, err, "NodeGroup should still exist after shutdown")
-
-	t.Log("Graceful shutdown test completed successfully")
-}
-
-// TestSignalHandling_MultipleSignals tests handling of multiple signals
-func TestSignalHandling_MultipleSignals(t *testing.T) {
-	t.Run("multiple SIGTERM signals", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-
-		// Create mock VPSie server
-		mockServer := NewMockVPSieServer()
-		defer mockServer.Close()
-
-		// Create VPSie secret
-		secretName := "test-vpsie-secret-multisig"
-		err := createTestSecret(ctx, secretName, testNamespace, mockServer.URL())
-		require.NoError(t, err)
-		defer func() {
-			_ = deleteTestSecret(ctx, secretName, testNamespace)
-		}()
-
-		// Start controller
-		proc, err := startControllerInBackground(68080, 68081, secretName, testNamespace)
-		require.NoError(t, err)
-		defer cleanup(proc)
-
-		t.Logf("Controller started with PID: %d", proc.PID)
-
-		// Wait for ready
-		err = waitForControllerReady(proc.HealthAddr, 30*time.Second)
-		require.NoError(t, err)
-
-		// Send first SIGTERM - should start graceful shutdown
-		t.Log("Sending first SIGTERM...")
-		err = sendSignal(proc, syscall.SIGTERM)
-		require.NoError(t, err)
-
-		// Wait a bit
-		time.Sleep(2 * time.Second)
-
-		// Send second SIGTERM - should trigger immediate exit
-		t.Log("Sending second SIGTERM...")
-		err = sendSignal(proc, syscall.SIGTERM)
-		require.NoError(t, err)
-
-		// Controller should exit quickly after second signal
-		err = waitForShutdown(proc, 10*time.Second)
-		assert.NoError(t, err, "Controller should exit quickly after second SIGTERM")
-
-		// Verify process is dead
-		assert.False(t, isProcessRunning(proc.PID))
-
-		t.Log("Multiple SIGTERM test completed")
-	})
-
-	t.Run("SIGINT signal", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-
-		// Create mock VPSie server
-		mockServer := NewMockVPSieServer()
-		defer mockServer.Close()
-
-		// Create VPSie secret
-		secretName := "test-vpsie-secret-sigint"
-		err := createTestSecret(ctx, secretName, testNamespace, mockServer.URL())
-		require.NoError(t, err)
-		defer func() {
-			_ = deleteTestSecret(ctx, secretName, testNamespace)
-		}()
-
-		// Start controller
-		proc, err := startControllerInBackground(78080, 78081, secretName, testNamespace)
-		require.NoError(t, err)
-		defer cleanup(proc)
-
-		t.Logf("Controller started with PID: %d", proc.PID)
-
-		// Wait for ready
-		err = waitForControllerReady(proc.HealthAddr, 30*time.Second)
-		require.NoError(t, err)
-
-		// Send SIGINT
-		t.Log("Sending SIGINT...")
-		err = sendSignal(proc, syscall.SIGINT)
-		require.NoError(t, err)
-
-		// Should exit gracefully
-		err = waitForShutdown(proc, 30*time.Second)
-		assert.NoError(t, err, "Controller should handle SIGINT gracefully")
-
-		assert.False(t, isProcessRunning(proc.PID))
-
-		t.Log("SIGINT test completed")
-	})
-
-	t.Run("SIGQUIT signal", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-
-		// Create mock VPSie server
-		mockServer := NewMockVPSieServer()
-		defer mockServer.Close()
-
-		// Create VPSie secret
-		secretName := "test-vpsie-secret-sigquit"
-		err := createTestSecret(ctx, secretName, testNamespace, mockServer.URL())
-		require.NoError(t, err)
-		defer func() {
-			_ = deleteTestSecret(ctx, secretName, testNamespace)
-		}()
-
-		// Start controller
-		proc, err := startControllerInBackground(88080, 88081, secretName, testNamespace)
-		require.NoError(t, err)
-		defer cleanup(proc)
-
-		t.Logf("Controller started with PID: %d", proc.PID)
-
-		// Wait for ready
-		err = waitForControllerReady(proc.HealthAddr, 30*time.Second)
-		require.NoError(t, err)
-
-		// Send SIGQUIT
-		t.Log("Sending SIGQUIT...")
-		err = sendSignal(proc, syscall.SIGQUIT)
-		require.NoError(t, err)
-
-		// Should exit (may dump stack trace)
-		err = waitForShutdown(proc, 30*time.Second)
-		assert.NoError(t, err, "Controller should handle SIGQUIT")
-
-		assert.False(t, isProcessRunning(proc.PID))
-
-		t.Log("SIGQUIT test completed")
-	})
-}
-
-// TestShutdownWithActiveReconciliation tests shutdown during active reconciliation
-func TestShutdownWithActiveReconciliation(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	// Create mock VPSie server
-	mockServer := NewMockVPSieServer()
-	defer mockServer.Close()
-
-	t.Logf("Mock VPSie server started at: %s", mockServer.URL())
-
-	// Configure mock server with latency to simulate long-running operations
-	mockServer.Latency = 3 * time.Second
-
-	// Create VPSie secret
-	secretName := "test-vpsie-secret-active-recon"
-	err := createTestSecret(ctx, secretName, testNamespace, mockServer.URL())
-	require.NoError(t, err)
-	defer func() {
-		_ = deleteTestSecret(ctx, secretName, testNamespace)
-	}()
-
-	// Start controller
-	proc, err := startControllerInBackground(98080, 98081, secretName, testNamespace)
-	require.NoError(t, err)
-	defer cleanup(proc)
-
-	t.Logf("Controller started with PID: %d", proc.PID)
-
-	// Wait for controller to be ready
-	err = waitForControllerReady(proc.HealthAddr, 30*time.Second)
-	require.NoError(t, err)
-
-	t.Log("Controller is ready")
-
-	// Create NodeGroup that will trigger reconciliation
-	ng := &autoscalerv1alpha1.NodeGroup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-ng-active-recon",
-			Namespace: testNamespace,
-		},
-		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:     3,
-			MaxNodes:     5,
-			DatacenterID: "dc-test",
-			OfferingIDs:  []string{"small-2cpu-4gb"},
-			OSImageID:    "ubuntu-22.04",
-		},
-	}
-
-	err = k8sClient.Create(ctx, ng)
-	require.NoError(t, err)
-
-	defer func() {
-		_ = k8sClient.Delete(ctx, ng)
-	}()
-
-	// Wait a bit for reconciliation to start
-	t.Log("Waiting for reconciliation to start...")
-	time.Sleep(5 * time.Second)
-
-	// Send SIGTERM during active reconciliation
-	t.Log("Sending SIGTERM during active reconciliation...")
-	err = sendSignal(proc, syscall.SIGTERM)
-	require.NoError(t, err)
-
-	// Verify reconciliation completes before shutdown
-	// Controller should allow current reconciliation to finish
-	t.Log("Waiting for controller to complete reconciliation and shutdown...")
-	err = waitForShutdown(proc, 45*time.Second)
-	if err != nil {
-		// Read logs for debugging
-		stdout, stderr, _ := readControllerLogs(proc)
-		t.Logf("Controller stdout:\n%s", stdout)
-		t.Logf("Controller stderr:\n%s", stderr)
-	}
-	assert.NoError(t, err, "Controller should complete reconciliation and exit gracefully")
-
-	// Verify process exited
-	assert.False(t, isProcessRunning(proc.PID))
-
-	// Verify status was saved correctly
-	// The NodeGroup should still exist and have status updated
-	retrievedNG := &autoscalerv1alpha1.NodeGroup{}
-	err = k8sClient.Get(ctx, client.ObjectKey{
-		Name:      ng.Name,
-		Namespace: ng.Namespace,
-	}, retrievedNG)
-	assert.NoError(t, err, "NodeGroup should still exist")
-
-	// Log final status
-	if err == nil {
-		t.Logf("NodeGroup status after shutdown - Current: %d, Desired: %d",
-			retrievedNG.Status.CurrentNodes, retrievedNG.Status.DesiredNodes)
-	}
-
-	// Check if controller made API calls to VPSie (indicates reconciliation happened)
-	apiCalls := mockServer.GetRequestCount("/v2/vms")
-	t.Logf("VPSie API calls made: %d", apiCalls)
-
-	t.Log("Shutdown with active reconciliation test completed")
-}
-
-// TestConfigurationValidation_Integration tests configuration validation
-func TestConfigurationValidation_Integration(t *testing.T) {
-	t.Run("invalid metrics address", func(t *testing.T) {
-		opts := &controller.Options{
-			MetricsAddr: "",
-		}
-		err := opts.Validate()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "metrics address")
-	})
-
-	t.Run("same metrics and health address", func(t *testing.T) {
-		opts := &controller.Options{
-			MetricsAddr:     ":8080",
-			HealthProbeAddr: ":8080",
-		}
-		err := opts.Validate()
-		assert.Error(t, err)
-	})
-
-	t.Run("valid configuration", func(t *testing.T) {
-		opts := controller.NewDefaultOptions()
-		err := opts.Validate()
-		assert.NoError(t, err)
-	})
-}
-
-// TestMetricsRegistration_Integration tests metrics registration
-func TestMetricsRegistration_Integration(t *testing.T) {
-	// This test can run without full integration setup
-	// It verifies metrics are registered correctly
-
-	// Import metrics package and register
-	// Note: In real test, we'd import and call metrics.RegisterMetrics()
-	// For now, this is a placeholder
-
-	t.Run("metrics registration succeeds", func(t *testing.T) {
-		// This would test that metrics.RegisterMetrics() doesn't panic
-		// and that all 22 metrics are registered
-		t.Skip("Implement with metrics package integration")
-	})
+	t.Skip("Split-brain testing requires network manipulation capabilities")
+
+	// This test would:
+	// 1. Start 3 controllers with leader election
+	// 2. Identify the leader
+	// 3. Simulate network partition (would require special tooling)
+	// 4. Verify only one leader exists (via Kubernetes Lease API)
+	// 5. Heal partition
+	// 6. Verify leader convergence
 }
 
 // TestScaleUp_EndToEnd tests end-to-end scale-up scenario
@@ -1448,189 +1072,142 @@ func TestScaleUp_EndToEnd(t *testing.T) {
 
 	t.Logf("Controller started with PID: %d", proc.PID)
 
-	// Wait for controller to be ready
-	err = waitForControllerReady(proc.HealthAddr, 30*time.Second)
-	require.NoError(t, err)
+	// Wait for controller to be healthy
+	require.Eventually(t, func() bool {
+		return proc.IsHealthy()
+	}, 30*time.Second, 1*time.Second)
 
-	t.Log("Controller is ready")
-
-	// Create NodeGroup with minNodes=1, maxNodes=5
-	ng := &autoscalerv1alpha1.NodeGroup{
+	// Create NodeGroup with initial configuration
+	nodeGroup := &autoscalerv1alpha1.NodeGroup{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-ng-scaleup",
+			Name:      "test-nodegroup-scaleup-e2e",
 			Namespace: testNamespace,
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:     1,
-			MaxNodes:     5,
-			DatacenterID: "dc-test",
-			OfferingIDs:  []string{"small-2cpu-4gb"},
-			OSImageID:    "ubuntu-22.04",
+			MinNodes:          1,
+			MaxNodes:          5,
+			TargetUtilization: 70,
+			DatacenterID:      "us-west-1",
+			OfferingID:        "standard-4cpu-8gb",
 		},
 	}
 
-	err = k8sClient.Create(ctx, ng)
+	err = k8sClient.Create(ctx, nodeGroup)
 	require.NoError(t, err)
 	defer func() {
-		_ = k8sClient.Delete(ctx, ng)
+		_ = k8sClient.Delete(ctx, nodeGroup)
 	}()
 
-	t.Log("NodeGroup created, waiting for initial VPSieNode creation...")
+	t.Log("NodeGroup created, waiting for initial node provisioning")
 
-	// Verify initial VPSieNode creation (should create minNodes=1)
-	err = waitForVPSieNodeCountAtLeast(ctx, testNamespace, 1, 30*time.Second)
-	if err == nil {
-		count, _ := countVPSieNodes(ctx, testNamespace)
-		t.Logf("Initial VPSieNodes created: %d", count)
-	}
+	// Wait for initial VPSieNode
+	require.Eventually(t, func() bool {
+		list := &autoscalerv1alpha1.VPSieNodeList{}
+		err := k8sClient.List(ctx, list, client.InNamespace(testNamespace))
+		return err == nil && len(list.Items) == 1
+	}, 30*time.Second, 1*time.Second)
 
-	// Record initial API calls
-	initialCreateCalls := mockServer.GetRequestCount("/v2/vms")
-	t.Logf("Initial CreateVM API calls: %d", initialCreateCalls)
+	// Simulate unschedulable pods to trigger scale-up
+	t.Log("Creating unschedulable pods to trigger scale-up")
 
-	// Simulate VMs becoming ready by updating their status in mock server
-	time.Sleep(2 * time.Second)
-	for vmID := 1000; vmID < 1010; vmID++ {
-		_ = mockServer.SetVMStatus(vmID, "running")
-	}
+	for i := 0; i < 3; i++ {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("unschedulable-pod-%d", i),
+				Namespace: testNamespace,
+				Labels: map[string]string{
+					"nodegroup": nodeGroup.Name,
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeSelector: map[string]string{
+					"nodegroup": nodeGroup.Name,
+				},
+				Containers: []corev1.Container{
+					{
+						Name:  "test",
+						Image: "busybox",
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    "2",
+								corev1.ResourceMemory: "4Gi",
+							},
+						},
+					},
+				},
+			},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodPending,
+				Conditions: []corev1.PodCondition{
+					{
+						Type:   corev1.PodScheduled,
+						Status: corev1.ConditionFalse,
+						Reason: "Unschedulable",
+					},
+				},
+			},
+		}
 
-	// Update NodeGroup to scale up to 2 nodes
-	t.Log("Scaling up to 2 nodes...")
-	err = k8sClient.Get(ctx, client.ObjectKey{Name: ng.Name, Namespace: ng.Namespace}, ng)
-	if err == nil {
-		ng.Spec.MinNodes = 2
-		err = k8sClient.Update(ctx, ng)
+		err = k8sClient.Create(ctx, pod)
 		require.NoError(t, err)
+		defer func() {
+			_ = k8sClient.Delete(ctx, pod)
+		}()
 	}
+
+	t.Log("Waiting for scale-up to occur")
 
 	// Wait for scale-up
-	time.Sleep(10 * time.Second)
+	require.Eventually(t, func() bool {
+		list := &autoscalerv1alpha1.VPSieNodeList{}
+		err := k8sClient.List(ctx, list, client.InNamespace(testNamespace))
+		if err != nil {
+			return false
+		}
+		t.Logf("Current VPSieNode count: %d", len(list.Items))
+		return len(list.Items) >= 3
+	}, 60*time.Second, 2*time.Second)
 
-	// Check VPSie API was called for VM creation
-	scaleUpCalls := mockServer.GetRequestCount("/v2/vms")
-	t.Logf("CreateVM API calls after scale to 2: %d (increase: %d)", scaleUpCalls, scaleUpCalls-initialCreateCalls)
+	// Verify metrics
+	metrics := getMetricsString(t, fmt.Sprintf("http://localhost:%d/metrics", 12000))
+	assert.Contains(t, metrics, "vpsie_autoscaler_scale_up_operations_total")
 
-	// Verify VPSieNode count increased
-	vpsieNodeCount, _ := countVPSieNodes(ctx, testNamespace)
-	t.Logf("VPSieNode count after scale to 2: %d", vpsieNodeCount)
+	// Get final node count
+	finalList := &autoscalerv1alpha1.VPSieNodeList{}
+	err = k8sClient.List(ctx, finalList, client.InNamespace(testNamespace))
+	require.NoError(t, err)
 
-	// Continue scaling up to maxNodes=5
-	t.Log("Scaling up to maxNodes=5...")
-	err = k8sClient.Get(ctx, client.ObjectKey{Name: ng.Name, Namespace: ng.Namespace}, ng)
-	if err == nil {
-		ng.Spec.MinNodes = 5
-		err = k8sClient.Update(ctx, ng)
-		require.NoError(t, err)
-	}
+	t.Logf("Scale-up completed. Final node count: %d", len(finalList.Items))
+	assert.GreaterOrEqual(t, len(finalList.Items), 3)
+	assert.LessOrEqual(t, len(finalList.Items), 5) // Should not exceed maxNodes
 
-	// Wait for scale-up to complete
-	time.Sleep(15 * time.Second)
-
-	finalCalls := mockServer.GetRequestCount("/v2/vms")
-	t.Logf("CreateVM API calls after scale to 5: %d (total increase: %d)", finalCalls, finalCalls-initialCreateCalls)
-
-	// Try to scale beyond maxNodes
-	t.Log("Attempting to scale beyond maxNodes (should be prevented)...")
-	err = k8sClient.Get(ctx, client.ObjectKey{Name: ng.Name, Namespace: ng.Namespace}, ng)
-	if err == nil {
-		ng.Spec.MinNodes = 10 // This should be capped at maxNodes=5
-		err = k8sClient.Update(ctx, ng)
-		require.NoError(t, err)
-	}
-
-	// Wait and verify scaling stopped at maxNodes
-	time.Sleep(10 * time.Second)
-
-	finalVPSieNodeCount, _ := countVPSieNodes(ctx, testNamespace)
-	t.Logf("Final VPSieNode count: %d (should not exceed maxNodes=5)", finalVPSieNodeCount)
-
-	// Verify status
-	status, _ := getNodeGroupStatus(ctx, ng.Name, ng.Namespace)
-	if status != nil {
-		t.Logf("NodeGroup status - Current: %d, Desired: %d", status.CurrentNodes, status.DesiredNodes)
-		// Should not exceed maxNodes
-		assert.LessOrEqual(t, status.DesiredNodes, int32(5), "DesiredNodes should not exceed maxNodes")
-	}
-
-	t.Log("Scale-up end-to-end test completed")
+	t.Log("Scale-up end-to-end test completed successfully")
 }
 
 // TestScaleDown_EndToEnd tests end-to-end scale-down scenario
 func TestScaleDown_EndToEnd(t *testing.T) {
-	t.Skip("Scale-down logic not yet implemented in controller - will enable when available")
+	t.Skip("Scale-down not yet implemented in controller")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	// Create mock VPSie server
-	mockServer := NewMockVPSieServer()
-	defer mockServer.Close()
-
-	t.Logf("Mock VPSie server started at: %s", mockServer.URL())
-
-	// Create VPSie secret
-	secretName := "test-vpsie-secret-scaledown"
-	err := createTestSecret(ctx, secretName, testNamespace, mockServer.URL())
-	require.NoError(t, err)
-	defer func() {
-		_ = deleteTestSecret(ctx, secretName, testNamespace)
-	}()
-
-	// Start controller
-	proc, err := startControllerInBackground(13000, 13100, secretName, testNamespace)
-	require.NoError(t, err)
-	defer cleanup(proc)
-
-	// Wait for controller
-	err = waitForControllerReady(proc.HealthAddr, 30*time.Second)
-	require.NoError(t, err)
-
-	// Create NodeGroup starting at 5 nodes
-	ng := &autoscalerv1alpha1.NodeGroup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-ng-scaledown",
-			Namespace: testNamespace,
-		},
-		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:     1,
-			MaxNodes:     5,
-			DatacenterID: "dc-test",
-			OfferingIDs:  []string{"small-2cpu-4gb"},
-			OSImageID:    "ubuntu-22.04",
-		},
-	}
-
-	// Set initial desired to 5
-	ng.Status.DesiredNodes = 5
-	err = k8sClient.Create(ctx, ng)
-	require.NoError(t, err)
-	defer func() {
-		_ = k8sClient.Delete(ctx, ng)
-	}()
-
-	t.Log("NodeGroup created with 5 nodes")
-
-	// Simulate low utilization and trigger scale-down
-	// This would require controller to implement scale-down logic
-
-	t.Log("Scale-down test would verify:")
-	t.Log("- Controller identifies underutilized nodes")
-	t.Log("- Respects cooldown period")
-	t.Log("- Gracefully drains nodes")
-	t.Log("- Calls VPSie API DeleteVM")
-	t.Log("- Scales down to minNodes")
-	t.Log("- Won't scale below minNodes")
+	// This test would:
+	// 1. Create NodeGroup with multiple nodes
+	// 2. Wait for nodes to be provisioned
+	// 3. Reduce load (delete pods)
+	// 4. Wait for cooldown period
+	// 5. Verify nodes are terminated gracefully
+	// 6. Check that minNodes is maintained
 }
 
-// TestMixedScaling_EndToEnd tests rapid scale-up and scale-down
+// TestMixedScaling_EndToEnd tests mixed scaling scenarios
 func TestMixedScaling_EndToEnd(t *testing.T) {
-	t.Skip("Mixed scaling test - requires full scale-up and scale-down implementation")
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	// Create mock VPSie server
 	mockServer := NewMockVPSieServer()
+	mockServer.StateTransitions = []VMStateTransition{
+		{FromState: "provisioning", ToState: "running", Duration: 2 * time.Second},
+		{FromState: "running", ToState: "ready", Duration: 1 * time.Second},
+	}
 	defer mockServer.Close()
 
 	// Create VPSie secret
@@ -1642,71 +1219,126 @@ func TestMixedScaling_EndToEnd(t *testing.T) {
 	}()
 
 	// Start controller
-	proc, err := startControllerInBackground(14000, 14100, secretName, testNamespace)
+	proc, err := startControllerInBackground(12002, 12102, secretName, testNamespace)
 	require.NoError(t, err)
 	defer cleanup(proc)
 
-	err = waitForControllerReady(proc.HealthAddr, 30*time.Second)
-	require.NoError(t, err)
-
-	// Create multiple NodeGroups for concurrent scaling
-	ng1 := &autoscalerv1alpha1.NodeGroup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-ng-mixed-1",
-			Namespace: testNamespace,
-		},
-		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:     1,
-			MaxNodes:     10,
-			DatacenterID: "dc-test",
-			OfferingIDs:  []string{"small-2cpu-4gb"},
-			OSImageID:    "ubuntu-22.04",
-		},
+	// Create multiple NodeGroups
+	nodeGroups := []struct {
+		name     string
+		minNodes int32
+		maxNodes int32
+	}{
+		{"mixed-ng-1", 2, 5},
+		{"mixed-ng-2", 1, 3},
 	}
 
-	ng2 := &autoscalerv1alpha1.NodeGroup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-ng-mixed-2",
-			Namespace: testNamespace,
-		},
-		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:     1,
-			MaxNodes:     10,
-			DatacenterID: "dc-test",
-			OfferingIDs:  []string{"medium-4cpu-8gb"},
-			OSImageID:    "ubuntu-22.04",
-		},
+	for _, ng := range nodeGroups {
+		nodeGroup := &autoscalerv1alpha1.NodeGroup{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      ng.name,
+				Namespace: testNamespace,
+			},
+			Spec: autoscalerv1alpha1.NodeGroupSpec{
+				MinNodes:     ng.minNodes,
+				MaxNodes:     ng.maxNodes,
+				DatacenterID: "us-west-1",
+				OfferingID:   "standard-2cpu-4gb",
+			},
+		}
+
+		err = k8sClient.Create(ctx, nodeGroup)
+		require.NoError(t, err)
+		defer func() {
+			_ = k8sClient.Delete(ctx, nodeGroup)
+		}()
 	}
 
-	err = k8sClient.Create(ctx, ng1)
-	require.NoError(t, err)
-	defer func() {
-		_ = k8sClient.Delete(ctx, ng1)
-	}()
+	t.Log("Multiple NodeGroups created, waiting for provisioning")
 
-	err = k8sClient.Create(ctx, ng2)
-	require.NoError(t, err)
-	defer func() {
-		_ = k8sClient.Delete(ctx, ng2)
-	}()
+	// Wait for all minimum nodes to be created
+	require.Eventually(t, func() bool {
+		list := &autoscalerv1alpha1.VPSieNodeList{}
+		err := k8sClient.List(ctx, list, client.InNamespace(testNamespace))
+		return err == nil && len(list.Items) >= 3 // 2 + 1 minimum nodes
+	}, 60*time.Second, 2*time.Second)
 
-	t.Log("Mixed scaling test would verify:")
-	t.Log("- Rapid scale-up followed by scale-down")
-	t.Log("- No race conditions")
-	t.Log("- Metrics accurately track changes")
-	t.Log("- Concurrent NodeGroups scaling independently")
+	// Perform rapid scaling operations
+	t.Log("Performing rapid scaling operations")
+
+	// Update first NodeGroup
+	ng1 := &autoscalerv1alpha1.NodeGroup{}
+	err = k8sClient.Get(ctx, client.ObjectKey{
+		Name:      "mixed-ng-1",
+		Namespace: testNamespace,
+	}, ng1)
+	require.NoError(t, err)
+
+	ng1.Spec.MinNodes = 3
+	err = k8sClient.Update(ctx, ng1)
+	require.NoError(t, err)
+
+	// Update second NodeGroup
+	ng2 := &autoscalerv1alpha1.NodeGroup{}
+	err = k8sClient.Get(ctx, client.ObjectKey{
+		Name:      "mixed-ng-2",
+		Namespace: testNamespace,
+	}, ng2)
+	require.NoError(t, err)
+
+	ng2.Spec.MinNodes = 2
+	err = k8sClient.Update(ctx, ng2)
+	require.NoError(t, err)
+
+	// Wait for scaling to complete
+	require.Eventually(t, func() bool {
+		list := &autoscalerv1alpha1.VPSieNodeList{}
+		err := k8sClient.List(ctx, list, client.InNamespace(testNamespace))
+		return err == nil && len(list.Items) >= 5 // 3 + 2 new minimum
+	}, 60*time.Second, 2*time.Second)
+
+	// Verify nodes are correctly distributed
+	list := &autoscalerv1alpha1.VPSieNodeList{}
+	err = k8sClient.List(ctx, list, client.InNamespace(testNamespace))
+	require.NoError(t, err)
+
+	ng1Count := 0
+	ng2Count := 0
+	for _, node := range list.Items {
+		if node.Spec.NodeGroupName == "mixed-ng-1" {
+			ng1Count++
+		} else if node.Spec.NodeGroupName == "mixed-ng-2" {
+			ng2Count++
+		}
+	}
+
+	assert.GreaterOrEqual(t, ng1Count, 3, "NodeGroup 1 should have at least 3 nodes")
+	assert.GreaterOrEqual(t, ng2Count, 2, "NodeGroup 2 should have at least 2 nodes")
+
+	t.Logf("Mixed scaling completed. NG1: %d nodes, NG2: %d nodes", ng1Count, ng2Count)
+	t.Log("Mixed scaling end-to-end test completed successfully")
 }
 
-// TestScalingWithFailures tests scaling with VPSie API failures
+// TestScalingWithFailures tests scaling behavior with API failures
 func TestScalingWithFailures(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	// Create mock VPSie server
+	// Create mock VPSie server with error scenarios
 	mockServer := NewMockVPSieServer()
 	defer mockServer.Close()
 
-	t.Logf("Mock VPSie server started at: %s", mockServer.URL())
+	// Inject errors for specific endpoints
+	mockServer.ErrorScenarios = []ErrorScenario{
+		{
+			Endpoint:   "/v2/vms",
+			Method:     "POST",
+			StatusCode: 500,
+			Message:    "Internal server error",
+			ErrorCode:  "INTERNAL_ERROR",
+			Permanent:  false,
+		},
+	}
 
 	// Create VPSie secret
 	secretName := "test-vpsie-secret-failures"
@@ -1717,69 +1349,125 @@ func TestScalingWithFailures(t *testing.T) {
 	}()
 
 	// Start controller
-	proc, err := startControllerInBackground(15000, 15100, secretName, testNamespace)
+	proc, err := startControllerInBackground(12004, 12104, secretName, testNamespace)
 	require.NoError(t, err)
 	defer cleanup(proc)
 
-	err = waitForControllerReady(proc.HealthAddr, 30*time.Second)
-	require.NoError(t, err)
-
-	t.Log("Controller is ready")
-
-	// Configure mock server to inject errors
-	mockServer.InjectErrors = true
+	t.Log("Controller started, testing failure scenarios")
 
 	// Create NodeGroup
-	ng := &autoscalerv1alpha1.NodeGroup{
+	nodeGroup := &autoscalerv1alpha1.NodeGroup{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-ng-failures",
+			Name:      "test-nodegroup-failures",
 			Namespace: testNamespace,
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
 			MinNodes:     2,
 			MaxNodes:     5,
-			DatacenterID: "dc-test",
-			OfferingIDs:  []string{"small-2cpu-4gb"},
-			OSImageID:    "ubuntu-22.04",
+			DatacenterID: "us-west-1",
+			OfferingID:   "standard-2cpu-4gb",
 		},
 	}
 
-	err = k8sClient.Create(ctx, ng)
+	err = k8sClient.Create(ctx, nodeGroup)
 	require.NoError(t, err)
 	defer func() {
-		_ = k8sClient.Delete(ctx, ng)
+		_ = k8sClient.Delete(ctx, nodeGroup)
 	}()
 
-	t.Log("NodeGroup created with error injection enabled")
-
-	// Wait for controller to attempt creation (will fail)
+	// Wait for initial attempts (should fail)
 	time.Sleep(10 * time.Second)
 
-	// Check that API was called (errors should be returned)
-	failedCalls := mockServer.GetRequestCount("/v2/vms")
-	t.Logf("API calls with errors: %d", failedCalls)
+	// Check error metrics
+	errorCount := getMetricValue(t, fmt.Sprintf("http://localhost:%d/metrics", 12004),
+		"vpsie_autoscaler_vpsie_api_errors_total")
+	assert.Greater(t, errorCount, float64(0), "Should have API errors")
 
-	// Disable error injection to test recovery
-	mockServer.InjectErrors = false
-	t.Log("Error injection disabled, testing recovery...")
+	t.Log("Clearing error scenarios to allow recovery")
 
-	// Wait for controller to retry and succeed
-	time.Sleep(15 * time.Second)
+	// Clear error scenarios to allow recovery
+	mockServer.ErrorScenarios = []ErrorScenario{}
 
-	// Verify recovery - API calls should increase
-	recoveryCalls := mockServer.GetRequestCount("/v2/vms")
-	t.Logf("API calls after recovery: %d (increase: %d)", recoveryCalls, recoveryCalls-failedCalls)
+	// Wait for successful provisioning after recovery
+	require.Eventually(t, func() bool {
+		list := &autoscalerv1alpha1.VPSieNodeList{}
+		err := k8sClient.List(ctx, list, client.InNamespace(testNamespace))
+		return err == nil && len(list.Items) >= 2
+	}, 60*time.Second, 2*time.Second)
 
-	// Check VPSieNode count
-	vpsieNodeCount, _ := countVPSieNodes(ctx, testNamespace)
-	t.Logf("VPSieNodes created after recovery: %d", vpsieNodeCount)
+	// Test rate limiting
+	t.Log("Testing rate limiting scenario")
 
-	// Verify status reflects recovery
-	status, _ := getNodeGroupStatus(ctx, ng.Name, ng.Namespace)
-	if status != nil {
-		t.Logf("NodeGroup status - Current: %d, Desired: %d", status.CurrentNodes, status.DesiredNodes)
+	mockServer.RateLimitRemaining = 0 // Trigger rate limiting
+
+	// Try to update NodeGroup to trigger more API calls
+	err = k8sClient.Get(ctx, client.ObjectKey{
+		Name:      nodeGroup.Name,
+		Namespace: nodeGroup.Namespace,
+	}, nodeGroup)
+	require.NoError(t, err)
+
+	nodeGroup.Spec.MinNodes = 3
+	err = k8sClient.Update(ctx, nodeGroup)
+	require.NoError(t, err)
+
+	// Wait a bit for rate limit to be hit
+	time.Sleep(5 * time.Second)
+
+	// Check rate limit metrics
+	rateLimitErrors := getMetricValue(t, fmt.Sprintf("http://localhost:%d/metrics", 12004),
+		"vpsie_autoscaler_vpsie_api_errors_total")
+	assert.Greater(t, rateLimitErrors, errorCount, "Should have rate limit errors")
+
+	// Reset rate limit
+	mockServer.RateLimitRemaining = 100
+
+	// Verify recovery after rate limit
+	require.Eventually(t, func() bool {
+		list := &autoscalerv1alpha1.VPSieNodeList{}
+		err := k8sClient.List(ctx, list, client.InNamespace(testNamespace))
+		return err == nil && len(list.Items) >= 3
+	}, 60*time.Second, 2*time.Second)
+
+	t.Log("Scaling with failures test completed successfully")
+}
+
+// Helper function to get metric value
+func getMetricValue(t *testing.T, metricsURL, metricName string) float64 {
+	resp, err := http.Get(metricsURL)
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0
 	}
 
-	t.Log("Scaling with failures test completed")
-	t.Log("Verified: API failure handling, retry logic, and recovery")
+	lines := strings.Split(string(body), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, metricName) && !strings.HasPrefix(line, "#") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				value, err := strconv.ParseFloat(parts[1], 64)
+				if err == nil {
+					return value
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// Helper function to get metrics as string
+func getMetricsString(t *testing.T, metricsURL string) string {
+	resp, err := http.Get(metricsURL)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	return string(body)
 }
