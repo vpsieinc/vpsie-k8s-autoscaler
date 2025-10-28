@@ -1,169 +1,137 @@
-# Sample VPSieNode fixture for integration testing
-# Represents a node in Provisioning state
+# Sample VPSieNode configurations for testing
+---
 apiVersion: autoscaler.vpsie.com/v1alpha1
 kind: VPSieNode
 metadata:
-  name: sample-vpsienode-provisioning
+  name: vpsienode-provisioning
   namespace: vpsie-autoscaler-test
   labels:
-    app: vpsie-autoscaler
-    nodegroup: sample-nodegroup
-  ownerReferences:
-  - apiVersion: autoscaler.vpsie.com/v1alpha1
-    kind: NodeGroup
-    name: sample-nodegroup
-    uid: "00000000-0000-0000-0000-000000000000"
-    controller: true
-    blockOwnerDeletion: true
+    nodegroup: standard-nodegroup
 spec:
-  vmID: 1001
-  datacenterID: "dc-us-east-1"
-  offeringID: "small-2cpu-4gb"
-  sshKeyID: "key-123"
-  firewallID: "fw-456"
-  backupEnabled: false
-  tags:
-    - "kubernetes"
-    - "autoscaler"
-    - "test"
-  notes: "Test VPSieNode - Provisioning"
+  nodeGroupName: standard-nodegroup
+  offeringID: standard-4cpu-8gb
+  datacenterID: us-west-1
+  hostname: node-001.cluster.local
+  sshKeyName: autoscaler-key
 status:
   phase: Provisioning
+  vpsInstanceID: vps-12345
+  privateIP: ""
+  publicIP: ""
   conditions:
-  - type: Provisioned
-    status: "False"
-    reason: "Creating"
-    message: "VM is being provisioned"
-    lastTransitionTime: "2024-01-01T00:00:00Z"
-  lastUpdated: "2024-01-01T00:00:00Z"
+  - type: Provisioning
+    status: "True"
+    lastTransitionTime: "2024-01-20T10:00:00Z"
+    reason: "VMCreationStarted"
+    message: "Virtual machine creation initiated"
 
 ---
-# Sample VPSieNode in Running state
 apiVersion: autoscaler.vpsie.com/v1alpha1
 kind: VPSieNode
 metadata:
-  name: sample-vpsienode-running
+  name: vpsienode-running
   namespace: vpsie-autoscaler-test
   labels:
-    app: vpsie-autoscaler
-    nodegroup: sample-nodegroup
+    nodegroup: standard-nodegroup
 spec:
-  vmID: 1002
-  datacenterID: "dc-us-east-1"
-  offeringID: "small-2cpu-4gb"
-  sshKeyID: "key-123"
-  firewallID: "fw-456"
-  backupEnabled: false
-  tags:
-    - "kubernetes"
-    - "autoscaler"
+  nodeGroupName: standard-nodegroup
+  offeringID: standard-4cpu-8gb
+  datacenterID: us-west-1
+  hostname: node-002.cluster.local
+  sshKeyName: autoscaler-key
 status:
   phase: Running
-  ipAddress: "192.168.1.100"
-  ipv6Address: "2001:db8::1"
-  hostname: "k8s-node-1002"
+  vpsInstanceID: vps-12346
+  privateIP: "10.0.1.10"
+  publicIP: "203.0.113.10"
   conditions:
-  - type: Provisioned
+  - type: Provisioning
+    status: "False"
+    lastTransitionTime: "2024-01-20T10:00:00Z"
+  - type: Running
     status: "True"
-    reason: "VMReady"
-    message: "VM has been successfully provisioned"
-    lastTransitionTime: "2024-01-01T00:01:00Z"
-  - type: NetworkConfigured
-    status: "True"
-    reason: "NetworkReady"
-    message: "Network interfaces configured"
-    lastTransitionTime: "2024-01-01T00:02:00Z"
-  lastUpdated: "2024-01-01T00:05:00Z"
+    lastTransitionTime: "2024-01-20T10:05:00Z"
+    reason: "VMRunning"
+    message: "Virtual machine is running"
 
 ---
-# Sample VPSieNode in Ready state (joined cluster)
 apiVersion: autoscaler.vpsie.com/v1alpha1
 kind: VPSieNode
 metadata:
-  name: sample-vpsienode-ready
+  name: vpsienode-ready
   namespace: vpsie-autoscaler-test
   labels:
-    app: vpsie-autoscaler
-    nodegroup: sample-nodegroup
+    nodegroup: standard-nodegroup
 spec:
-  vmID: 1003
-  datacenterID: "dc-us-east-1"
-  offeringID: "small-2cpu-4gb"
-  sshKeyID: "key-123"
+  nodeGroupName: standard-nodegroup
+  offeringID: standard-4cpu-8gb
+  datacenterID: us-west-1
+  hostname: node-003.cluster.local
+  sshKeyName: autoscaler-key
 status:
   phase: Ready
-  ipAddress: "192.168.1.101"
-  ipv6Address: "2001:db8::2"
-  hostname: "k8s-node-1003"
-  nodeName: "k8s-node-1003"
+  vpsInstanceID: vps-12347
+  privateIP: "10.0.1.11"
+  publicIP: "203.0.113.11"
+  nodeName: "ip-10-0-1-11.us-west-1.compute.internal"
   conditions:
-  - type: Provisioned
+  - type: Ready
     status: "True"
-    reason: "VMReady"
-    message: "VM has been successfully provisioned"
-    lastTransitionTime: "2024-01-01T00:01:00Z"
-  - type: NetworkConfigured
-    status: "True"
-    reason: "NetworkReady"
-    message: "Network interfaces configured"
-    lastTransitionTime: "2024-01-01T00:02:00Z"
-  - type: KubernetesJoined
-    status: "True"
+    lastTransitionTime: "2024-01-20T10:10:00Z"
     reason: "NodeJoined"
-    message: "Node has joined the Kubernetes cluster"
-    lastTransitionTime: "2024-01-01T00:10:00Z"
-  lastUpdated: "2024-01-01T00:15:00Z"
+    message: "Node successfully joined the Kubernetes cluster"
 
 ---
-# Sample VPSieNode in Failed state
 apiVersion: autoscaler.vpsie.com/v1alpha1
 kind: VPSieNode
 metadata:
-  name: sample-vpsienode-failed
+  name: vpsienode-failed
   namespace: vpsie-autoscaler-test
   labels:
-    app: vpsie-autoscaler
-    nodegroup: sample-nodegroup
+    nodegroup: standard-nodegroup
 spec:
-  vmID: 1004
-  datacenterID: "dc-us-east-1"
-  offeringID: "small-2cpu-4gb"
-  sshKeyID: "key-123"
+  nodeGroupName: standard-nodegroup
+  offeringID: standard-4cpu-8gb
+  datacenterID: us-west-1
+  hostname: node-004.cluster.local
+  sshKeyName: autoscaler-key
 status:
   phase: Failed
+  vpsInstanceID: vps-12348
+  privateIP: ""
+  publicIP: ""
   conditions:
-  - type: Provisioned
-    status: "False"
+  - type: Failed
+    status: "True"
+    lastTransitionTime: "2024-01-20T10:15:00Z"
     reason: "ProvisioningFailed"
-    message: "Failed to provision VM: quota exceeded"
-    lastTransitionTime: "2024-01-01T00:01:00Z"
-  lastUpdated: "2024-01-01T00:01:30Z"
+    message: "Failed to provision VM: insufficient capacity"
 
 ---
-# Sample VPSieNode being terminated
 apiVersion: autoscaler.vpsie.com/v1alpha1
 kind: VPSieNode
 metadata:
-  name: sample-vpsienode-terminating
+  name: vpsienode-terminating
   namespace: vpsie-autoscaler-test
   labels:
-    app: vpsie-autoscaler
-    nodegroup: sample-nodegroup
+    nodegroup: standard-nodegroup
   finalizers:
-  - vpsienode.autoscaler.vpsie.com/finalizer
+  - autoscaler.vpsie.com/cleanup
 spec:
-  vmID: 1005
-  datacenterID: "dc-us-east-1"
-  offeringID: "small-2cpu-4gb"
-  sshKeyID: "key-123"
+  nodeGroupName: standard-nodegroup
+  offeringID: standard-4cpu-8gb
+  datacenterID: us-west-1
+  hostname: node-005.cluster.local
+  sshKeyName: autoscaler-key
 status:
   phase: Terminating
-  ipAddress: "192.168.1.102"
-  hostname: "k8s-node-1005"
+  vpsInstanceID: vps-12349
+  privateIP: "10.0.1.12"
+  publicIP: "203.0.113.12"
+  nodeName: "ip-10-0-1-12.us-west-1.compute.internal"
   conditions:
   - type: Terminating
     status: "True"
-    reason: "DeletionRequested"
-    message: "Node is being terminated"
-    lastTransitionTime: "2024-01-01T01:00:00Z"
-  lastUpdated: "2024-01-01T01:00:05Z"
+    lastTransitionTime: "2024-01-20T10:20:00Z"
+    reason: "NodeDraining"
+    message: "Node is being drained and will be terminated"
