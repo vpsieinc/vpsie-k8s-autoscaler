@@ -103,8 +103,15 @@ func (s *ScaleDownManager) DrainNode(ctx context.Context, node *corev1.Node) err
 		parentCancelled = true
 		s.logger.Warn("drain operation detached due to parent cancellation, continuing in background",
 			zap.String("node", node.Name))
-		// Wait for eviction to complete with drain timeout
-		evictErr = <-done
+		// Wait for eviction to complete with timeout to prevent indefinite blocking
+		select {
+		case evictErr = <-done:
+			// Eviction completed
+		case <-time.After(30 * time.Second):
+			evictErr = fmt.Errorf("drain abandoned after parent cancellation timeout")
+			s.logger.Error("drain operation timed out after parent cancellation",
+				zap.String("node", node.Name))
+		}
 	}
 
 	if evictErr != nil {

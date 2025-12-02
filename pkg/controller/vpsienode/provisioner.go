@@ -55,18 +55,15 @@ func (p *Provisioner) createVPS(ctx context.Context, vn *v1alpha1.VPSieNode, log
 	// Generate hostname
 	hostname := p.generateHostname(vn)
 
-	// Generate cloud-init user data for node bootstrapping
-	userData := p.generateCloudInit(vn)
-
 	// Create VPS request
 	req := vpsieclient.CreateVPSRequest{
 		Name:         vn.Name,
 		Hostname:     hostname,
 		OfferingID:   vn.Spec.InstanceType,
 		DatacenterID: vn.Spec.DatacenterID,
-		OSImageID:    "ubuntu-22.04", // TODO: Make configurable from NodeGroup
-		SSHKeyIDs:    p.sshKeyIDs,
-		UserData:     userData,
+		OSImageID:    vn.Spec.OSImageID,
+		SSHKeyIDs:    vn.Spec.SSHKeyIDs,
+		UserData:     vn.Spec.UserData,
 		Tags:         []string{"kubernetes", "autoscaler", vn.Spec.NodeGroupName},
 		Notes:        fmt.Sprintf("Managed by VPSie Kubernetes Autoscaler - NodeGroup: %s", vn.Spec.NodeGroupName),
 	}

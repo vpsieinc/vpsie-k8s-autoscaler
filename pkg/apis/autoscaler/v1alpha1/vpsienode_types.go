@@ -22,6 +22,18 @@ type VPSieNodeSpec struct {
 	// +kubebuilder:validation:Required
 	DatacenterID string `json:"datacenterID"`
 
+	// OSImageID is the VPSie OS image ID to use for this node
+	// +kubebuilder:validation:Required
+	OSImageID string `json:"osImageID"`
+
+	// SSHKeyIDs is a list of VPSie SSH key IDs to install on this node
+	// +optional
+	SSHKeyIDs []string `json:"sshKeyIDs,omitempty"`
+
+	// UserData is cloud-init user data to configure this node
+	// +optional
+	UserData string `json:"userData,omitempty"`
+
 	// NodeName is the desired Kubernetes node name
 	// If not specified, it will be automatically generated
 	// +optional

@@ -413,8 +413,19 @@ func (s *ScaleDownManager) hasBeenUnderutilizedForWindow(utilization *NodeUtiliz
 		return false
 	}
 
-	// Check if all samples within observation window are underutilized
+	// Check if utilization data is stale (no updates in last 5 minutes)
+	// Stale data should not be used for scale-down decisions
+	const maxStaleness = 5 * time.Minute
 	now := time.Now()
+	if now.Sub(utilization.LastUpdated) > maxStaleness {
+		s.logger.Warn("utilization data is stale, skipping scale-down",
+			zap.String("node", utilization.NodeName),
+			zap.Duration("staleness", now.Sub(utilization.LastUpdated)),
+			zap.Duration("maxAllowed", maxStaleness))
+		return false
+	}
+
+	// Check if all samples within observation window are underutilized
 	windowStart := now.Add(-s.config.ObservationWindow)
 
 	underutilizedCount := 0

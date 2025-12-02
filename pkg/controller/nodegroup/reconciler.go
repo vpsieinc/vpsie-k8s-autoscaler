@@ -2,6 +2,7 @@ package nodegroup
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"time"
 
@@ -321,6 +322,9 @@ func (r *NodeGroupReconciler) buildVPSieNode(ng *v1alpha1.NodeGroup) *v1alpha1.V
 			InstanceType:    instanceType,
 			NodeGroupName:   ng.Name,
 			DatacenterID:    ng.Spec.DatacenterID,
+			OSImageID:       ng.Spec.OSImageID,
+			SSHKeyIDs:       ng.Spec.SSHKeyIDs,
+			UserData:        ng.Spec.UserData,
 		},
 	}
 
@@ -363,8 +367,13 @@ func selectNodesToDelete(vpsieNodes []v1alpha1.VPSieNode, count int) []v1alpha1.
 	return result
 }
 
-// generateRandomSuffix generates a random suffix for resource names
+// generateRandomSuffix generates a cryptographically secure random suffix for resource names
+// Returns an 8-character hexadecimal string (2^32 possible values, extremely low collision probability)
 func generateRandomSuffix() string {
-	// Simple implementation - in production, use a proper random string generator
-	return fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	b := make([]byte, 4) // 4 bytes = 8 hex characters
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-based if crypto/rand fails (should never happen)
+		return fmt.Sprintf("%x", time.Now().UnixNano()%0xFFFFFFFF)
+	}
+	return fmt.Sprintf("%x", b)
 }
