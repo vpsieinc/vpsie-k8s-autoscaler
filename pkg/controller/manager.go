@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	metricsv1beta1 "k8s.io/metrics/pkg/client/clientset/versioned"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -19,19 +20,22 @@ import (
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/nodegroup"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/vpsienode"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/scaler"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/client"
 )
 
 // ControllerManager manages the lifecycle of all controllers
 type ControllerManager struct {
-	config        *rest.Config
-	options       *Options
-	mgr           ctrl.Manager
-	vpsieClient   *client.Client
-	k8sClient     kubernetes.Interface
-	healthChecker *HealthChecker
-	logger        *zap.Logger
-	scheme        *runtime.Scheme
+	config           *rest.Config
+	options          *Options
+	mgr              ctrl.Manager
+	vpsieClient      *client.Client
+	k8sClient        kubernetes.Interface
+	metricsClient    metricsv1beta1.Interface
+	scaleDownManager *scaler.ScaleDownManager
+	healthChecker    *HealthChecker
+	logger           *zap.Logger
+	scheme           *runtime.Scheme
 }
 
 // NewManager creates a new ControllerManager
@@ -83,6 +87,12 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
 	}
 
+	// Create metrics clientset
+	metricsClient, err := metricsv1beta1.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create metrics client: %w", err)
+	}
+
 	// Create VPSie API client
 	ctx := context.Background()
 	vpsieClient, err := client.NewClient(ctx, k8sClient, &client.ClientOptions{
@@ -93,18 +103,24 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 		return nil, fmt.Errorf("failed to create VPSie client: %w", err)
 	}
 
+	// Create ScaleDownManager
+	scaleDownConfig := scaler.DefaultConfig()
+	scaleDownManager := scaler.NewScaleDownManager(k8sClient, metricsClient, logger, scaleDownConfig)
+
 	// Create health checker
 	healthChecker := NewHealthChecker(vpsieClient)
 
 	cm := &ControllerManager{
-		config:        config,
-		options:       opts,
-		mgr:           mgr,
-		vpsieClient:   vpsieClient,
-		k8sClient:     k8sClient,
-		healthChecker: healthChecker,
-		logger:        logger,
-		scheme:        scheme,
+		config:           config,
+		options:          opts,
+		mgr:              mgr,
+		vpsieClient:      vpsieClient,
+		k8sClient:        k8sClient,
+		metricsClient:    metricsClient,
+		scaleDownManager: scaleDownManager,
+		healthChecker:    healthChecker,
+		logger:           logger,
+		scheme:           scheme,
 	}
 
 	// Add health checks to manager
@@ -153,6 +169,7 @@ func (cm *ControllerManager) setupControllers() error {
 		cm.scheme,
 		cm.vpsieClient,
 		cm.logger,
+		cm.scaleDownManager,
 	)
 
 	if err := nodeGroupReconciler.SetupWithManager(cm.mgr); err != nil {
@@ -238,6 +255,9 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 		zap.String("endpoint", cm.vpsieClient.GetBaseURL()),
 	)
 
+	// Start node utilization metrics collection
+	cm.startMetricsCollection(ctx)
+
 	// Start the manager (this blocks until context is cancelled)
 	cm.logger.Info("Starting controller-runtime manager")
 	if err := cm.mgr.Start(ctx); err != nil {
@@ -245,6 +265,30 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// startMetricsCollection starts a background goroutine to collect node utilization metrics
+func (cm *ControllerManager) startMetricsCollection(ctx context.Context) {
+	cm.logger.Info("Starting node utilization metrics collection",
+		zap.Duration("interval", scaler.DefaultMetricsCollectionInterval))
+
+	go func() {
+		ticker := time.NewTicker(scaler.DefaultMetricsCollectionInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				cm.logger.Info("Stopping metrics collection")
+				return
+			case <-ticker.C:
+				if err := cm.scaleDownManager.UpdateNodeUtilization(ctx); err != nil {
+					cm.logger.Error("Failed to update node utilization",
+						zap.Error(err))
+				}
+			}
+		}
+	}()
 }
 
 // GetManager returns the controller-runtime manager
@@ -270,6 +314,11 @@ func (cm *ControllerManager) GetLogger() *zap.Logger {
 // GetHealthChecker returns the health checker
 func (cm *ControllerManager) GetHealthChecker() *HealthChecker {
 	return cm.healthChecker
+}
+
+// GetScaleDownManager returns the scale-down manager
+func (cm *ControllerManager) GetScaleDownManager() *scaler.ScaleDownManager {
+	return cm.scaleDownManager
 }
 
 // Shutdown gracefully shuts down the controller manager

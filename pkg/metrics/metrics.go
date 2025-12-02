@@ -175,6 +175,16 @@ var (
 		[]string{"nodegroup", "namespace"},
 	)
 
+	// ScaleDownErrorsTotal tracks the number of scale-down errors by type
+	ScaleDownErrorsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "scale_down_errors_total",
+			Help:      "Total number of scale-down errors by type",
+		},
+		[]string{"nodegroup", "namespace", "error_type"},
+	)
+
 	// UnschedulablePodsTotal tracks the number of unschedulable pods detected
 	UnschedulablePodsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -257,6 +267,7 @@ func RegisterMetrics() {
 		ScaleDownTotal,
 		ScaleUpNodesAdded,
 		ScaleDownNodesRemoved,
+		ScaleDownErrorsTotal,
 		UnschedulablePodsTotal,
 		PendingPodsGauge,
 		NodeProvisioningDuration,
@@ -284,6 +295,7 @@ func ResetMetrics() {
 	ScaleDownTotal.Reset()
 	ScaleUpNodesAdded.Reset()
 	ScaleDownNodesRemoved.Reset()
+	ScaleDownErrorsTotal.Reset()
 	UnschedulablePodsTotal.Reset()
 	PendingPodsGauge.Reset()
 	NodeProvisioningDuration.Reset()

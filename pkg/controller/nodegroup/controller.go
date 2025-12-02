@@ -3,6 +3,7 @@ package nodegroup
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -11,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/scaler"
 	vpsieclient "github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/client"
 )
 
@@ -25,12 +27,20 @@ const (
 	DefaultMaxConcurrentReconciles = 1
 )
 
+// ScaleDownManagerInterface defines the interface for scale-down operations
+type ScaleDownManagerInterface interface {
+	IdentifyUnderutilizedNodes(ctx context.Context, ng *v1alpha1.NodeGroup) ([]*scaler.ScaleDownCandidate, error)
+	ScaleDown(ctx context.Context, ng *v1alpha1.NodeGroup, candidates []*scaler.ScaleDownCandidate) error
+	UpdateNodeUtilization(ctx context.Context) error
+}
+
 // NodeGroupReconciler reconciles a NodeGroup object
 type NodeGroupReconciler struct {
 	client.Client
-	Scheme      *runtime.Scheme
-	VPSieClient *vpsieclient.Client
-	Logger      *zap.Logger
+	Scheme           *runtime.Scheme
+	VPSieClient      *vpsieclient.Client
+	ScaleDownManager ScaleDownManagerInterface
+	Logger           *zap.Logger
 }
 
 // SetupWithManager sets up the controller with the Manager
@@ -50,12 +60,14 @@ func NewNodeGroupReconciler(
 	scheme *runtime.Scheme,
 	vpsieClient *vpsieclient.Client,
 	logger *zap.Logger,
+	scaleDownManager ScaleDownManagerInterface,
 ) *NodeGroupReconciler {
 	return &NodeGroupReconciler{
-		Client:      client,
-		Scheme:      scheme,
-		VPSieClient: vpsieClient,
-		Logger:      logger.Named(ControllerName),
+		Client:           client,
+		Scheme:           scheme,
+		VPSieClient:      vpsieClient,
+		ScaleDownManager: scaleDownManager,
+		Logger:           logger.Named(ControllerName),
 	}
 }
 
@@ -143,7 +155,7 @@ func (r *NodeGroupReconciler) reconcileDelete(ctx context.Context, ng *v1alpha1.
 		logger.Info("Waiting for VPSieNodes to be deleted",
 			zap.Int("count", len(vpsieNodes)),
 		)
-		return ctrl.Result{RequeueAfter: 5 * 1000000000}, nil // 5 seconds
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
 	// Remove finalizer

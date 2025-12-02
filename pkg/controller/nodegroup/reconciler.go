@@ -50,6 +50,7 @@ func (r *NodeGroupReconciler) reconcile(ctx context.Context, ng *v1alpha1.NodeGr
 		// Update status
 		if statusErr := r.Status().Update(ctx, ng); statusErr != nil {
 			logger.Error("Failed to update status", zap.Error(statusErr))
+			return ctrl.Result{}, statusErr
 		}
 
 		return ctrl.Result{}, err
@@ -179,13 +180,72 @@ func (r *NodeGroupReconciler) reconcileScaleUp(
 	return ctrl.Result{RequeueAfter: FastRequeueAfter}, nil
 }
 
-// reconcileScaleDown handles scaling down the NodeGroup
+// reconcileScaleDown handles scaling down the NodeGroup using intelligent scale-down
 func (r *NodeGroupReconciler) reconcileScaleDown(
 	ctx context.Context,
 	ng *v1alpha1.NodeGroup,
 	vpsieNodes []v1alpha1.VPSieNode,
 	logger *zap.Logger,
 ) (ctrl.Result, error) {
+	// Use ScaleDownManager if available for intelligent scale-down
+	if r.ScaleDownManager != nil {
+		return r.reconcileIntelligentScaleDown(ctx, ng, vpsieNodes, logger)
+	}
+
+	// Fallback to simple scale-down if ScaleDownManager not available
+	return r.reconcileSimpleScaleDown(ctx, ng, vpsieNodes, logger)
+}
+
+// reconcileIntelligentScaleDown uses ScaleDownManager for safe, utilization-based scale-down
+func (r *NodeGroupReconciler) reconcileIntelligentScaleDown(
+	ctx context.Context,
+	ng *v1alpha1.NodeGroup,
+	vpsieNodes []v1alpha1.VPSieNode,
+	logger *zap.Logger,
+) (ctrl.Result, error) {
+	logger.Info("Using intelligent scale-down based on node utilization")
+
+	// Identify underutilized nodes
+	candidates, err := r.ScaleDownManager.IdentifyUnderutilizedNodes(ctx, ng)
+	if err != nil {
+		logger.Error("Failed to identify underutilized nodes", zap.Error(err))
+		SetErrorCondition(ng, true, ReasonScaleDownFailed, fmt.Sprintf("Failed to identify candidates: %v", err))
+		return ctrl.Result{}, err
+	}
+
+	if len(candidates) == 0 {
+		logger.Info("No underutilized nodes found for scale-down")
+		return ctrl.Result{RequeueAfter: DefaultRequeueAfter}, nil
+	}
+
+	logger.Info("Found scale-down candidates",
+		zap.Int("candidateCount", len(candidates)),
+	)
+
+	// Perform intelligent scale-down with safety checks
+	if err := r.ScaleDownManager.ScaleDown(ctx, ng, candidates); err != nil {
+		logger.Error("Intelligent scale-down failed", zap.Error(err))
+		SetErrorCondition(ng, true, ReasonScaleDownFailed, fmt.Sprintf("Scale-down failed: %v", err))
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("Intelligent scale-down completed successfully",
+		zap.Int("nodesRemoved", len(candidates)),
+	)
+
+	// Requeue to verify scale-down progress
+	return ctrl.Result{RequeueAfter: FastRequeueAfter}, nil
+}
+
+// reconcileSimpleScaleDown is the fallback simple scale-down (original implementation)
+func (r *NodeGroupReconciler) reconcileSimpleScaleDown(
+	ctx context.Context,
+	ng *v1alpha1.NodeGroup,
+	vpsieNodes []v1alpha1.VPSieNode,
+	logger *zap.Logger,
+) (ctrl.Result, error) {
+	logger.Warn("Using simple scale-down (ScaleDownManager not available)")
+
 	// Calculate how many nodes to remove
 	nodesToRemove := CalculateNodesToRemove(ng)
 	if nodesToRemove <= 0 {

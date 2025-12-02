@@ -38,6 +38,9 @@ const (
 
 	// ReasonNodeProvisioningFailed indicates node provisioning failed
 	ReasonNodeProvisioningFailed = "NodeProvisioningFailed"
+
+	// ReasonScaleDownFailed indicates scale-down operation failed
+	ReasonScaleDownFailed = "ScaleDownFailed"
 )
 
 // SetCondition sets a condition on the NodeGroup status
