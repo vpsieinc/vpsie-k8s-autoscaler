@@ -133,6 +133,27 @@ var (
 		[]string{"method", "error_type"},
 	)
 
+	// VPSieAPIRateLimitedTotal tracks the number of times API requests were rate limited
+	VPSieAPIRateLimitedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "vpsie_api_rate_limited_total",
+			Help:      "Total number of times VPSie API requests were rate limited",
+		},
+		[]string{"method"},
+	)
+
+	// VPSieAPIRateLimitWaitDuration tracks the time spent waiting for rate limiter
+	VPSieAPIRateLimitWaitDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Name:      "vpsie_api_rate_limit_wait_duration_seconds",
+			Help:      "Time spent waiting for VPSie API rate limiter",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 12), // 1ms to 4s
+		},
+		[]string{"method"},
+	)
+
 	// ScaleUpTotal tracks the number of scale-up operations
 	ScaleUpTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -263,6 +284,8 @@ func RegisterMetrics() {
 		VPSieAPIRequests,
 		VPSieAPIRequestDuration,
 		VPSieAPIErrors,
+		VPSieAPIRateLimitedTotal,
+		VPSieAPIRateLimitWaitDuration,
 		ScaleUpTotal,
 		ScaleDownTotal,
 		ScaleUpNodesAdded,
@@ -291,6 +314,8 @@ func ResetMetrics() {
 	VPSieAPIRequests.Reset()
 	VPSieAPIRequestDuration.Reset()
 	VPSieAPIErrors.Reset()
+	VPSieAPIRateLimitedTotal.Reset()
+	VPSieAPIRateLimitWaitDuration.Reset()
 	ScaleUpTotal.Reset()
 	ScaleDownTotal.Reset()
 	ScaleUpNodesAdded.Reset()

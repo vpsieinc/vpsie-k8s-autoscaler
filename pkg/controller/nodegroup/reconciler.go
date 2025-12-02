@@ -318,13 +318,14 @@ func (r *NodeGroupReconciler) buildVPSieNode(ng *v1alpha1.NodeGroup) *v1alpha1.V
 			Labels:    GetNodeGroupLabels(ng),
 		},
 		Spec: v1alpha1.VPSieNodeSpec{
-			VPSieInstanceID: 0, // Will be set by VPSieNode controller
-			InstanceType:    instanceType,
-			NodeGroupName:   ng.Name,
-			DatacenterID:    ng.Spec.DatacenterID,
-			OSImageID:       ng.Spec.OSImageID,
-			SSHKeyIDs:       ng.Spec.SSHKeyIDs,
-			UserData:        ng.Spec.UserData,
+			VPSieInstanceID:   0, // Will be set by VPSieNode controller
+			InstanceType:      instanceType,
+			NodeGroupName:     ng.Name,
+			DatacenterID:      ng.Spec.DatacenterID,
+			OSImageID:         ng.Spec.OSImageID,
+			KubernetesVersion: ng.Spec.KubernetesVersion,
+			SSHKeyIDs:         ng.Spec.SSHKeyIDs,
+			UserData:          ng.Spec.UserData,
 		},
 	}
 

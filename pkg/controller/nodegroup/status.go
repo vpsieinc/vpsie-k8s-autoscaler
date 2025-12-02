@@ -167,6 +167,15 @@ func ValidateNodeGroupSpec(ng *v1alpha1.NodeGroup) error {
 		return fmt.Errorf("osImageID is required")
 	}
 
+	if ng.Spec.KubernetesVersion == "" {
+		return fmt.Errorf("kubernetesVersion is required")
+	}
+
+	// Validate version format (also validated by kubebuilder pattern, but check here for clarity)
+	if _, err := ParseVersion(ng.Spec.KubernetesVersion); err != nil {
+		return fmt.Errorf("invalid kubernetesVersion format: %w", err)
+	}
+
 	return nil
 }
 

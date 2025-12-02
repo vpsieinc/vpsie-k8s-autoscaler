@@ -31,6 +31,12 @@ type NodeGroupSpec struct {
 	// +kubebuilder:validation:Required
 	OSImageID string `json:"osImageID"`
 
+	// KubernetesVersion is the Kubernetes version to install on new nodes (e.g., "v1.28.0", "v1.29.1")
+	// Must be within ±1 minor version of the control plane
+	// +kubebuilder:validation:Pattern=`^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`
+	// +kubebuilder:validation:Required
+	KubernetesVersion string `json:"kubernetesVersion"`
+
 	// PreferredInstanceType is the preferred offering ID to use when multiple options are available
 	// +optional
 	PreferredInstanceType string `json:"preferredInstanceType,omitempty"`

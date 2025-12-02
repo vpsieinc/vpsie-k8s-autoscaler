@@ -26,6 +26,11 @@ type VPSieNodeSpec struct {
 	// +kubebuilder:validation:Required
 	OSImageID string `json:"osImageID"`
 
+	// KubernetesVersion is the Kubernetes version to install on this node (e.g., "v1.28.0")
+	// +kubebuilder:validation:Pattern=`^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`
+	// +kubebuilder:validation:Required
+	KubernetesVersion string `json:"kubernetesVersion"`
+
 	// SSHKeyIDs is a list of VPSie SSH key IDs to install on this node
 	// +optional
 	SSHKeyIDs []string `json:"sshKeyIDs,omitempty"`

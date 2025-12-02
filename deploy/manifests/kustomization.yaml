@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Namespace for all resources
+namespace: kube-system
+
+# Resource files to include
+resources:
+- rbac.yaml
+- service.yaml
+- deployment.yaml
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/name: vpsie-autoscaler
+  app.kubernetes.io/component: controller
+  app.kubernetes.io/managed-by: kustomize
+
+# Images to use (can be customized with kustomize edit set image)
+images:
+- name: vpsie/k8s-autoscaler
+  newTag: latest

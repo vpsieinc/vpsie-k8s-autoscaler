@@ -407,9 +407,17 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 		return nil, fmt.Errorf("failed to ensure valid token: %w", err)
 	}
 
-	// Wait for rate limiter
+	// Wait for rate limiter and record metrics
+	rateLimitStart := time.Now()
 	if err := c.rateLimiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("rate limiter error: %w", err)
+	}
+	rateLimitWait := time.Since(rateLimitStart)
+	metrics.VPSieAPIRateLimitWaitDuration.WithLabelValues(method).Observe(rateLimitWait.Seconds())
+
+	// If we waited more than 10ms, we were rate limited
+	if rateLimitWait > 10*time.Millisecond {
+		metrics.VPSieAPIRateLimitedTotal.WithLabelValues(method).Inc()
 	}
 
 	// Build URL
@@ -517,9 +525,17 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 
 // doRequestWithToken performs an HTTP request with the current token (no retry on 401)
 func (c *Client) doRequestWithToken(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
-	// Wait for rate limiter
+	// Wait for rate limiter and record metrics
+	rateLimitStart := time.Now()
 	if err := c.rateLimiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("rate limiter error: %w", err)
+	}
+	rateLimitWait := time.Since(rateLimitStart)
+	metrics.VPSieAPIRateLimitWaitDuration.WithLabelValues(method).Observe(rateLimitWait.Seconds())
+
+	// If we waited more than 10ms, we were rate limited
+	if rateLimitWait > 10*time.Millisecond {
+		metrics.VPSieAPIRateLimitedTotal.WithLabelValues(method).Inc()
 	}
 
 	// Build URL

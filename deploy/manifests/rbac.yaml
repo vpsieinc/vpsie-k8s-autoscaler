@@ -1,0 +1,174 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vpsie-autoscaler-controller
+  namespace: kube-system
+  labels:
+    app: vpsie-autoscaler
+    component: controller
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vpsie-autoscaler-controller
+  labels:
+    app: vpsie-autoscaler
+    component: controller
+rules:
+# NodeGroup CRD permissions
+- apiGroups:
+  - autoscaler.vpsie.com
+  resources:
+  - nodegroups
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - autoscaler.vpsie.com
+  resources:
+  - nodegroups/status
+  verbs:
+  - get
+  - update
+  - patch
+- apiGroups:
+  - autoscaler.vpsie.com
+  resources:
+  - nodegroups/finalizers
+  verbs:
+  - update
+
+# VPSieNode CRD permissions
+- apiGroups:
+  - autoscaler.vpsie.com
+  resources:
+  - vpsienodes
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - autoscaler.vpsie.com
+  resources:
+  - vpsienodes/status
+  verbs:
+  - get
+  - update
+  - patch
+- apiGroups:
+  - autoscaler.vpsie.com
+  resources:
+  - vpsienodes/finalizers
+  verbs:
+  - update
+
+# Core Kubernetes resources
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/eviction
+  verbs:
+  - create
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+
+# PodDisruptionBudget permissions for safe scale-down
+- apiGroups:
+  - policy
+  resources:
+  - poddisruptionbudgets
+  verbs:
+  - get
+  - list
+  - watch
+
+# Metrics API access for node utilization
+- apiGroups:
+  - metrics.k8s.io
+  resources:
+  - nodes
+  - pods
+  verbs:
+  - get
+  - list
+
+# Leader election permissions
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+
+# Server version access for Kubernetes version validation
+- apiGroups:
+  - ""
+  resources:
+  - ""
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vpsie-autoscaler-controller
+  labels:
+    app: vpsie-autoscaler
+    component: controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: vpsie-autoscaler-controller
+subjects:
+- kind: ServiceAccount
+  name: vpsie-autoscaler-controller
+  namespace: kube-system
