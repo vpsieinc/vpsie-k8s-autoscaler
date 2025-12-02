@@ -154,6 +154,36 @@ var (
 		[]string{"method"},
 	)
 
+	// VPSieAPICircuitBreakerState tracks the current state of the circuit breaker
+	VPSieAPICircuitBreakerState = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Name:      "vpsie_api_circuit_breaker_state",
+			Help:      "Current state of VPSie API circuit breaker (1=active, 0=inactive)",
+		},
+		[]string{"state"}, // closed, open, half-open
+	)
+
+	// VPSieAPICircuitBreakerOpened tracks how many times requests were blocked by open circuit
+	VPSieAPICircuitBreakerOpened = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "vpsie_api_circuit_breaker_opened_total",
+			Help:      "Total number of requests blocked by open circuit breaker",
+		},
+		[]string{},
+	)
+
+	// VPSieAPICircuitBreakerStateChanges tracks state transitions
+	VPSieAPICircuitBreakerStateChanges = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "vpsie_api_circuit_breaker_state_changes_total",
+			Help:      "Total number of circuit breaker state changes",
+		},
+		[]string{"from_state", "to_state"},
+	)
+
 	// ScaleUpTotal tracks the number of scale-up operations
 	ScaleUpTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -286,6 +316,9 @@ func RegisterMetrics() {
 		VPSieAPIErrors,
 		VPSieAPIRateLimitedTotal,
 		VPSieAPIRateLimitWaitDuration,
+		VPSieAPICircuitBreakerState,
+		VPSieAPICircuitBreakerOpened,
+		VPSieAPICircuitBreakerStateChanges,
 		ScaleUpTotal,
 		ScaleDownTotal,
 		ScaleUpNodesAdded,
@@ -316,6 +349,9 @@ func ResetMetrics() {
 	VPSieAPIErrors.Reset()
 	VPSieAPIRateLimitedTotal.Reset()
 	VPSieAPIRateLimitWaitDuration.Reset()
+	VPSieAPICircuitBreakerState.Reset()
+	VPSieAPICircuitBreakerOpened.Reset()
+	VPSieAPICircuitBreakerStateChanges.Reset()
 	ScaleUpTotal.Reset()
 	ScaleDownTotal.Reset()
 	ScaleUpNodesAdded.Reset()

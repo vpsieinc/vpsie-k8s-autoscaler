@@ -56,6 +56,7 @@ const (
 type Client struct {
 	httpClient     *http.Client
 	rateLimiter    *rate.Limiter
+	circuitBreaker *CircuitBreaker
 	baseURL        string
 	clientID       string
 	clientSecret   string
@@ -202,15 +203,19 @@ func NewClient(ctx context.Context, clientset kubernetes.Interface, opts *Client
 		logger = zap.NewNop()
 	}
 
+	// Create circuit breaker for fault tolerance
+	circuitBreaker := NewCircuitBreaker(DefaultCircuitBreakerConfig(), logger.Named("circuit-breaker"))
+
 	// Create client instance
 	client := &Client{
-		httpClient:   httpClient,
-		rateLimiter:  rateLimiter,
-		baseURL:      baseURL,
-		clientID:     clientID,
-		clientSecret: clientSecret,
-		userAgent:    opts.UserAgent,
-		logger:       logger.Named("vpsie-client"),
+		httpClient:     httpClient,
+		rateLimiter:    rateLimiter,
+		circuitBreaker: circuitBreaker,
+		baseURL:        baseURL,
+		clientID:       clientID,
+		clientSecret:   clientSecret,
+		userAgent:      opts.UserAgent,
+		logger:         logger.Named("vpsie-client"),
 	}
 
 	// Obtain initial access token
@@ -280,15 +285,19 @@ func NewClientWithCredentialsAndContext(ctx context.Context, baseURL, clientID, 
 		logger = zap.NewNop()
 	}
 
+	// Create circuit breaker for fault tolerance
+	circuitBreaker := NewCircuitBreaker(DefaultCircuitBreakerConfig(), logger.Named("circuit-breaker"))
+
 	// Create client instance
 	client := &Client{
-		httpClient:   httpClient,
-		rateLimiter:  rateLimiter,
-		baseURL:      baseURL,
-		clientID:     clientID,
-		clientSecret: clientSecret,
-		userAgent:    opts.UserAgent,
-		logger:       logger.Named("vpsie-client"),
+		httpClient:     httpClient,
+		rateLimiter:    rateLimiter,
+		circuitBreaker: circuitBreaker,
+		baseURL:        baseURL,
+		clientID:       clientID,
+		clientSecret:   clientSecret,
+		userAgent:      opts.UserAgent,
+		logger:         logger.Named("vpsie-client"),
 	}
 
 	// Obtain initial access token
@@ -450,16 +459,28 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 	}
 	req.Header.Set("Accept", "application/json")
 
-	// Perform request
-	resp, err := c.httpClient.Do(req)
+	// Perform request with circuit breaker protection
+	var resp *http.Response
+	cbErr := c.circuitBreaker.Call(func() error {
+		var err error
+		resp, err = c.httpClient.Do(req)
+		return err
+	})
 	duration := time.Since(startTime)
 
-	if err != nil {
-		// Record error metrics
+	if cbErr != nil {
+		// Check if circuit breaker is open
+		if cbErr == ErrCircuitOpen {
+			metrics.RecordAPIError(method, "circuit_open")
+			metrics.RecordAPIRequest(method, "error", duration)
+			logging.LogAPIError(logger, method, path, 0, cbErr, requestID)
+			return nil, fmt.Errorf("circuit breaker is open: %w", cbErr)
+		}
+		// Regular request error
 		metrics.RecordAPIError(method, "request_failed")
 		metrics.RecordAPIRequest(method, "error", duration)
-		logging.LogAPIError(logger, method, path, 0, err, requestID)
-		return nil, fmt.Errorf("failed to perform request: %w", err)
+		logging.LogAPIError(logger, method, path, 0, cbErr, requestID)
+		return nil, fmt.Errorf("failed to perform request: %w", cbErr)
 	}
 
 	// Log response (debug level)
@@ -568,10 +589,19 @@ func (c *Client) doRequestWithToken(ctx context.Context, method, path string, bo
 	}
 	req.Header.Set("Accept", "application/json")
 
-	// Perform request
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to perform request: %w", err)
+	// Perform request with circuit breaker protection
+	var resp *http.Response
+	cbErr := c.circuitBreaker.Call(func() error {
+		var err error
+		resp, err = c.httpClient.Do(req)
+		return err
+	})
+	if cbErr != nil {
+		// Check if circuit breaker is open
+		if cbErr == ErrCircuitOpen {
+			return nil, fmt.Errorf("circuit breaker is open: %w", cbErr)
+		}
+		return nil, fmt.Errorf("failed to perform request: %w", cbErr)
 	}
 
 	// Check for HTTP errors

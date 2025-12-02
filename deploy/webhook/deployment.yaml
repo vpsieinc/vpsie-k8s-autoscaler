@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vpsie-autoscaler-webhook
+  namespace: kube-system
+  labels:
+    app: vpsie-autoscaler-webhook
+    component: webhook
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vpsie-autoscaler-webhook
+  template:
+    metadata:
+      labels:
+        app: vpsie-autoscaler-webhook
+        component: webhook
+    spec:
+      serviceAccountName: vpsie-autoscaler-webhook
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+
+      containers:
+        - name: webhook
+          image: vpsie/k8s-autoscaler-webhook:latest
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: webhook
+              containerPort: 9443
+              protocol: TCP
+            - name: health
+              containerPort: 9444
+              protocol: TCP
+
+          command:
+            - /webhook
+          args:
+            - --port=9443
+            - --cert-dir=/var/run/webhook-certs
+            - --tls-cert-file=tls.crt
+            - --tls-key-file=tls.key
+            - --log-level=info
+
+          volumeMounts:
+            - name: webhook-certs
+              mountPath: /var/run/webhook-certs
+              readOnly: true
+
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+              scheme: HTTP
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+      volumes:
+        - name: webhook-certs
+          secret:
+            secretName: vpsie-autoscaler-webhook-certs
+            defaultMode: 0400
+
+      # Anti-affinity to spread replicas across nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: vpsie-autoscaler-webhook
+                topologyKey: kubernetes.io/hostname
