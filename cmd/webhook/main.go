@@ -16,12 +16,12 @@ import (
 )
 
 var (
-	port        int
-	certDir     string
-	certFile    string
-	keyFile     string
-	logLevel    string
-	logFormat   string
+	port      int
+	certDir   string
+	certFile  string
+	keyFile   string
+	logLevel  string
+	logFormat string
 )
 
 func init() {

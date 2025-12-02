@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0-alpha] - 2025-12-03
+
+### Production Readiness Release ✅
+
+This release focuses on production-ready improvements including concurrency safety, memory management, enhanced observability, and configuration flexibility.
+
+### Fixed
+
+#### Concurrency & Thread Safety
+- Fixed status update race conditions by using Patch API with optimistic locking
+  - `pkg/controller/nodegroup/reconciler.go`: All status updates now use `Status().Patch()` with conflict handling
+  - Prevents concurrent update conflicts with automatic retry on conflict
+- Fixed unsafe pointer returns in utilization tracker
+  - `pkg/scaler/utilization.go`: `GetNodeUtilization()` and `GetUnderutilizedNodes()` now return deep copies
+  - Prevents external modification of internal state
+- Fixed context cancellation handling in drain operations
+  - `pkg/scaler/drain.go`: All cleanup operations use `context.Background()` with timeout
+  - Ensures cleanup completes even when parent context is cancelled
+
+#### Memory Management
+- Fixed memory leak in node utilization tracking
+  - `pkg/scaler/utilization.go`: Added automatic garbage collection for deleted nodes
+  - Prevents unbounded memory growth in long-running deployments
+- Fixed context leak in metrics collection loop
+  - `pkg/controller/manager.go`: Context cancellation now happens immediately, not deferred
+  - Prevents context accumulation in long-running goroutines
+
+#### Reliability
+- Added goroutine timeout protection in metrics collection
+  - `pkg/controller/manager.go`: 45-second timeout prevents API hang from blocking metrics
+  - Timeout is less than collection interval (60s) to avoid overlap
+
+### Added
+
+#### Enhanced Observability
+- Added 4 new Prometheus metrics for production monitoring (`pkg/metrics/metrics.go`)
+  - `vpsie_autoscaler_scale_down_blocked_total{nodegroup,namespace,reason}` - Track scale-down operations blocked by safety checks (PDB, affinity, capacity, cooldown)
+  - `vpsie_autoscaler_safety_check_failures_total{check_type,nodegroup,namespace}` - Monitor safety check failures by type
+  - `vpsie_autoscaler_node_drain_duration_seconds{nodegroup,namespace,result}` - Track drain performance (success, timeout, error)
+  - `vpsie_autoscaler_node_drain_pods_evicted{nodegroup,namespace}` - Monitor pod eviction counts during drain
+- All new metrics properly registered in `RegisterMetrics()` and `ResetMetrics()`
+- Follows Prometheus naming conventions (snake_case, proper suffixes)
+
+#### Configuration Flexibility
+- Added cloud-init template configuration support (`pkg/controller/options.go`)
+  - New `CloudInitTemplate` field in controller Options
+  - Allows custom cloud-init scripts for node provisioning
+- Added SSH key configuration with per-node override support
+  - New `SSHKeyIDs` field in controller Options for global SSH keys
+  - `pkg/controller/vpsienode/provisioner.go`: Added `getSSHKeyIDs()` helper
+  - Prefers spec-level SSH keys (per-node override), falls back to global config
+  - Enables both cluster-wide and node-specific SSH key injection
+
+### Changed
+
+- Updated Prometheus metrics count from 22 to 26 total metrics
+- Enhanced metrics collection with timeout protection
+- Improved context handling patterns across codebase
+
 ### Added
 
 #### Observability Framework

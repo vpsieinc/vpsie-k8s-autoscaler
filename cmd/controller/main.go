@@ -16,9 +16,9 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	"github.com/vpsie/vpsie-k8s-autoscaler/internal/logging"
 	autoscalerv1alpha1 "github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller"
-	"github.com/vpsie/vpsie-k8s-autoscaler/internal/logging"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 )
 

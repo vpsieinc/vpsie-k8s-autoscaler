@@ -297,6 +297,48 @@ var (
 		},
 		[]string{"event_type", "reason", "object_kind"},
 	)
+
+	// ScaleDownBlockedTotal tracks the number of scale-down operations blocked by safety checks
+	ScaleDownBlockedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "scale_down_blocked_total",
+			Help:      "Total number of scale-down operations blocked by safety checks",
+		},
+		[]string{"nodegroup", "namespace", "reason"}, // reason: pdb, affinity, capacity, cooldown
+	)
+
+	// SafetyCheckFailuresTotal tracks the number of safety check failures by type
+	SafetyCheckFailuresTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "safety_check_failures_total",
+			Help:      "Total number of safety check failures by type",
+		},
+		[]string{"check_type", "nodegroup", "namespace"}, // check_type: pdb, affinity, capacity
+	)
+
+	// NodeDrainDuration tracks the time taken to drain a node
+	NodeDrainDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Name:      "node_drain_duration_seconds",
+			Help:      "Time taken to drain a node during scale-down",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 12), // 1s to ~68 minutes
+		},
+		[]string{"nodegroup", "namespace", "result"}, // result: success, timeout, error
+	)
+
+	// NodeDrainPodsEvicted tracks the number of pods evicted during node drain
+	NodeDrainPodsEvicted = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Name:      "node_drain_pods_evicted",
+			Help:      "Number of pods evicted during node drain",
+			Buckets:   prometheus.LinearBuckets(0, 5, 20), // 0 to 95 pods
+		},
+		[]string{"nodegroup", "namespace"},
+	)
 )
 
 // RegisterMetrics registers all metrics with the controller-runtime metrics registry
@@ -330,6 +372,10 @@ func RegisterMetrics() {
 		NodeTerminationDuration,
 		VPSieNodePhaseTransitions,
 		EventsEmitted,
+		ScaleDownBlockedTotal,
+		SafetyCheckFailuresTotal,
+		NodeDrainDuration,
+		NodeDrainPodsEvicted,
 	)
 }
 
@@ -363,4 +409,8 @@ func ResetMetrics() {
 	NodeTerminationDuration.Reset()
 	VPSieNodePhaseTransitions.Reset()
 	EventsEmitted.Reset()
+	ScaleDownBlockedTotal.Reset()
+	SafetyCheckFailuresTotal.Reset()
+	NodeDrainDuration.Reset()
+	NodeDrainPodsEvicted.Reset()
 }

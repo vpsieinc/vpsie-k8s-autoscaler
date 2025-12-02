@@ -184,8 +184,8 @@ func (cm *ControllerManager) setupControllers() error {
 		cm.scheme,
 		cm.vpsieClient,
 		cm.logger,
-		"",  // TODO: Make cloud-init template configurable
-		nil, // TODO: Make SSH key IDs configurable
+		cm.options.CloudInitTemplate,
+		cm.options.SSHKeyIDs,
 	)
 
 	if err := vpsieNodeReconciler.SetupWithManager(cm.mgr); err != nil {
@@ -282,10 +282,15 @@ func (cm *ControllerManager) startMetricsCollection(ctx context.Context) {
 				cm.logger.Info("Stopping metrics collection")
 				return
 			case <-ticker.C:
-				if err := cm.scaleDownManager.UpdateNodeUtilization(ctx); err != nil {
+				// Use timeout to prevent goroutine leak if metrics API hangs
+				// Timeout should be less than collection interval to avoid overlap
+				// Note: cancel() is called immediately (not deferred) to avoid context leak in loop
+				metricsCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+				if err := cm.scaleDownManager.UpdateNodeUtilization(metricsCtx); err != nil {
 					cm.logger.Error("Failed to update node utilization",
 						zap.Error(err))
 				}
+				cancel() // Immediately clean up context resources
 			}
 		}
 	}()

@@ -62,7 +62,7 @@ func (p *Provisioner) createVPS(ctx context.Context, vn *v1alpha1.VPSieNode, log
 		OfferingID:   vn.Spec.InstanceType,
 		DatacenterID: vn.Spec.DatacenterID,
 		OSImageID:    vn.Spec.OSImageID,
-		SSHKeyIDs:    vn.Spec.SSHKeyIDs,
+		SSHKeyIDs:    p.getSSHKeyIDs(vn),
 		UserData:     vn.Spec.UserData,
 		Tags:         []string{"kubernetes", "autoscaler", vn.Spec.NodeGroupName},
 		Notes:        fmt.Sprintf("Managed by VPSie Kubernetes Autoscaler - NodeGroup: %s", vn.Spec.NodeGroupName),
@@ -265,6 +265,17 @@ runcmd:
   - echo "VPSieNode: %s" >> /etc/motd
   - echo "Node provisioned at: %s" >> /etc/motd
 `, hostname, hostname, vn.Name, vn.Spec.NodeGroupName, vn.Name, time.Now().Format(time.RFC3339))
+}
+
+// getSSHKeyIDs returns SSH key IDs to use for VPS provisioning
+// Prefers spec-level SSH keys (per-node override), falls back to provisioner-level (global config)
+func (p *Provisioner) getSSHKeyIDs(vn *v1alpha1.VPSieNode) []string {
+	// If VPSieNode spec has SSH keys defined, use them (per-node override)
+	if len(vn.Spec.SSHKeyIDs) > 0 {
+		return vn.Spec.SSHKeyIDs
+	}
+	// Fall back to provisioner-level SSH keys (global configuration from controller options)
+	return p.sshKeyIDs
 }
 
 // GetVPS gets the VPS for a VPSieNode

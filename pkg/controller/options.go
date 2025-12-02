@@ -44,6 +44,14 @@ type Options struct {
 
 	// DevelopmentMode enables development mode with more verbose logging
 	DevelopmentMode bool
+
+	// CloudInitTemplate is the cloud-init template for node provisioning
+	// If empty, no custom cloud-init template is used
+	CloudInitTemplate string
+
+	// SSHKeyIDs are the VPSie SSH key IDs to inject into provisioned nodes
+	// Optional: can be empty if SSH keys are not required
+	SSHKeyIDs []string
 }
 
 // NewDefaultOptions returns Options with default values
@@ -61,6 +69,8 @@ func NewDefaultOptions() *Options {
 		LogLevel:                "info",
 		LogFormat:               "json",
 		DevelopmentMode:         false,
+		CloudInitTemplate:       "", // No custom cloud-init by default
+		SSHKeyIDs:               nil, // No SSH keys by default
 	}
 }
 
