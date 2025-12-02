@@ -39,6 +39,23 @@ func (s *ScaleDownManager) UpdateNodeUtilization(ctx context.Context) error {
 		metricsMap[nodeMetrics.Items[i].Name] = &nodeMetrics.Items[i]
 	}
 
+	// Create map of current nodes for garbage collection
+	currentNodes := make(map[string]bool)
+	for i := range nodeList.Items {
+		currentNodes[nodeList.Items[i].Name] = true
+	}
+
+	// Garbage collect deleted nodes from utilization map
+	// This prevents unbounded memory growth over time
+	s.utilizationLock.Lock()
+	for nodeName := range s.nodeUtilization {
+		if !currentNodes[nodeName] {
+			delete(s.nodeUtilization, nodeName)
+			s.logger.Debug("removed deleted node from utilization tracking", "node", nodeName)
+		}
+	}
+	s.utilizationLock.Unlock()
+
 	// Update utilization for each node
 	for i := range nodeList.Items {
 		node := &nodeList.Items[i]
@@ -162,16 +179,33 @@ func (s *ScaleDownManager) calculateRollingAverage(samples []UtilizationSample) 
 	return cpuSum / float64(count), memSum / float64(count)
 }
 
-// GetNodeUtilization returns utilization data for a specific node
+// GetNodeUtilization returns a deep copy of utilization data for a specific node
+// Returns a copy to prevent external modification of internal state
 func (s *ScaleDownManager) GetNodeUtilization(nodeName string) (*NodeUtilization, bool) {
 	s.utilizationLock.RLock()
 	defer s.utilizationLock.RUnlock()
 
 	util, exists := s.nodeUtilization[nodeName]
-	return util, exists
+	if !exists {
+		return nil, false
+	}
+
+	// Return deep copy to prevent external modification
+	copy := &NodeUtilization{
+		NodeName:          util.NodeName,
+		CPUUtilization:    util.CPUUtilization,
+		MemoryUtilization: util.MemoryUtilization,
+		IsUnderutilized:   util.IsUnderutilized,
+		LastUpdated:       util.LastUpdated,
+		Samples:           make([]UtilizationSample, len(util.Samples)),
+	}
+	copySlice(copy.Samples, util.Samples)
+
+	return copy, true
 }
 
-// GetUnderutilizedNodes returns all nodes currently marked as underutilized
+// GetUnderutilizedNodes returns deep copies of all nodes currently marked as underutilized
+// Returns copies to prevent external modification of internal state
 func (s *ScaleDownManager) GetUnderutilizedNodes() []*NodeUtilization {
 	s.utilizationLock.RLock()
 	defer s.utilizationLock.RUnlock()
@@ -179,11 +213,28 @@ func (s *ScaleDownManager) GetUnderutilizedNodes() []*NodeUtilization {
 	var underutilized []*NodeUtilization
 	for _, util := range s.nodeUtilization {
 		if util.IsUnderutilized {
-			underutilized = append(underutilized, util)
+			// Create deep copy
+			copy := &NodeUtilization{
+				NodeName:          util.NodeName,
+				CPUUtilization:    util.CPUUtilization,
+				MemoryUtilization: util.MemoryUtilization,
+				IsUnderutilized:   util.IsUnderutilized,
+				LastUpdated:       util.LastUpdated,
+				Samples:           make([]UtilizationSample, len(util.Samples)),
+			}
+			copySlice(copy.Samples, util.Samples)
+			underutilized = append(underutilized, copy)
 		}
 	}
 
 	return underutilized
+}
+
+// copySlice is a helper to copy UtilizationSample slices
+func copySlice(dst, src []UtilizationSample) {
+	for i := range src {
+		dst[i] = src[i]
+	}
 }
 
 // CalculateResourceRequests calculates total resource requests for pods

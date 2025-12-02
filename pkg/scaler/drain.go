@@ -81,10 +81,33 @@ func (s *ScaleDownManager) DrainNode(ctx context.Context, node *corev1.Node) err
 	}
 
 	// Step 6: Evict pods
-	ctx, cancel := context.WithTimeout(ctx, s.config.DrainTimeout)
-	defer cancel()
+	// Use detached context for drain to allow completion even if parent is cancelled
+	// This ensures graceful drain during controller shutdown
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), s.config.DrainTimeout)
+	defer drainCancel()
 
-	if err := s.evictPods(ctx, podsToEvict); err != nil {
+	// Monitor parent context cancellation in parallel
+	parentCancelled := false
+	done := make(chan error, 1)
+
+	go func() {
+		done <- s.evictPods(drainCtx, podsToEvict)
+	}()
+
+	var evictErr error
+	select {
+	case evictErr = <-done:
+		// Eviction completed normally
+	case <-ctx.Done():
+		// Parent context cancelled (e.g., controller shutdown)
+		parentCancelled = true
+		s.logger.Warn("drain operation detached due to parent cancellation, continuing in background",
+			zap.String("node", node.Name))
+		// Wait for eviction to complete with drain timeout
+		evictErr = <-done
+	}
+
+	if evictErr != nil {
 		// Use fresh context for cleanup operations
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
@@ -95,48 +118,65 @@ func (s *ScaleDownManager) DrainNode(ctx context.Context, node *corev1.Node) err
 		// Only uncordon on non-timeout failures
 		// If it's a timeout, pods are still being evicted, so leave node cordoned
 		// If it's a PDB violation or other error, rollback by uncordoning
-		if ctx.Err() != context.DeadlineExceeded && ctx.Err() != context.Canceled {
+		if drainCtx.Err() != context.DeadlineExceeded && drainCtx.Err() != context.Canceled && !parentCancelled {
 			s.logger.Info("uncordoning node due to eviction failure",
 				zap.String("node", node.Name),
-				zap.Error(err))
+				zap.Error(evictErr))
 			_ = s.uncordonNode(cleanupCtx, node)
 		} else {
-			s.logger.Info("leaving node cordoned - eviction in progress",
+			s.logger.Info("leaving node cordoned - eviction in progress or parent cancelled",
 				zap.String("node", node.Name))
 		}
 
-		return fmt.Errorf("failed to evict pods: %w", err)
+		if parentCancelled {
+			return fmt.Errorf("drain detached (parent cancelled), eviction result: %w", evictErr)
+		}
+		return fmt.Errorf("failed to evict pods: %w", evictErr)
 	}
 
 	// Step 7: Wait for pod termination
-	if err := s.waitForPodTermination(ctx, node.Name, podsToEvict); err != nil {
+	// Use drain context (detached) for termination wait as well
+	if err := s.waitForPodTermination(drainCtx, node.Name, podsToEvict); err != nil {
 		// Use fresh context for cleanup
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
 		_ = s.annotateNodeDrainStatus(cleanupCtx, node, "timeout")
 
 		// Don't uncordon here - pods are being terminated
+		if parentCancelled {
+			return fmt.Errorf("drain detached (parent cancelled), termination wait failed: %w", err)
+		}
 		return fmt.Errorf("timeout waiting for pods to terminate: %w", err)
 	}
 
 	// Step 8: Verify successful migration
-	remainingPods, err := s.getNodePods(ctx, node.Name)
+	// Use drain context for final verification
+	remainingPods, err := s.getNodePods(drainCtx, node.Name)
 	if err != nil {
+		if parentCancelled {
+			return fmt.Errorf("drain detached (parent cancelled), migration verification failed: %w", err)
+		}
 		return fmt.Errorf("failed to verify pod migration: %w", err)
 	}
 
 	// Filter out DaemonSets and static pods
 	activePods := s.filterPodsForEviction(remainingPods)
 	if len(activePods) > 0 {
+		if parentCancelled {
+			return fmt.Errorf("drain detached (parent cancelled), %d pods still running", len(activePods))
+		}
 		return fmt.Errorf("drain incomplete: %d pods still running", len(activePods))
 	}
 
-	// Mark drain as complete
-	_ = s.annotateNodeDrainStatus(ctx, node, "complete")
+	// Mark drain as complete using fresh context
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cleanupCancel()
+	_ = s.annotateNodeDrainStatus(cleanupCtx, node, "complete")
 
 	s.logger.Info("node drain completed successfully",
 		zap.String("node", node.Name),
-		zap.Int("podsEvicted", len(podsToEvict)))
+		zap.Int("podsEvicted", len(podsToEvict)),
+		zap.Bool("detached", parentCancelled))
 
 	return nil
 }

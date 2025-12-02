@@ -6,8 +6,10 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
@@ -29,8 +31,13 @@ func (r *NodeGroupReconciler) reconcile(ctx context.Context, ng *v1alpha1.NodeGr
 		SetErrorCondition(ng, true, ReasonValidationFailed, err.Error())
 		SetReadyCondition(ng, false, ReasonValidationFailed, "Spec validation failed")
 
-		// Update status
-		if statusErr := r.Status().Update(ctx, ng); statusErr != nil {
+		// Update status with optimistic locking
+		patch := client.MergeFrom(ng.DeepCopy())
+		if statusErr := r.Status().Patch(ctx, ng, patch); statusErr != nil {
+			if apierrors.IsConflict(statusErr) {
+				logger.Info("Status update conflict, will retry")
+				return ctrl.Result{Requeue: true}, nil
+			}
 			logger.Error("Failed to update status", zap.Error(statusErr))
 			return ctrl.Result{}, statusErr
 		}
@@ -47,8 +54,13 @@ func (r *NodeGroupReconciler) reconcile(ctx context.Context, ng *v1alpha1.NodeGr
 		logger.Error("Failed to list VPSieNodes", zap.Error(err))
 		SetErrorCondition(ng, true, ReasonKubernetesAPIError, fmt.Sprintf("Failed to list VPSieNodes: %v", err))
 
-		// Update status
-		if statusErr := r.Status().Update(ctx, ng); statusErr != nil {
+		// Update status with optimistic locking
+		patch := client.MergeFrom(ng.DeepCopy())
+		if statusErr := r.Status().Patch(ctx, ng, patch); statusErr != nil {
+			if apierrors.IsConflict(statusErr) {
+				logger.Info("Status update conflict, will retry")
+				return ctrl.Result{Requeue: true}, nil
+			}
 			logger.Error("Failed to update status", zap.Error(statusErr))
 			return ctrl.Result{}, statusErr
 		}
@@ -118,8 +130,13 @@ func (r *NodeGroupReconciler) reconcile(ctx context.Context, ng *v1alpha1.NodeGr
 		SetErrorCondition(ng, false, ReasonReconciling, "")
 	}
 
-	// Update status
-	if err := r.Status().Update(ctx, ng); err != nil {
+	// Update status with optimistic locking
+	patch := client.MergeFrom(ng.DeepCopy())
+	if err := r.Status().Patch(ctx, ng, patch); err != nil {
+		if apierrors.IsConflict(err) {
+			logger.Info("Status update conflict, will retry")
+			return ctrl.Result{Requeue: true}, nil
+		}
 		logger.Error("Failed to update status", zap.Error(err))
 		return ctrl.Result{}, err
 	}
