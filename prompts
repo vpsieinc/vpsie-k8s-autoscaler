@@ -1,481 +1,959 @@
 # VPSie Kubernetes Node Autoscaler - Phase 4: Production Readiness Prompts
 
-## Overview
-These prompts guide the implementation of Phase 4 (Production Readiness) for the VPSie Kubernetes Node Autoscaler. Each prompt addresses critical production requirements identified through comprehensive project analysis. Execute these prompts in priority order to achieve production readiness.
+## Project Context
+The VPSie Kubernetes Node Autoscaler is at v0.3.0-alpha with Phase 1-3 complete. Core functionality exists but critical production features are missing. These prompts provide step-by-step implementation instructions for achieving v1.0.0 production readiness.
+
+**Current Status:**
+- ✅ VPSie API client with OAuth authentication
+- ✅ NodeGroup and VPSieNode CRDs with controllers
+- ✅ Event-driven scale-up based on unschedulable pods
+- ✅ 66 unit tests + 16 integration tests + 3 performance tests
+- ❌ No scale-down logic (pkg/scaler/ is empty)
+- ❌ No deployment manifests (deploy/manifests/ and helm templates empty)
+- ❌ 9 hardcoded TODO values throughout codebase
+- ❌ No node bootstrapping system
 
 ---
 
-## Priority 1: Scale-Down Logic Implementation (BLOCKER)
+## PROMPT 1: Implement Scale-Down Logic (Critical Blocker)
 
-**Context:** The pkg/scaler/ directory is empty. Scale-down logic is critical for production as it prevents resource waste and reduces costs.
+**Task:** Implement complete scale-down functionality in the empty pkg/scaler/ directory to prevent unbounded resource growth and costs.
 
-**Requirements:**
-1. Implement pkg/scaler/scaler.go with ScaleDownManager:
-   - Identify underutilized nodes (CPU < 50%, Memory < 50%)
-   - Respect scale-down cooldown period (default 10 minutes)
-   - Implement node draining with pod eviction
-   - Verify no PDBs (PodDisruptionBudgets) are violated
-   - Check for non-reschedulable pods (local storage, node selectors)
-   - Implement graceful termination with timeout
+**Implementation Requirements:**
 
-2. Add pkg/scaler/metrics.go for utilization tracking:
-   - Collect node metrics from metrics-server
-   - Calculate rolling averages over 5-minute windows
-   - Track pod resource requests vs actual usage
-   - Identify cost-saving opportunities
+### 1. Create pkg/scaler/scaler.go
+```go
+package scaler
 
-3. Implement pkg/scaler/drain.go for safe node removal:
-   - Cordon node to prevent new pod scheduling
-   - Evict pods respecting grace periods
-   - Wait for pod termination
-   - Handle DaemonSets and static pods
-   - Verify workload migration success
+import (
+    "context"
+    "time"
+    autoscalerv1alpha1 "github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+    "github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
+    corev1 "k8s.io/api/core/v1"
+    metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+    "k8s.io/client-go/kubernetes"
+    metricsv1beta1 "k8s.io/metrics/pkg/client/clientset/versioned"
+)
 
-4. Create pkg/scaler/policies.go for configurable policies:
-   - Time-based scaling (business hours vs off-hours)
-   - Aggressive vs conservative modes
-   - Protected node annotations
-   - Cost optimization strategies
+type ScaleDownManager struct {
+    client         kubernetes.Interface
+    metricsClient  metricsv1beta1.Interface
+    nodeUtilization map[string]*NodeUtilization
+    cooldownPeriod  time.Duration
+    lastScaleDown   time.Time
+}
 
-5. Add comprehensive tests:
-   - Unit tests with 90% coverage
-   - Integration tests for scale-down scenarios
-   - Test PDB respect, failed evictions, timeout handling
+type NodeUtilization struct {
+    NodeName          string
+    CPUUtilization    float64  // percentage (0-100)
+    MemoryUtilization float64  // percentage (0-100)
+    Samples           []UtilizationSample
+    LastUpdated       time.Time
+}
 
-**Expected Outcome:** Fully functional scale-down with safe node removal, cost optimization, and configurable policies.
+// Core methods to implement:
+func (s *ScaleDownManager) IdentifyUnderutilizedNodes(ctx context.Context, nodeGroup *autoscalerv1alpha1.NodeGroup) ([]*corev1.Node, error)
+func (s *ScaleDownManager) CanScaleDown(ctx context.Context, node *corev1.Node) (bool, string, error)
+func (s *ScaleDownManager) DrainNode(ctx context.Context, node *corev1.Node) error
+func (s *ScaleDownManager) ValidatePodDisruptionBudgets(ctx context.Context, pods []*corev1.Pod) error
+```
 
----
+### 2. Create pkg/scaler/utilization.go for metrics collection
+```go
+// Implement node utilization tracking
+func (s *ScaleDownManager) UpdateNodeUtilization(ctx context.Context) error {
+    // Query metrics-server for node CPU/memory usage
+    // Calculate 5-minute rolling average
+    // Store in nodeUtilization map
+    // Track utilization trends
+}
 
-## Priority 2: Deployment Manifests (BLOCKER)
+// Thresholds for scale-down (make configurable):
+const (
+    ScaleDownCPUThreshold    = 50.0  // Scale down if CPU < 50%
+    ScaleDownMemoryThreshold = 50.0  // Scale down if Memory < 50%
+    ScaleDownWindow         = 10 * time.Minute  // Observation window
+    ScaleDownCooldown       = 10 * time.Minute  // Between scale-downs
+)
+```
 
-**Context:** deploy/ directory lacks production deployment manifests. Helm chart is incomplete.
+### 3. Create pkg/scaler/drain.go for safe node removal
+```go
+func (s *ScaleDownManager) DrainNode(ctx context.Context, node *corev1.Node) error {
+    // Step 1: Cordon node (mark unschedulable)
+    // Step 2: Get all pods on node
+    // Step 3: Check PodDisruptionBudgets
+    // Step 4: Evict pods with grace period
+    // Step 5: Wait for pod termination
+    // Step 6: Handle DaemonSets and static pods
+    // Step 7: Verify successful migration
+    // Step 8: Uncordon if drain fails (safety)
+}
+```
 
-**Requirements:**
-1. Complete Helm chart in deploy/helm/vpsie-autoscaler/:
-   - Chart.yaml with proper versioning
-   - values.yaml with all configurable options
-   - templates/deployment.yaml with resource limits
-   - templates/rbac.yaml with minimal required permissions
-   - templates/configmap.yaml for configuration
-   - templates/secret.yaml for VPSie credentials
-   - templates/service.yaml for metrics exposure
-   - templates/servicemonitor.yaml for Prometheus
-   - templates/poddisruptionbudget.yaml for HA
-   - templates/networkpolicy.yaml for security
+### 4. Create pkg/scaler/safety.go for safety checks
+```go
+// Critical safety checks before removal:
+func (s *ScaleDownManager) IsSafeToRemove(ctx context.Context, node *corev1.Node) (bool, string, error) {
+    // Check 1: Node has no pods with local storage
+    // Check 2: All pods can be scheduled elsewhere
+    // Check 3: System pods (kube-system) have alternatives
+    // Check 4: No pod anti-affinity violations
+    // Check 5: Cluster has sufficient capacity after removal
+    // Check 6: Node is not annotated as "protected"
+    // Check 7: Minimum nodes constraint not violated
+}
+```
 
-2. Create deploy/kubernetes/ for kubectl users:
-   - namespace.yaml
-   - rbac.yaml (ServiceAccount, ClusterRole, ClusterRoleBinding)
-   - deployment.yaml with leader election
-   - configmap.yaml with default configuration
-   - secret.yaml template
-   - service.yaml for metrics
-   - poddisruptionbudget.yaml
+### 5. Integration with NodeGroup Controller
+Update pkg/controller/nodegroup/controller.go:
+```go
+// Add to reconciliation loop:
+if shouldScaleDown {
+    nodes := scaler.IdentifyUnderutilizedNodes(ctx, nodeGroup)
+    for _, node := range nodes {
+        if canRemove, reason, err := scaler.CanScaleDown(ctx, node); canRemove {
+            // Update VPSieNode to Terminating phase
+            // Emit scaling event
+            // Update metrics
+        }
+    }
+}
+```
 
-3. Add deploy/examples/ with production configs:
-   - small-cluster.yaml (1-10 nodes)
-   - medium-cluster.yaml (10-50 nodes)
-   - large-cluster.yaml (50+ nodes)
-   - multi-region.yaml
-   - spot-instances.yaml
+### 6. Add comprehensive tests (pkg/scaler/scaler_test.go)
+Test scenarios:
+- Underutilized node identification
+- PDB respect during drain
+- Failed eviction handling
+- Cooldown period enforcement
+- Protected node skipping
+- Capacity validation
+- Local storage detection
 
-4. Create deploy/kustomize/ for GitOps:
-   - base/ with core resources
-   - overlays/dev/
-   - overlays/staging/
-   - overlays/production/
+**Expected Files:**
+```
+pkg/scaler/
+├── scaler.go           # Main ScaleDownManager
+├── utilization.go      # Metrics collection
+├── drain.go           # Node draining logic
+├── safety.go          # Safety checks
+├── policies.go        # Configurable policies
+├── scaler_test.go     # Unit tests
+├── utilization_test.go
+├── drain_test.go
+└── safety_test.go
+```
 
-5. Add validation and testing:
-   - Helm chart linting
-   - Dry-run installation tests
-   - RBAC permission validation
-   - Resource limit testing
-
-**Expected Outcome:** Production-ready deployment manifests supporting multiple installation methods.
-
----
-
-## Priority 3: Node Bootstrapping System (BLOCKER)
-
-**Context:** New VPSie VMs need to join the Kubernetes cluster automatically.
-
-**Requirements:**
-1. Create pkg/bootstrap/bootstrapper.go:
-   - Generate kubeadm join tokens
-   - Manage token rotation and expiration
-   - Store bootstrap configuration in ConfigMaps
-   - Track join status and retry failures
-
-2. Implement pkg/bootstrap/cloud_init.go:
-   - Generate cloud-init templates
-   - Install Docker/containerd
-   - Install kubelet, kubeadm, kubectl
-   - Configure kernel parameters and sysctl
-   - Set up CNI networking
-   - Join cluster using kubeadm
-
-3. Add pkg/bootstrap/templates/ with cloud-init:
-   - ubuntu-22.04.yaml
-   - ubuntu-20.04.yaml
-   - centos-8.yaml
-   - debian-11.yaml
-   - Custom startup scripts
-
-4. Create pkg/bootstrap/validation.go:
-   - Verify node joined successfully
-   - Check kubelet health
-   - Validate CNI configuration
-   - Test pod scheduling
-   - Monitor for bootstrap failures
-
-5. Implement recovery mechanisms:
-   - Retry failed joins with backoff
-   - Clean up failed nodes
-   - Alert on repeated failures
-   - Automatic token refresh
-
-**Expected Outcome:** Automated node bootstrapping with 99.9% success rate.
-
----
-
-## Priority 4: Configuration Management (BLOCKER)
-
-**Context:** Found 9 TODO comments with hardcoded configuration values throughout the codebase.
-
-**Requirements:**
-1. Create internal/config/config.go with Viper:
-   - Load from file, env vars, and flags
-   - Validate configuration on startup
-   - Support hot-reload for non-critical settings
-   - Type-safe configuration structs
-
-2. Define configuration structure:
-   ```go
-   type Config struct {
-       Controller ControllerConfig
-       VPSie      VPSieConfig
-       Scaling    ScalingConfig
-       Bootstrap  BootstrapConfig
-       Metrics    MetricsConfig
-       Logging    LoggingConfig
-   }
-   ```
-
-3. Fix all hardcoded values:
-   - Controller reconciliation interval (currently 30s)
-   - VPSie API rate limits (currently 100/min)
-   - Scale-up/down thresholds
-   - Timeout values
-   - Port numbers
-   - Resource limits
-
-4. Add configuration validation:
-   - Required fields check
-   - Range validation for numeric values
-   - Format validation for URLs/IPs
-   - Mutual exclusivity rules
-   - Warning for deprecated options
-
-5. Create config/config.yaml template:
-   - Fully documented with examples
-   - Environment variable mappings
-   - Default values explained
-   - Production recommendations
-
-**Expected Outcome:** Flexible configuration system with no hardcoded values.
+**Success Criteria:**
+- ✅ Nodes scale down when CPU/Memory < 50% for 10 minutes
+- ✅ PodDisruptionBudgets always respected
+- ✅ No data loss from local storage pods
+- ✅ Graceful pod migration with retries
+- ✅ 90% test coverage
+- ✅ Integration with existing controllers
 
 ---
 
-## Priority 5: Cost Optimization Features
+## PROMPT 2: Create Production Deployment Manifests
 
-**Context:** VPSie offers multiple instance types. Intelligent selection can reduce costs by 40%.
+**Task:** Create complete deployment manifests for Helm and kubectl installation methods. Both deploy/manifests/ and deploy/helm/vpsie-autoscaler/templates/ are empty.
 
-**Requirements:**
-1. Implement pkg/vpsie/cost/calculator.go:
-   - Fetch current VPSie pricing
-   - Calculate hourly/monthly costs
-   - Compare instance types
-   - Predict cost impact of scaling
+### 1. Helm Chart Structure (deploy/helm/vpsie-autoscaler/)
 
-2. Create pkg/vpsie/cost/optimizer.go:
-   - Analyze workload requirements
-   - Recommend optimal instance types
-   - Support spot/preemptible instances
-   - Implement bin packing algorithm
-   - Right-size overprovisioned nodes
+**Chart.yaml:**
+```yaml
+apiVersion: v2
+name: vpsie-autoscaler
+description: Kubernetes node autoscaler for VPSie cloud platform
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - autoscaler
+  - vpsie
+  - kubernetes
+maintainers:
+  - name: VPSie Team
+    email: support@vpsie.com
+```
 
-3. Add pkg/rebalancer/rebalancer.go:
-   - Periodic cluster rebalancing
-   - Migrate workloads to cheaper instances
-   - Consolidate underutilized nodes
-   - Respect availability requirements
-   - Generate rebalancing reports
+**values.yaml:**
+```yaml
+replicaCount: 1  # Use 2+ for HA with leader election
 
-4. Implement cost tracking:
-   - Track spending per NodeGroup
-   - Monitor cost trends
-   - Alert on budget exceeded
-   - Generate cost reports
-   - Export metrics to Prometheus
+image:
+  repository: ghcr.io/vpsie/vpsie-k8s-autoscaler
+  pullPolicy: IfNotPresent
+  tag: "latest"
 
-5. Add optimization policies:
-   - Aggressive cost saving mode
-   - Balanced performance/cost
-   - Performance priority mode
-   - Time-based policies
+controller:
+  reconcileInterval: 30s
+  leaderElection: true
+  metricsPort: 8080
+  healthPort: 8081
+  logLevel: info
 
-**Expected Outcome:** 30-40% cost reduction through intelligent instance selection.
+vpsie:
+  secretName: vpsie-secret
+  secretNamespace: kube-system
+  apiRateLimit: 100  # requests per minute
+
+scaling:
+  scaleUpCooldown: 60s
+  scaleDownCooldown: 600s
+  scaleDownUtilizationThreshold: 50
+  maxNodesPerScaleUp: 10
+  maxNodesPerScaleDown: 5
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+nodeSelector: {}
+tolerations: []
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - vpsie-autoscaler
+        topologyKey: kubernetes.io/hostname
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+
+networkPolicy:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+```
+
+**templates/deployment.yaml:**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vpsie-autoscaler.fullname" . }}
+  namespace: {{ .Values.namespace | default "kube-system" }}
+  labels:
+    {{- include "vpsie-autoscaler.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "vpsie-autoscaler.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vpsie-autoscaler.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "vpsie-autoscaler.serviceAccountName" . }}
+      containers:
+      - name: controller
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        args:
+          - --metrics-addr=:{{ .Values.controller.metricsPort }}
+          - --health-addr=:{{ .Values.controller.healthPort }}
+          - --enable-leader-election={{ .Values.controller.leaderElection }}
+          - --log-level={{ .Values.controller.logLevel }}
+          - --reconcile-interval={{ .Values.controller.reconcileInterval }}
+          - --vpsie-secret={{ .Values.vpsie.secretName }}
+          - --vpsie-namespace={{ .Values.vpsie.secretNamespace }}
+        env:
+        - name: CONTROLLER_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        ports:
+        - name: metrics
+          containerPort: {{ .Values.controller.metricsPort }}
+          protocol: TCP
+        - name: health
+          containerPort: {{ .Values.controller.healthPort }}
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+```
+
+**templates/rbac.yaml:**
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "vpsie-autoscaler.serviceAccountName" . }}
+  namespace: {{ .Values.namespace | default "kube-system" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "vpsie-autoscaler.fullname" . }}
+rules:
+# Core resources
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["pods", "pods/status"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/eviction"]
+  verbs: ["create"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+# CRDs
+- apiGroups: ["autoscaler.vpsie.com"]
+  resources: ["nodegroups", "vpsienodes"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["autoscaler.vpsie.com"]
+  resources: ["nodegroups/status", "vpsienodes/status"]
+  verbs: ["get", "update", "patch"]
+# Metrics
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["nodes", "pods"]
+  verbs: ["get", "list"]
+# Policy
+- apiGroups: ["policy"]
+  resources: ["poddisruptionbudgets"]
+  verbs: ["get", "list", "watch"]
+# Leader election
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "vpsie-autoscaler.fullname" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "vpsie-autoscaler.fullname" . }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "vpsie-autoscaler.serviceAccountName" . }}
+  namespace: {{ .Values.namespace | default "kube-system" }}
+```
+
+### 2. Kubernetes Manifests (deploy/manifests/)
+
+Create individual YAML files for kubectl users:
+
+**namespace.yaml:**
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vpsie-autoscaler
+```
+
+**deployment.yaml:**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vpsie-autoscaler
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vpsie-autoscaler
+  template:
+    metadata:
+      labels:
+        app: vpsie-autoscaler
+    spec:
+      serviceAccountName: vpsie-autoscaler
+      containers:
+      - name: controller
+        image: ghcr.io/vpsie/vpsie-k8s-autoscaler:latest
+        args:
+          - --metrics-addr=:8080
+          - --health-addr=:8081
+          - --enable-leader-election=true
+          - --log-level=info
+        # ... (similar to Helm template)
+```
+
+**kustomization.yaml:**
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - clusterrole.yaml
+  - clusterrolebinding.yaml
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  - poddisruptionbudget.yaml
+
+configMapGenerator:
+  - name: vpsie-autoscaler-config
+    files:
+      - config.yaml
+
+images:
+  - name: ghcr.io/vpsie/vpsie-k8s-autoscaler
+    newTag: v1.0.0
+```
+
+**Success Criteria:**
+- ✅ Helm chart passes `helm lint`
+- ✅ Manifests pass `kubectl --dry-run`
+- ✅ RBAC permissions minimal but sufficient
+- ✅ Resource limits and requests set
+- ✅ Health/liveness probes configured
+- ✅ Leader election enabled for HA
 
 ---
 
-## Priority 6: Production Observability
+## PROMPT 3: Implement Node Bootstrapping System
 
-**Context:** Current metrics/logging insufficient for production debugging.
+**Task:** Create automated system for VPSie VMs to join Kubernetes cluster using cloud-init and kubeadm.
 
-**Requirements:**
-1. Enhance pkg/metrics/ with detailed metrics:
-   - Scaling decision reasons
-   - Node lifecycle durations
-   - API call latencies (P50, P95, P99)
-   - Error rates by category
-   - Cost metrics
-   - Cluster efficiency score
+### 1. Create pkg/bootstrap/token_manager.go
+```go
+package bootstrap
 
-2. Implement distributed tracing:
-   - OpenTelemetry integration
-   - Trace scaling decisions
-   - Track API call chains
-   - Correlate with logs
-   - Export to Jaeger/Zipkin
+import (
+    "context"
+    "crypto/rand"
+    "encoding/hex"
+    "time"
 
-3. Add structured events:
-   - Scaling decisions with reasons
-   - Configuration changes
-   - Error conditions
-   - Cost optimizations
-   - Security events
+    corev1 "k8s.io/api/core/v1"
+    metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+    "k8s.io/client-go/kubernetes"
+)
 
-4. Create dashboards:
-   - Grafana dashboard JSON
-   - Scaling activity overview
-   - Cost tracking dashboard
-   - Error analysis dashboard
-   - Performance metrics
+type TokenManager struct {
+    client     kubernetes.Interface
+    tokenTTL   time.Duration
+}
 
-5. Implement alerting rules:
-   - Scaling failures
-   - High error rates
-   - Budget exceeded
-   - Performance degradation
-   - Security violations
+func (t *TokenManager) GenerateBootstrapToken(ctx context.Context) (*BootstrapToken, error) {
+    // Generate kubeadm bootstrap token
+    // Store in Secret with expiration
+    // Return token and CA cert hash
+}
 
-**Expected Outcome:** Complete observability for production operations.
+func (t *TokenManager) GetClusterEndpoint(ctx context.Context) (string, error) {
+    // Get API server endpoint from kubeconfig
+}
+```
 
----
+### 2. Create pkg/bootstrap/cloud_init.go
+```go
+type CloudInitGenerator struct {
+    clusterEndpoint string
+    caCertHash      string
+    templates       map[string]*template.Template
+}
 
-## Priority 7: E2E Testing Suite
+func (c *CloudInitGenerator) GenerateUserData(osType string, token string) (string, error) {
+    // Generate cloud-init user-data based on OS type
+    // Include kubeadm join command with token
+}
+```
 
-**Context:** Need end-to-end tests for production validation.
+### 3. Create cloud-init templates (pkg/bootstrap/templates/)
 
-**Requirements:**
-1. Create test/e2e/ framework:
-   - Cluster provisioning helpers
-   - VPSie API mocking
-   - Workload generators
-   - Metric collectors
-   - Report generation
+**ubuntu-22.04.yaml:**
+```yaml
+#cloud-config
+package_update: true
+package_upgrade: true
 
-2. Implement core scenarios:
-   - Fresh cluster scaling
-   - Upgrade testing
-   - Failure recovery
-   - Multi-region scaling
-   - Cost optimization validation
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
 
-3. Add chaos testing:
-   - Network partitions
-   - API failures
-   - Node failures
-   - Controller crashes
-   - Resource exhaustion
+runcmd:
+  # Install Docker
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
+  - add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+  - apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io
 
-4. Performance validation:
-   - 1000 node scaling
-   - Rapid scale up/down
-   - Sustained load testing
-   - Memory leak detection
-   - API rate limit testing
+  # Install Kubernetes components
+  - curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+  - echo "deb https://apt.kubernetes.io/ kubernetes-xenial main" > /etc/apt/sources.list.d/kubernetes.list
+  - apt-get update && apt-get install -y kubelet kubeadm kubectl
+  - apt-mark hold kubelet kubeadm kubectl
 
-5. Security testing:
-   - RBAC validation
-   - Secret management
-   - Network policy enforcement
-   - Admission webhook testing
-   - Audit logging validation
+  # Configure kernel parameters
+  - modprobe br_netfilter
+  - echo "br_netfilter" >> /etc/modules
+  - sysctl -w net.bridge.bridge-nf-call-iptables=1
+  - sysctl -w net.ipv4.ip_forward=1
+  - echo "net.bridge.bridge-nf-call-iptables=1" >> /etc/sysctl.conf
+  - echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
 
-**Expected Outcome:** Comprehensive E2E test suite with 95% scenario coverage.
+  # Join cluster
+  - |
+    kubeadm join {{ .ClusterEndpoint }} \
+      --token {{ .Token }} \
+      --discovery-token-ca-cert-hash sha256:{{ .CACertHash }} \
+      --node-name $(hostname -f)
 
----
+  # Enable and start kubelet
+  - systemctl enable kubelet
+  - systemctl start kubelet
 
-## Priority 8: Documentation Completion
+  # Label node with VPSie metadata
+  - |
+    kubectl --kubeconfig /etc/kubernetes/kubelet.conf label node $(hostname -f) \
+      vpsie.com/instance-id={{ .InstanceID }} \
+      vpsie.com/nodegroup={{ .NodeGroup }} \
+      --overwrite
 
-**Context:** Missing critical production documentation.
+write_files:
+  - path: /etc/docker/daemon.json
+    content: |
+      {
+        "exec-opts": ["native.cgroupdriver=systemd"],
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "100m"
+        },
+        "storage-driver": "overlay2"
+      }
+```
 
-**Requirements:**
-1. Create docs/production/:
-   - installation.md - Step-by-step guide
-   - configuration.md - All options explained
-   - troubleshooting.md - Common issues
-   - monitoring.md - Metrics and dashboards
-   - security.md - Security best practices
-   - disaster-recovery.md - Backup/restore
-   - migration.md - Version upgrades
+### 4. Update VPSieNode provisioner
+Update pkg/controller/vpsienode/provisioner.go:
+```go
+func (p *Provisioner) createVM(ctx context.Context, vn *v1alpha1.VPSieNode) error {
+    // Generate bootstrap token
+    token, err := p.tokenManager.GenerateBootstrapToken(ctx)
 
-2. Add docs/api/:
-   - nodegroup-api.md - CRD reference
-   - vpsienode-api.md - CRD reference
-   - metrics-api.md - Metrics reference
-   - events.md - Event reference
+    // Generate cloud-init user-data
+    userData, err := p.cloudInit.GenerateUserData(vn.Spec.OSImageID, token.Token)
 
-3. Create runbooks:
-   - Scaling not working
-   - High error rates
-   - Cost overruns
-   - Performance issues
-   - Security incidents
+    // Create VPS with user-data
+    req := &vpsie.CreateVMRequest{
+        Hostname:  vn.Name,
+        UserData:  base64.StdEncoding.EncodeToString([]byte(userData)),
+        // ... other fields
+    }
+}
+```
 
-4. Add architecture docs:
-   - System design
-   - Component interactions
-   - Scaling algorithms
-   - Cost optimization logic
-   - Security model
+### 5. Create validation system (pkg/bootstrap/validator.go)
+```go
+func (v *Validator) WaitForNodeJoin(ctx context.Context, nodeName string, timeout time.Duration) error {
+    // Poll for node to appear in cluster
+    // Verify kubelet is healthy
+    // Check node Ready condition
+    // Validate expected labels/taints
+}
+```
 
-5. Generate API documentation:
-   - OpenAPI spec for CRDs
-   - Go doc for packages
-   - Helm chart values documentation
-   - Configuration reference
-
-**Expected Outcome:** Complete documentation for operators and developers.
-
----
-
-## Priority 9: Security Hardening
-
-**Context:** Production requires security hardening and compliance.
-
-**Requirements:**
-1. Implement admission webhooks:
-   - Validate NodeGroup configurations
-   - Enforce resource limits
-   - Check RBAC permissions
-   - Prevent dangerous configurations
-   - Audit configuration changes
-
-2. Add secret management:
-   - Support external secret stores
-   - Implement secret rotation
-   - Encrypt secrets at rest
-   - Audit secret access
-   - Support HashiCorp Vault
-
-3. Network security:
-   - Implement NetworkPolicies
-   - TLS for all communications
-   - mTLS for controller components
-   - API authentication/authorization
-   - Rate limiting
-
-4. Compliance features:
-   - Audit logging
-   - Change tracking
-   - Compliance reports
-   - Data retention policies
-   - GDPR compliance
-
-5. Security scanning:
-   - Container image scanning
-   - Dependency vulnerability scanning
-   - SAST/DAST integration
-   - Security benchmarks
-   - CIS compliance checks
-
-**Expected Outcome:** Production-grade security meeting enterprise requirements.
+**Success Criteria:**
+- ✅ VMs automatically join cluster within 5 minutes
+- ✅ 99.9% bootstrap success rate
+- ✅ Support Ubuntu, Debian, CentOS
+- ✅ Automatic token rotation
+- ✅ Failed join detection and retry
+- ✅ Node properly labeled and tainted
 
 ---
 
-## Priority 10: Release Preparation
+## PROMPT 4: Fix Configuration Management (9 TODOs)
 
-**Context:** Prepare for v1.0.0 production release.
+**Task:** Replace all hardcoded values with proper configuration system using Viper.
 
-**Requirements:**
-1. Release automation:
-   - Semantic versioning
-   - Automated changelog generation
-   - GitHub release creation
-   - Docker image publishing
-   - Helm chart publishing
+### 1. Create internal/config/config.go
+```go
+package config
 
-2. Release testing:
-   - Upgrade testing
-   - Rollback testing
-   - Compatibility matrix
-   - Performance benchmarks
-   - Security audit
+import (
+    "github.com/spf13/viper"
+    "time"
+)
 
-3. Release documentation:
-   - Release notes template
-   - Migration guides
-   - Breaking changes
-   - Known issues
-   - Deprecation notices
+type Config struct {
+    Controller ControllerConfig `yaml:"controller"`
+    VPSie      VPSieConfig     `yaml:"vpsie"`
+    Scaling    ScalingConfig   `yaml:"scaling"`
+    Bootstrap  BootstrapConfig `yaml:"bootstrap"`
+    Metrics    MetricsConfig   `yaml:"metrics"`
+    Logging    LoggingConfig   `yaml:"logging"`
+}
 
-4. Support infrastructure:
-   - Issue templates
-   - PR templates
-   - Contributing guidelines
-   - Code of conduct
-   - Support channels
+type ControllerConfig struct {
+    ReconcileInterval   time.Duration `yaml:"reconcileInterval"`
+    LeaderElection      bool         `yaml:"leaderElection"`
+    LeaderElectionID    string       `yaml:"leaderElectionID"`
+    MetricsBindAddress  string       `yaml:"metricsBindAddress"`
+    HealthProbeAddress  string       `yaml:"healthProbeAddress"`
+    Namespace          string       `yaml:"namespace"`
+}
 
-5. Marketing materials:
-   - README badges
-   - Architecture diagrams
-   - Performance benchmarks
-   - Cost savings examples
-   - Case studies
+type VPSieConfig struct {
+    SecretName      string        `yaml:"secretName"`
+    SecretNamespace string        `yaml:"secretNamespace"`
+    APIRateLimit    int          `yaml:"apiRateLimit"`
+    RequestTimeout  time.Duration `yaml:"requestTimeout"`
+    RetryAttempts   int          `yaml:"retryAttempts"`
+}
 
-**Expected Outcome:** Professional v1.0.0 release ready for production adoption.
+type ScalingConfig struct {
+    ScaleUpCooldown              time.Duration `yaml:"scaleUpCooldown"`
+    ScaleDownCooldown            time.Duration `yaml:"scaleDownCooldown"`
+    ScaleDownUtilizationThreshold float64      `yaml:"scaleDownUtilizationThreshold"`
+    MaxNodesPerScaleUp           int          `yaml:"maxNodesPerScaleUp"`
+    MaxNodesPerScaleDown         int          `yaml:"maxNodesPerScaleDown"`
+    NodeStartupTimeout           time.Duration `yaml:"nodeStartupTimeout"`
+}
+
+type BootstrapConfig struct {
+    CloudInitTemplate string        `yaml:"cloudInitTemplate"`
+    SSHKeyIDs        []string      `yaml:"sshKeyIds"`
+    DefaultOSImage   string        `yaml:"defaultOSImage"`
+    TokenTTL         time.Duration `yaml:"tokenTTL"`
+    JoinTimeout      time.Duration `yaml:"joinTimeout"`
+}
+
+func Load(configPath string) (*Config, error) {
+    viper.SetConfigFile(configPath)
+    viper.SetEnvPrefix("VPSIE_AUTOSCALER")
+    viper.AutomaticEnv()
+
+    // Set defaults
+    viper.SetDefault("controller.reconcileInterval", "30s")
+    viper.SetDefault("controller.metricsBindAddress", ":8080")
+    viper.SetDefault("scaling.scaleDownUtilizationThreshold", 50.0)
+    viper.SetDefault("bootstrap.defaultOSImage", "ubuntu-22.04")
+
+    if err := viper.ReadInConfig(); err != nil {
+        return nil, err
+    }
+
+    var cfg Config
+    if err := viper.Unmarshal(&cfg); err != nil {
+        return nil, err
+    }
+
+    return &cfg, cfg.Validate()
+}
+
+func (c *Config) Validate() error {
+    // Validate required fields
+    // Check value ranges
+    // Verify mutual exclusivity
+    return nil
+}
+```
+
+### 2. Fix TODO items in code
+
+**Fix 1: pkg/controller/manager.go:170-171**
+```go
+// Before:
+"",  // TODO: Make cloud-init template configurable
+nil, // TODO: Make SSH key IDs configurable
+
+// After:
+cfg.Bootstrap.CloudInitTemplate,
+cfg.Bootstrap.SSHKeyIDs,
+```
+
+**Fix 2: pkg/controller/vpsienode/provisioner.go:67**
+```go
+// Before:
+OSImageID: "ubuntu-22.04", // TODO: Make configurable from NodeGroup
+
+// After:
+OSImageID: nodeGroup.Spec.OSImageID,
+// With fallback:
+if OSImageID == "" {
+    OSImageID = cfg.Bootstrap.DefaultOSImage
+}
+```
+
+**Fix 3: pkg/controller/vpsienode/provisioner.go:247**
+```go
+// Before:
+// TODO: Replace template variables with actual values
+
+// After:
+userData := p.cloudInit.GenerateUserData(CloudInitData{
+    ClusterEndpoint: p.config.Controller.ClusterEndpoint,
+    Token:          token.Token,
+    CACertHash:     token.CACertHash,
+    InstanceID:     vm.ID,
+    NodeGroup:      nodeGroup.Name,
+})
+```
+
+**Fix 4: pkg/controller/vpsienode/joiner.go:284**
+```go
+// Before:
+// TODO: Implement label and taint application from NodeGroup spec
+
+// After:
+for k, v := range nodeGroup.Spec.Labels {
+    node.Labels[k] = v
+}
+for _, taint := range nodeGroup.Spec.Taints {
+    node.Spec.Taints = append(node.Spec.Taints, taint)
+}
+```
+
+**Fix 5: pkg/controller/events/scaleup.go:160**
+```go
+// Before:
+// TODO: Fetch actual instance type info from VPSie API
+
+// After:
+offerings, err := s.vpsieClient.ListOfferings(ctx)
+instanceType := s.selectOptimalInstance(offerings, resourceDeficit)
+```
+
+### 3. Create config file template (config/config.yaml)
+```yaml
+# VPSie Kubernetes Autoscaler Configuration
+controller:
+  reconcileInterval: 30s
+  leaderElection: true
+  leaderElectionID: vpsie-autoscaler
+  metricsBindAddress: :8080
+  healthProbeAddress: :8081
+  namespace: kube-system
+
+vpsie:
+  secretName: vpsie-secret
+  secretNamespace: kube-system
+  apiRateLimit: 100  # requests per minute
+  requestTimeout: 30s
+  retryAttempts: 3
+
+scaling:
+  scaleUpCooldown: 60s
+  scaleDownCooldown: 600s
+  scaleDownUtilizationThreshold: 50.0  # percentage
+  maxNodesPerScaleUp: 10
+  maxNodesPerScaleDown: 5
+  nodeStartupTimeout: 10m
+
+bootstrap:
+  cloudInitTemplate: /etc/vpsie-autoscaler/cloud-init.yaml
+  sshKeyIds: []  # Optional SSH key IDs
+  defaultOSImage: ubuntu-22.04
+  tokenTTL: 24h
+  joinTimeout: 10m
+
+metrics:
+  enabled: true
+  port: 8080
+  path: /metrics
+
+logging:
+  level: info  # debug, info, warn, error
+  format: json  # json or console
+  output: stdout
+```
+
+### 4. Update main.go to load config
+```go
+func main() {
+    configPath := flag.String("config", "/etc/vpsie-autoscaler/config.yaml", "Path to configuration file")
+    flag.Parse()
+
+    cfg, err := config.Load(*configPath)
+    if err != nil {
+        log.Fatal("Failed to load config:", err)
+    }
+
+    // Use cfg throughout application
+}
+```
+
+**Success Criteria:**
+- ✅ All 9 TODOs replaced with configuration
+- ✅ Configuration hot-reload for non-critical settings
+- ✅ Environment variable overrides work
+- ✅ Validation catches invalid configs
+- ✅ Defaults for all optional values
+- ✅ Well-documented config template
 
 ---
 
-## Execution Order
+## PROMPT 5: Cost Optimization Implementation
 
-1. **Week 1-2:** Priorities 1-4 (Critical blockers)
-   - Scale-down logic
-   - Deployment manifests
-   - Node bootstrapping
-   - Configuration management
+**Task:** Implement intelligent instance selection and cost optimization to reduce cloud spending by 30-40%.
 
-2. **Week 3:** Priorities 5-6 (Optimization & Observability)
-   - Cost optimization
-   - Production observability
+### Implementation Details:
 
-3. **Week 4:** Priorities 7-8 (Testing & Documentation)
-   - E2E testing
-   - Documentation
+1. **Create pkg/vpsie/cost/calculator.go** - Pricing calculations
+2. **Create pkg/vpsie/cost/optimizer.go** - Instance selection algorithms
+3. **Create pkg/rebalancer/rebalancer.go** - Cluster rebalancing
+4. **Implement bin packing algorithm** - Maximize resource utilization
+5. **Add cost tracking metrics** - Monitor spending trends
 
-4. **Week 5:** Priorities 9-10 (Security & Release)
-   - Security hardening
-   - Release preparation
+### Key Algorithms:
+- **First Fit Decreasing** for bin packing
+- **Best Fit** for instance selection
+- **Rebalancing** based on utilization patterns
 
-## Success Criteria
+---
 
-- ✅ All 10 priority areas implemented
-- ✅ 90% test coverage achieved
-- ✅ Zero critical security vulnerabilities
-- ✅ Documentation complete
-- ✅ E2E tests passing
-- ✅ Performance benchmarks met
-- ✅ Cost optimization validated
-- ✅ Production deployment successful
+## PROMPT 6: Enhanced Observability
+
+**Task:** Add production-grade observability with distributed tracing, detailed metrics, and dashboards.
+
+### Implementation:
+1. **OpenTelemetry integration** - Distributed tracing
+2. **Enhanced metrics** - P50/P95/P99 latencies
+3. **Grafana dashboards** - JSON templates
+4. **Prometheus alerts** - Critical conditions
+5. **Structured events** - Detailed logging
+
+---
+
+## PROMPT 7: E2E Testing Suite
+
+**Task:** Create comprehensive end-to-end tests for production validation.
+
+### Test Scenarios:
+1. **Complete scaling lifecycle** - Up and down
+2. **Failure recovery** - Controller crashes, API failures
+3. **Performance testing** - 1000 node clusters
+4. **Chaos engineering** - Network partitions, resource exhaustion
+5. **Security validation** - RBAC, secrets, network policies
+
+---
+
+## PROMPT 8: Production Documentation
+
+**Task:** Create complete documentation for operators and developers.
+
+### Documentation Structure:
+1. **docs/production/** - Installation, configuration, operations
+2. **docs/api/** - Complete API reference
+3. **docs/runbooks/** - Troubleshooting guides
+4. **docs/architecture/** - System design docs
+
+---
+
+## PROMPT 9: Security Hardening
+
+**Task:** Implement enterprise security requirements.
+
+### Security Features:
+1. **Admission webhooks** - Configuration validation
+2. **Secret rotation** - Automatic credential refresh
+3. **mTLS** - Encrypted communications
+4. **Audit logging** - Compliance tracking
+5. **Vulnerability scanning** - CI/CD integration
+
+---
+
+## PROMPT 10: Release Automation
+
+**Task:** Prepare for v1.0.0 production release.
+
+### Release Components:
+1. **Semantic versioning** - Automated version bumps
+2. **Changelog generation** - From commit messages
+3. **Release artifacts** - Docker images, Helm charts
+4. **Performance benchmarks** - Baseline metrics
+5. **Migration guides** - Upgrade procedures
+
+---
+
+## Execution Instructions
+
+### For Each Prompt:
+1. Read the complete prompt before starting
+2. Implement all required files
+3. Add comprehensive tests (target 90% coverage)
+4. Update documentation
+5. Verify integration with existing code
+6. Run integration tests
+
+### Priority Order:
+**Week 1-2:** Prompts 1-4 (Critical blockers)
+**Week 3:** Prompts 5-6 (Optimization)
+**Week 4:** Prompts 7-8 (Testing & Docs)
+**Week 5:** Prompts 9-10 (Security & Release)
+
+### Success Metrics:
+- All 10 prompts implemented
+- 90% test coverage achieved
+- Zero critical vulnerabilities
+- Performance benchmarks met
+- Production deployment successful
+
+---
+
+## Questions to Resolve Before Starting
+
+1. **VPSie API Integration:**
+   - Do we have production API credentials for testing?
+   - What are the API rate limits in production?
+   - How do we handle API maintenance windows?
+
+2. **Cluster Configuration:**
+   - What Kubernetes versions must we support?
+   - Which CNI plugins are in use?
+   - Are there specific security policies?
+
+3. **Performance Requirements:**
+   - Maximum acceptable scale-up time?
+   - How many nodes should we support?
+   - What's the budget constraint?
+
+4. **Deployment Environment:**
+   - Air-gapped installations required?
+   - Multi-cluster support needed?
+   - Specific compliance requirements?
+
+---
+
+## Support Resources
+
+- GitHub Issues: https://github.com/vpsie/vpsie-k8s-autoscaler/issues
+- VPSie API Docs: https://api-docs.vpsie.com/
+- Kubernetes Autoscaler SIG: https://github.com/kubernetes/autoscaler
+- Controller Runtime Book: https://book.kubebuilder.io/
+
+---
+
+END OF PROMPTS - Ready for v1.0.0 Implementation

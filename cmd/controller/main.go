@@ -18,7 +18,7 @@ import (
 
 	autoscalerv1alpha1 "github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller"
-	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/logging"
+	"github.com/vpsie/vpsie-k8s-autoscaler/internal/logging"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 )
 
