@@ -78,6 +78,18 @@ type NodeGroupSpec struct {
 	// Notes are additional notes to attach to VPSie instances
 	// +optional
 	Notes string `json:"notes,omitempty"`
+
+	// SpotConfig defines spot instance configuration for cost savings
+	// +optional
+	SpotConfig *SpotInstanceConfig `json:"spotConfig,omitempty"`
+
+	// MultiRegion enables multi-region/datacenter distribution for high availability
+	// +optional
+	MultiRegion *MultiRegionConfig `json:"multiRegion,omitempty"`
+
+	// CostOptimization defines cost optimization settings for this NodeGroup
+	// +optional
+	CostOptimization *CostOptimizationConfig `json:"costOptimization,omitempty"`
 }
 
 // ScaleUpPolicy defines the scale-up behavior for a NodeGroup
@@ -109,6 +121,111 @@ type ScaleUpPolicy struct {
 	// +kubebuilder:default=true
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
+}
+
+// SpotInstanceConfig defines configuration for spot instances
+type SpotInstanceConfig struct {
+	// Enabled controls whether spot instances are used
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// MaxSpotPercentage is the maximum percentage of nodes that can be spot instances
+	// This ensures some on-demand capacity for stability
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:default=80
+	// +optional
+	MaxSpotPercentage int32 `json:"maxSpotPercentage,omitempty"`
+
+	// FallbackToOnDemand controls whether to fall back to on-demand if spot unavailable
+	// +kubebuilder:default=true
+	// +optional
+	FallbackToOnDemand bool `json:"fallbackToOnDemand,omitempty"`
+
+	// InterruptionGracePeriod is the time before spot termination to drain workloads
+	// +kubebuilder:default="120s"
+	// +optional
+	InterruptionGracePeriod string `json:"interruptionGracePeriod,omitempty"`
+
+	// AllowedInterruptionRate is the maximum interruption rate per hour
+	// Helps avoid offerings with high interruption rates
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:default=20
+	// +optional
+	AllowedInterruptionRate int32 `json:"allowedInterruptionRate,omitempty"`
+}
+
+// MultiRegionConfig defines multi-region distribution configuration
+type MultiRegionConfig struct {
+	// Enabled controls whether multi-region distribution is active
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// DatacenterIDs is a list of datacenter IDs to distribute nodes across
+	// If empty, uses the primary DatacenterID from NodeGroupSpec
+	// +optional
+	DatacenterIDs []string `json:"datacenterIDs,omitempty"`
+
+	// DistributionStrategy defines how to distribute nodes across regions
+	// Values: "balanced", "weighted", "primary-backup"
+	// +kubebuilder:default="balanced"
+	// +optional
+	DistributionStrategy string `json:"distributionStrategy,omitempty"`
+
+	// WeightedDistribution defines custom weights for each datacenter
+	// Only used when DistributionStrategy is "weighted"
+	// Key is datacenter ID, value is weight (higher = more nodes)
+	// +optional
+	WeightedDistribution map[string]int32 `json:"weightedDistribution,omitempty"`
+
+	// PrimaryDatacenter is the primary datacenter for "primary-backup" strategy
+	// +optional
+	PrimaryDatacenter string `json:"primaryDatacenter,omitempty"`
+
+	// MinNodesPerRegion is the minimum number of nodes per region
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:default=1
+	// +optional
+	MinNodesPerRegion int32 `json:"minNodesPerRegion,omitempty"`
+}
+
+// CostOptimizationConfig defines cost optimization settings for a NodeGroup
+type CostOptimizationConfig struct {
+	// Enabled controls whether cost optimization is active for this NodeGroup
+	// +kubebuilder:default=true
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Strategy defines the optimization strategy
+	// Values: "auto", "manual", "aggressive", "conservative"
+	// +kubebuilder:default="auto"
+	// +optional
+	Strategy string `json:"strategy,omitempty"`
+
+	// OptimizationInterval is the minimum time between optimization actions
+	// +kubebuilder:default="24h"
+	// +optional
+	OptimizationInterval string `json:"optimizationInterval,omitempty"`
+
+	// MinMonthlySavings is the minimum monthly savings required to apply optimization
+	// +kubebuilder:default=10.0
+	// +optional
+	MinMonthlySavings float64 `json:"minMonthlySavings,omitempty"`
+
+	// MaxPerformanceImpact is the maximum acceptable performance reduction percentage
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:default=5
+	// +optional
+	MaxPerformanceImpact int32 `json:"maxPerformanceImpact,omitempty"`
+
+	// RequireApproval controls whether optimizations require manual approval
+	// +kubebuilder:default=false
+	// +optional
+	RequireApproval bool `json:"requireApproval,omitempty"`
 }
 
 // ScaleDownPolicy defines the scale-down behavior for a NodeGroup

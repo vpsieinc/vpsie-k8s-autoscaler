@@ -1,0 +1,122 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Reference base configuration
+resources:
+  - ../../base
+
+# Namespace for production environment
+namespace: vpsie-system
+
+# Additional labels for production environment
+commonLabels:
+  environment: production
+
+# Patches for production environment
+patches:
+  # High availability with 3 replicas
+  - target:
+      kind: Deployment
+      name: vpsie-autoscaler-controller
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+
+  # Higher minAvailable for production
+  - target:
+      kind: PodDisruptionBudget
+      name: vpsie-autoscaler-controller
+    patch: |-
+      - op: replace
+        path: /spec/minAvailable
+        value: 2
+
+  # Production resource allocation
+  - target:
+      kind: Deployment
+      name: vpsie-autoscaler-controller
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "100m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "128Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "500m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "512Mi"
+
+  # Production-optimized settings
+  - target:
+      kind: Deployment
+      name: vpsie-autoscaler-controller
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/args
+        value:
+          - --log-level=info
+          - --log-format=json
+          - --metrics-addr=:8080
+          - --health-addr=:8081
+          - --leader-elect=true
+          - --leader-election-id=vpsie-autoscaler-leader
+          - --sync-period=30s
+          - --max-concurrent-reconciles=5
+          - --node-provision-timeout=10m
+          - --node-termination-timeout=5m
+          - --cost-optimization=true
+          - --cost-optimization-strategy=auto
+          - --cost-optimization-interval=24h
+          - --rebalancing=true
+          - --rebalancing-interval=24h
+          - --rebalancing-max-concurrent=2
+          - --spot-instances=true
+          - --spot-grace-period=120s
+
+  # Add node affinity to prefer control plane nodes
+  - target:
+      kind: Deployment
+      name: vpsie-autoscaler-controller
+    patch: |-
+      - op: add
+        path: /spec/template/spec/affinity/nodeAffinity
+        value:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: Exists
+
+# Use production-specific image tag (pin to specific version)
+images:
+  - name: ghcr.io/vpsie/vpsie-k8s-autoscaler
+    newTag: v0.4.0
+
+# Production ConfigMap
+configMapGenerator:
+  - name: vpsie-autoscaler-config
+    behavior: merge
+    literals:
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+      - SYNC_PERIOD=30s
+      - MAX_CONCURRENT_RECONCILES=5
+      - COST_OPTIMIZATION_ENABLED=true
+      - COST_OPTIMIZATION_STRATEGY=auto
+      - COST_OPTIMIZATION_INTERVAL=24h
+      - REBALANCING_ENABLED=true
+      - REBALANCING_INTERVAL=24h
+      - SPOT_INSTANCES_ENABLED=true
+
+# Add resource quotas for production
+resources:
+  - resourcequota.yaml
+
+# Add network policies for production
+# resources:
+#   - networkpolicy.yaml

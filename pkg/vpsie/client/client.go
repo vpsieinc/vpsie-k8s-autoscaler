@@ -883,3 +883,140 @@ func (c *Client) DeleteVM(ctx context.Context, vmID int) error {
 
 	return nil
 }
+
+// Close cleans up client resources including HTTP connections and logger buffers.
+// This method should be called when the client is no longer needed to prevent resource leaks.
+func (c *Client) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Close idle HTTP connections to free resources
+	if transport, ok := c.httpClient.Transport.(*http.Transport); ok {
+		transport.CloseIdleConnections()
+	}
+
+	// Sync logger to flush any buffered log entries
+	// Ignore sync errors as they're common on stdout/stderr and typically benign
+	_ = c.logger.Sync()
+
+	return nil
+}
+
+// ============================================================================
+// VPS Operations (Interface compatibility methods)
+// ============================================================================
+
+// ListVPS lists all VPS instances (delegates to ListVMs)
+func (c *Client) ListVPS(ctx context.Context, opts *ListOptions) ([]VPS, error) {
+	return c.ListVMs(ctx)
+}
+
+// GetVPS retrieves a specific VPS by ID (delegates to GetVM)
+func (c *Client) GetVPS(ctx context.Context, id int) (*VPS, error) {
+	return c.GetVM(ctx, id)
+}
+
+// CreateVPS creates a new VPS instance (delegates to CreateVM)
+func (c *Client) CreateVPS(ctx context.Context, req *CreateVPSRequest) (*VPS, error) {
+	return c.CreateVM(ctx, *req)
+}
+
+// DeleteVPS deletes a VPS instance (delegates to DeleteVM)
+func (c *Client) DeleteVPS(ctx context.Context, id int) error {
+	return c.DeleteVM(ctx, id)
+}
+
+// UpdateVPS updates a VPS instance configuration
+func (c *Client) UpdateVPS(ctx context.Context, id int, req *UpdateVPSRequest) (*VPS, error) {
+	if id == 0 {
+		return nil, NewConfigError("vps_id", "VPS ID is required")
+	}
+	if req == nil {
+		return nil, NewConfigError("request", "Update request is required")
+	}
+
+	var vps VPS
+	path := fmt.Sprintf("/vm/%d", id)
+	if err := c.post(ctx, path, req, &vps); err != nil {
+		return nil, fmt.Errorf("failed to update VPS %d: %w", id, err)
+	}
+
+	return &vps, nil
+}
+
+// PerformVPSAction performs an action on a VPS (start, stop, restart, etc.)
+func (c *Client) PerformVPSAction(ctx context.Context, id int, action *VPSAction) error {
+	if id == 0 {
+		return NewConfigError("vps_id", "VPS ID is required")
+	}
+	if action == nil {
+		return NewConfigError("action", "VPS action is required")
+	}
+
+	path := fmt.Sprintf("/vm/%d/action", id)
+	if err := c.post(ctx, path, action, nil); err != nil {
+		return fmt.Errorf("failed to perform action on VPS %d: %w", id, err)
+	}
+
+	return nil
+}
+
+// ============================================================================
+// Offering Operations
+// ============================================================================
+
+// ListOfferings retrieves a list of all available VPS offerings/plans
+func (c *Client) ListOfferings(ctx context.Context, opts *ListOptions) ([]Offering, error) {
+	var response ListOfferingsResponse
+
+	if err := c.get(ctx, "/offerings", &response); err != nil {
+		return nil, fmt.Errorf("failed to list offerings: %w", err)
+	}
+
+	return response.Data, nil
+}
+
+// GetOffering retrieves details of a specific offering by ID
+func (c *Client) GetOffering(ctx context.Context, id string) (*Offering, error) {
+	if id == "" {
+		return nil, NewConfigError("offering_id", "Offering ID is required")
+	}
+
+	var offering Offering
+	path := fmt.Sprintf("/offerings/%s", id)
+	if err := c.get(ctx, path, &offering); err != nil {
+		return nil, fmt.Errorf("failed to get offering %s: %w", id, err)
+	}
+
+	return &offering, nil
+}
+
+// ============================================================================
+// Datacenter Operations
+// ============================================================================
+
+// ListDatacenters retrieves a list of all available datacenters
+func (c *Client) ListDatacenters(ctx context.Context, opts *ListOptions) ([]Datacenter, error) {
+	var response ListDatacentersResponse
+
+	if err := c.get(ctx, "/datacenters", &response); err != nil {
+		return nil, fmt.Errorf("failed to list datacenters: %w", err)
+	}
+
+	return response.Data, nil
+}
+
+// ============================================================================
+// OS Image Operations
+// ============================================================================
+
+// ListOSImages retrieves a list of all available OS images
+func (c *Client) ListOSImages(ctx context.Context, opts *ListOptions) ([]OSImage, error) {
+	var response ListOSImagesResponse
+
+	if err := c.get(ctx, "/images", &response); err != nil {
+		return nil, fmt.Errorf("failed to list OS images: %w", err)
+	}
+
+	return response.Data, nil
+}

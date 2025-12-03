@@ -1,0 +1,140 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vpsie-autoscaler-controller
+  labels:
+    app.kubernetes.io/name: vpsie-autoscaler
+    app.kubernetes.io/component: controller
+rules:
+# NodeGroup CRD permissions
+- apiGroups:
+  - autoscaler.vpsie.com
+  resources:
+  - nodegroups
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - autoscaler.vpsie.com
+  resources:
+  - nodegroups/status
+  verbs:
+  - get
+  - update
+  - patch
+- apiGroups:
+  - autoscaler.vpsie.com
+  resources:
+  - nodegroups/finalizers
+  verbs:
+  - update
+
+# VPSieNode CRD permissions
+- apiGroups:
+  - autoscaler.vpsie.com
+  resources:
+  - vpsienodes
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - autoscaler.vpsie.com
+  resources:
+  - vpsienodes/status
+  verbs:
+  - get
+  - update
+  - patch
+- apiGroups:
+  - autoscaler.vpsie.com
+  resources:
+  - vpsienodes/finalizers
+  verbs:
+  - update
+
+# Core Kubernetes resources
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/eviction
+  verbs:
+  - create
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+
+# PodDisruptionBudget permissions for safe scale-down
+- apiGroups:
+  - policy
+  resources:
+  - poddisruptionbudgets
+  verbs:
+  - get
+  - list
+  - watch
+
+# Metrics API access for node utilization
+- apiGroups:
+  - metrics.k8s.io
+  resources:
+  - nodes
+  - pods
+  verbs:
+  - get
+  - list
+
+# Leader election permissions
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete

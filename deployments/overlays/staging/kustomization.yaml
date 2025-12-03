@@ -1,0 +1,90 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Reference base configuration
+resources:
+  - ../../base
+
+# Namespace for staging environment
+namespace: vpsie-system-staging
+
+# Additional labels for staging environment
+commonLabels:
+  environment: staging
+
+# Patches for staging environment
+patches:
+  # Use 2 replicas in staging for HA testing
+  - target:
+      kind: Deployment
+      name: vpsie-autoscaler-controller
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+
+  # Moderate resource allocation
+  - target:
+      kind: Deployment
+      name: vpsie-autoscaler-controller
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "75m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "96Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "300m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "384Mi"
+
+  # Info logging with JSON format
+  - target:
+      kind: Deployment
+      name: vpsie-autoscaler-controller
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/args
+        value:
+          - --log-level=info
+          - --log-format=json
+          - --metrics-addr=:8080
+          - --health-addr=:8081
+          - --leader-elect=true
+          - --leader-election-id=vpsie-autoscaler-leader
+          - --sync-period=30s
+          - --max-concurrent-reconciles=4
+          - --node-provision-timeout=8m
+          - --node-termination-timeout=4m
+          - --cost-optimization=true
+          - --cost-optimization-strategy=auto
+          - --cost-optimization-interval=12h
+          - --rebalancing=true
+          - --rebalancing-interval=12h
+          - --rebalancing-max-concurrent=1
+          - --spot-instances=true
+          - --spot-grace-period=120s
+
+# Use staging-specific image tag
+images:
+  - name: ghcr.io/vpsie/vpsie-k8s-autoscaler
+    newTag: v0.4.0-alpha
+
+# ConfigMap overrides for staging
+configMapGenerator:
+  - name: vpsie-autoscaler-config
+    behavior: merge
+    literals:
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+      - SYNC_PERIOD=30s
+      - MAX_CONCURRENT_RECONCILES=4
+      - COST_OPTIMIZATION_ENABLED=true
+      - COST_OPTIMIZATION_STRATEGY=auto
+      - COST_OPTIMIZATION_INTERVAL=12h
+      - REBALANCING_ENABLED=true
+      - REBALANCING_INTERVAL=12h
+      - SPOT_INSTANCES_ENABLED=true

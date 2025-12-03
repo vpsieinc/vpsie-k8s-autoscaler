@@ -69,7 +69,7 @@ func NewDefaultOptions() *Options {
 		LogLevel:                "info",
 		LogFormat:               "json",
 		DevelopmentMode:         false,
-		CloudInitTemplate:       "", // No custom cloud-init by default
+		CloudInitTemplate:       "",  // No custom cloud-init by default
 		SSHKeyIDs:               nil, // No SSH keys by default
 	}
 }

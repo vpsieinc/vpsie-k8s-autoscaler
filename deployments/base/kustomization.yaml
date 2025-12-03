@@ -1,0 +1,75 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: vpsie-system
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/part-of: vpsie-autoscaler
+  app.kubernetes.io/managed-by: kustomize
+
+# Resources to include
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - clusterrole.yaml
+  - clusterrolebinding.yaml
+  - deployment.yaml
+  - service.yaml
+  - poddisruptionbudget.yaml
+  # ServiceMonitor requires Prometheus Operator - uncomment if installed
+  # - servicemonitor.yaml
+
+# Images to use (can be overridden in overlays)
+images:
+  - name: ghcr.io/vpsie/vpsie-k8s-autoscaler
+    newTag: v0.4.0-alpha
+
+# ConfigMap generator for shared configuration
+configMapGenerator:
+  - name: vpsie-autoscaler-config
+    literals:
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+      - SYNC_PERIOD=30s
+      - MAX_CONCURRENT_RECONCILES=5
+      - COST_OPTIMIZATION_ENABLED=true
+      - COST_OPTIMIZATION_STRATEGY=auto
+      - COST_OPTIMIZATION_INTERVAL=24h
+      - REBALANCING_ENABLED=true
+      - REBALANCING_INTERVAL=24h
+      - SPOT_INSTANCES_ENABLED=true
+
+# Secret generator - THIS IS A PLACEHOLDER
+# In production, create the secret manually or use sealed-secrets/external-secrets
+secretGenerator:
+  - name: vpsie-secret
+    type: Opaque
+    literals:
+      - url=https://api.vpsie.com/v2
+      # DO NOT commit actual credentials
+      # Create secret manually: kubectl create secret generic vpsie-secret \
+      #   --from-literal=clientId=YOUR_CLIENT_ID \
+      #   --from-literal=clientSecret=YOUR_CLIENT_SECRET \
+      #   -n vpsie-system
+    options:
+      disableNameSuffixHash: true
+
+# Replacements for dynamic values
+replacements:
+  - source:
+      kind: Namespace
+      name: vpsie-system
+      fieldPath: metadata.name
+    targets:
+      - select:
+          kind: ClusterRoleBinding
+        fieldPaths:
+          - subjects.[kind=ServiceAccount].namespace
+      - select:
+          kind: Deployment
+        fieldPaths:
+          - spec.template.spec.containers.[name=controller].env.[name=POD_NAMESPACE].valueFrom.fieldRef.fieldPath
+        options:
+          delimiter: "."
+          index: 1

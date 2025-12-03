@@ -1,0 +1,167 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vpsie-autoscaler.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vpsie-autoscaler.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "vpsie-autoscaler.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "vpsie-autoscaler.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "vpsie-autoscaler.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.priorityClassName }}
+      priorityClassName: {{ .Values.priorityClassName }}
+      {{- end }}
+      containers:
+      - name: controller
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 12 }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - /vpsie-autoscaler
+        args:
+        - --log-level={{ .Values.controller.logLevel }}
+        - --log-format={{ .Values.controller.logFormat }}
+        - --metrics-addr={{ .Values.controller.metricsAddr }}
+        - --health-addr={{ .Values.controller.healthAddr }}
+        {{- if .Values.controller.leaderElection.enabled }}
+        - --leader-elect=true
+        - --leader-election-id={{ .Values.controller.leaderElection.id }}
+        {{- if .Values.controller.leaderElection.namespace }}
+        - --leader-election-namespace={{ .Values.controller.leaderElection.namespace }}
+        {{- end }}
+        {{- end }}
+        - --sync-period={{ .Values.controller.syncPeriod }}
+        - --max-concurrent-reconciles={{ .Values.controller.maxConcurrentReconciles }}
+        - --node-provision-timeout={{ .Values.controller.nodeProvisionTimeout }}
+        - --node-termination-timeout={{ .Values.controller.nodeTerminationTimeout }}
+        {{- if .Values.costOptimization.enabled }}
+        - --cost-optimization=true
+        - --cost-optimization-strategy={{ .Values.costOptimization.strategy }}
+        - --cost-optimization-interval={{ .Values.costOptimization.optimizationInterval }}
+        {{- end }}
+        {{- if .Values.rebalancing.enabled }}
+        - --rebalancing=true
+        - --rebalancing-interval={{ .Values.rebalancing.interval }}
+        - --rebalancing-max-concurrent={{ .Values.rebalancing.maxConcurrent }}
+        {{- end }}
+        {{- if .Values.spotInstances.enabled }}
+        - --spot-instances=true
+        - --spot-grace-period={{ .Values.spotInstances.gracePeriod }}
+        {{- end }}
+        {{- with .Values.extraArgs }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        env:
+        - name: VPSIE_API_URL
+          value: {{ .Values.vpsie.apiURL | quote }}
+        {{- if not .Values.vpsie.existingSecret }}
+        - name: VPSIE_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "vpsie-autoscaler.secretName" . }}
+              key: token
+        {{- else }}
+        - name: VPSIE_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.vpsie.existingSecret }}
+              key: token
+        {{- end }}
+        - name: VPSIE_RATE_LIMIT
+          value: {{ .Values.vpsie.rateLimit | quote }}
+        - name: VPSIE_TIMEOUT
+          value: {{ .Values.vpsie.timeout | quote }}
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        {{- with .Values.env }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        ports:
+        - name: metrics
+          containerPort: 8080
+          protocol: TCP
+        - name: health
+          containerPort: 8081
+          protocol: TCP
+        {{- if .Values.webhook.enabled }}
+        - name: webhook
+          containerPort: 9443
+          protocol: TCP
+        {{- end }}
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+        {{- if or .Values.webhook.enabled .Values.volumeMounts }}
+        volumeMounts:
+        {{- if .Values.webhook.enabled }}
+        - name: webhook-certs
+          mountPath: /tmp/k8s-webhook-server/serving-certs
+          readOnly: true
+        {{- end }}
+        {{- with .Values.volumeMounts }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- end }}
+      {{- if or .Values.webhook.enabled .Values.volumes }}
+      volumes:
+      {{- if .Values.webhook.enabled }}
+      - name: webhook-certs
+        secret:
+          secretName: {{ include "vpsie-autoscaler.webhook.certSecretName" . }}
+          defaultMode: 420
+      {{- end }}
+      {{- with .Values.volumes }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,94 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Reference base configuration
+resources:
+  - ../../base
+
+# Namespace for dev environment
+namespace: vpsie-system-dev
+
+# Additional labels for dev environment
+commonLabels:
+  environment: dev
+
+# Patches for dev environment
+patches:
+  # Scale down to 1 replica in dev
+  - target:
+      kind: Deployment
+      name: vpsie-autoscaler-controller
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+
+  # Disable PDB in dev (not needed with 1 replica)
+  - target:
+      kind: PodDisruptionBudget
+      name: vpsie-autoscaler-controller
+    patch: |-
+      - op: replace
+        path: /spec/minAvailable
+        value: 0
+
+  # Reduce resource requests in dev
+  - target:
+      kind: Deployment
+      name: vpsie-autoscaler-controller
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "50m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "64Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "200m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "256Mi"
+
+  # Debug logging in dev
+  - target:
+      kind: Deployment
+      name: vpsie-autoscaler-controller
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/args
+        value:
+          - --log-level=debug
+          - --log-format=console
+          - --metrics-addr=:8080
+          - --health-addr=:8081
+          - --leader-elect=false
+          - --sync-period=15s
+          - --max-concurrent-reconciles=3
+          - --node-provision-timeout=5m
+          - --node-termination-timeout=3m
+          - --cost-optimization=true
+          - --cost-optimization-strategy=conservative
+          - --cost-optimization-interval=1h
+          - --rebalancing=false
+          - --spot-instances=false
+
+# Override image tag for dev (use latest or dev tag)
+images:
+  - name: ghcr.io/vpsie/vpsie-k8s-autoscaler
+    newTag: latest
+
+# ConfigMap overrides for dev
+configMapGenerator:
+  - name: vpsie-autoscaler-config
+    behavior: merge
+    literals:
+      - LOG_LEVEL=debug
+      - LOG_FORMAT=console
+      - SYNC_PERIOD=15s
+      - MAX_CONCURRENT_RECONCILES=3
+      - COST_OPTIMIZATION_ENABLED=true
+      - COST_OPTIMIZATION_STRATEGY=conservative
+      - COST_OPTIMIZATION_INTERVAL=1h
+      - REBALANCING_ENABLED=false
+      - SPOT_INSTANCES_ENABLED=false

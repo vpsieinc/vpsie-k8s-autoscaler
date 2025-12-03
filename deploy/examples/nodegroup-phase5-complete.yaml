@@ -1,0 +1,284 @@
+apiVersion: autoscaler.vpsie.io/v1alpha1
+kind: NodeGroup
+metadata:
+  name: production-workers-optimized
+  namespace: default
+  labels:
+    environment: production
+    tier: workers
+    cost-optimization: enabled
+spec:
+  # Basic configuration
+  minNodes: 5
+  maxNodes: 50
+  datacenterID: "us-east-1"
+
+  # Multiple instance types for flexibility
+  offeringIDs:
+    - "standard-4-8"      # 4 CPU, 8GB RAM
+    - "standard-8-16"     # 8 CPU, 16GB RAM
+    - "highmem-4-16"      # 4 CPU, 16GB RAM (memory-optimized)
+
+  osImageID: "ubuntu-22.04"
+  kubernetesVersion: "v1.28.0"
+
+  # Preferred instance type (but allows mixing)
+  preferredInstanceType: "standard-4-8"
+  allowMixedInstances: true
+
+  # Node labels and taints
+  labels:
+    workload-type: "general-purpose"
+    cost-optimized: "true"
+    spot-enabled: "true"
+
+  taints:
+    - key: "workload"
+      value: "batch"
+      effect: "NoSchedule"
+
+  # SSH keys for access
+  sshKeyIDs:
+    - "prod-ssh-key-1"
+
+  # Cloud-init user data for node bootstrapping
+  userData: |
+    #!/bin/bash
+    # Join Kubernetes cluster
+    kubeadm join cluster-api:6443 --token ${TOKEN} --discovery-token-ca-cert-hash ${CA_HASH}
+
+  # Tags for organization
+  tags:
+    - "environment:production"
+    - "managed-by:vpsie-autoscaler"
+    - "cost-center:engineering"
+
+  notes: "Production worker nodes with cost optimization, spot instances, and multi-region support"
+
+  # ========================================
+  # PHASE 5 FEATURES
+  # ========================================
+
+  # SPOT INSTANCES - Save 60-80% on instance costs
+  spotConfig:
+    enabled: true
+    # Use up to 80% spot instances, keep 20% on-demand for stability
+    maxSpotPercentage: 80
+    # Automatically fall back to on-demand if spot unavailable
+    fallbackToOnDemand: true
+    # Grace period before spot termination to drain workloads
+    interruptionGracePeriod: "120s"
+    # Avoid offerings with >20% interruption rate per hour
+    allowedInterruptionRate: 20
+
+  # MULTI-REGION DISTRIBUTION - High availability across regions
+  multiRegion:
+    enabled: true
+    # Distribute nodes across multiple datacenters
+    datacenterIDs:
+      - "us-east-1"
+      - "us-west-1"
+      - "eu-west-1"
+    # Balanced distribution strategy (equal nodes per region)
+    distributionStrategy: "balanced"
+    # Alternative strategies:
+    # - "weighted": Use weightedDistribution map
+    # - "primary-backup": Most nodes in primary, minimal in backup
+
+    # Ensure minimum nodes per region for fault tolerance
+    minNodesPerRegion: 2
+
+    # Example weighted distribution (commented out)
+    # weightedDistribution:
+    #   "us-east-1": 50     # 50% of nodes
+    #   "us-west-1": 30     # 30% of nodes
+    #   "eu-west-1": 20     # 20% of nodes
+
+    # Example primary-backup (commented out)
+    # distributionStrategy: "primary-backup"
+    # primaryDatacenter: "us-east-1"
+
+  # COST OPTIMIZATION - Automatic cost reduction
+  costOptimization:
+    enabled: true
+    # Optimization strategy:
+    # - "auto": Balanced approach (recommended)
+    # - "aggressive": More frequent, accepts higher risk
+    # - "conservative": Less frequent, low risk only
+    # - "manual": Recommendations only, require approval
+    strategy: "auto"
+
+    # Check for optimizations every 24 hours
+    optimizationInterval: "24h"
+
+    # Only apply optimizations that save at least $10/month
+    minMonthlySavings: 10.0
+
+    # Maximum acceptable performance reduction (5%)
+    maxPerformanceImpact: 5
+
+    # Auto-apply optimizations (false = require manual approval)
+    requireApproval: false
+
+  # SCALE-UP POLICY
+  scaleUpPolicy:
+    enabled: true
+    # Scale up when CPU exceeds 75% or memory exceeds 80%
+    cpuThreshold: 75
+    memoryThreshold: 80
+    # Wait 60 seconds to ensure sustained load before scaling
+    stabilizationWindowSeconds: 60
+
+  # SCALE-DOWN POLICY
+  scaleDownPolicy:
+    enabled: true
+    # Scale down when CPU below 40% and memory below 45%
+    cpuThreshold: 40
+    memoryThreshold: 45
+    # Wait 10 minutes before scaling down to avoid flapping
+    stabilizationWindowSeconds: 600
+    # Wait at least 10 minutes after scale-up before scaling down
+    cooldownSeconds: 600
+
+---
+# Example: Conservative cost optimization (manual approval)
+apiVersion: autoscaler.vpsie.io/v1alpha1
+kind: NodeGroup
+metadata:
+  name: critical-services
+  namespace: production
+spec:
+  minNodes: 3
+  maxNodes: 10
+  datacenterID: "us-east-1"
+  offeringIDs:
+    - "standard-8-16"
+  osImageID: "ubuntu-22.04"
+  kubernetesVersion: "v1.28.0"
+
+  # Conservative optimization for critical workloads
+  costOptimization:
+    enabled: true
+    strategy: "conservative"           # Only low-risk optimizations
+    optimizationInterval: "168h"       # Weekly checks
+    minMonthlySavings: 50.0            # Higher savings threshold
+    maxPerformanceImpact: 2            # Minimal impact allowed
+    requireApproval: true              # Manual approval required
+
+  # No spot instances for critical services
+  spotConfig:
+    enabled: false
+
+---
+# Example: Aggressive optimization for batch workloads
+apiVersion: autoscaler.vpsie.io/v1alpha1
+kind: NodeGroup
+metadata:
+  name: batch-processors
+  namespace: batch
+spec:
+  minNodes: 0                           # Can scale to zero
+  maxNodes: 100
+  datacenterID: "us-east-1"
+  offeringIDs:
+    - "standard-2-4"
+    - "standard-4-8"
+    - "compute-4-8"
+  osImageID: "ubuntu-22.04"
+  kubernetesVersion: "v1.28.0"
+
+  # Aggressive cost optimization
+  costOptimization:
+    enabled: true
+    strategy: "aggressive"
+    optimizationInterval: "6h"          # Check every 6 hours
+    minMonthlySavings: 5.0              # Apply even small savings
+    maxPerformanceImpact: 15            # Accept higher impact
+    requireApproval: false
+
+  # Maximum spot instances for batch workloads
+  spotConfig:
+    enabled: true
+    maxSpotPercentage: 100              # 100% spot instances OK
+    fallbackToOnDemand: true
+    interruptionGracePeriod: "60s"      # Shorter grace period
+    allowedInterruptionRate: 50         # Accept higher interruption
+
+---
+# Example: Multi-region with weighted distribution
+apiVersion: autoscaler.vpsie.io/v1alpha1
+kind: NodeGroup
+metadata:
+  name: global-api-servers
+  namespace: production
+spec:
+  minNodes: 9                           # 3 per region minimum
+  maxNodes: 30
+  datacenterID: "us-east-1"             # Primary datacenter
+  offeringIDs:
+    - "standard-4-8"
+  osImageID: "ubuntu-22.04"
+  kubernetesVersion: "v1.28.0"
+
+  # Weighted multi-region distribution
+  multiRegion:
+    enabled: true
+    datacenterIDs:
+      - "us-east-1"
+      - "eu-west-1"
+      - "ap-southeast-1"
+    distributionStrategy: "weighted"
+    # 50% US, 30% EU, 20% Asia
+    weightedDistribution:
+      "us-east-1": 50
+      "eu-west-1": 30
+      "ap-southeast-1": 20
+    minNodesPerRegion: 3
+
+  # Moderate cost optimization for global services
+  costOptimization:
+    enabled: true
+    strategy: "auto"
+    optimizationInterval: "24h"
+    minMonthlySavings: 20.0
+    maxPerformanceImpact: 5
+    requireApproval: false
+
+---
+# Example: Primary-backup multi-region strategy
+apiVersion: autoscaler.vpsie.io/v1alpha1
+kind: NodeGroup
+metadata:
+  name: database-replicas
+  namespace: databases
+spec:
+  minNodes: 5
+  maxNodes: 15
+  datacenterID: "us-east-1"
+  offeringIDs:
+    - "highmem-8-32"                    # Memory-optimized for databases
+  osImageID: "ubuntu-22.04"
+  kubernetesVersion: "v1.28.0"
+
+  # Primary-backup strategy: Most nodes in primary, minimal in backup
+  multiRegion:
+    enabled: true
+    datacenterIDs:
+      - "us-east-1"                     # Primary
+      - "us-west-1"                     # Backup
+    distributionStrategy: "primary-backup"
+    primaryDatacenter: "us-east-1"
+    minNodesPerRegion: 2                # At least 2 in backup for HA
+
+  # Conservative optimization for databases
+  costOptimization:
+    enabled: true
+    strategy: "conservative"
+    optimizationInterval: "168h"        # Weekly
+    minMonthlySavings: 100.0
+    maxPerformanceImpact: 2
+    requireApproval: true
+
+  # No spot instances for databases
+  spotConfig:
+    enabled: false

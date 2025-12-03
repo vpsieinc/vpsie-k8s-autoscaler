@@ -1,0 +1,140 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vpsie-autoscaler-controller
+  labels:
+    app.kubernetes.io/name: vpsie-autoscaler
+    app.kubernetes.io/component: controller
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vpsie-autoscaler
+      app.kubernetes.io/component: controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vpsie-autoscaler
+        app.kubernetes.io/component: controller
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: vpsie-autoscaler-controller
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                  - vpsie-autoscaler
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: controller
+        image: ghcr.io/vpsie/vpsie-k8s-autoscaler:v0.4.0-alpha
+        imagePullPolicy: IfNotPresent
+        command:
+        - /vpsie-autoscaler
+        args:
+        - --log-level=info
+        - --log-format=json
+        - --metrics-addr=:8080
+        - --health-addr=:8081
+        - --leader-elect=true
+        - --leader-election-id=vpsie-autoscaler-leader
+        - --sync-period=30s
+        - --max-concurrent-reconciles=5
+        - --node-provision-timeout=10m
+        - --node-termination-timeout=5m
+        - --cost-optimization=true
+        - --cost-optimization-strategy=auto
+        - --cost-optimization-interval=24h
+        - --rebalancing=true
+        - --rebalancing-interval=24h
+        - --rebalancing-max-concurrent=2
+        - --spot-instances=true
+        - --spot-grace-period=120s
+        env:
+        - name: VPSIE_API_URL
+          valueFrom:
+            secretKeyRef:
+              name: vpsie-secret
+              key: url
+              optional: true
+        - name: VPSIE_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: vpsie-secret
+              key: clientId
+        - name: VPSIE_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: vpsie-secret
+              key: clientSecret
+        - name: VPSIE_RATE_LIMIT
+          value: "100"
+        - name: VPSIE_TIMEOUT
+          value: "30"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        ports:
+        - name: metrics
+          containerPort: 8080
+          protocol: TCP
+        - name: health
+          containerPort: 8081
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      terminationGracePeriodSeconds: 30

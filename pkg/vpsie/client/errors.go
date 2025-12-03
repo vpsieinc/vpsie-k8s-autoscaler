@@ -6,6 +6,21 @@ import (
 	"net/http"
 )
 
+// Sentinel errors
+var (
+	// ErrNotFound is returned when a resource is not found (404)
+	ErrNotFound = errors.New("resource not found")
+
+	// ErrUnauthorized is returned when authentication fails (401)
+	ErrUnauthorized = errors.New("unauthorized")
+
+	// ErrForbidden is returned when access is denied (403)
+	ErrForbidden = errors.New("forbidden")
+
+	// ErrRateLimited is returned when rate limit is exceeded (429)
+	ErrRateLimited = errors.New("rate limited")
+)
+
 // APIError represents an error returned by the VPSie API
 type APIError struct {
 	StatusCode int

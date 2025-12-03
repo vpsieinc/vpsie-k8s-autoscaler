@@ -1,0 +1,302 @@
+# Default values for vpsie-autoscaler
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+## Number of replicas (should be 2+ for high availability with leader election)
+replicaCount: 2
+
+## Image configuration
+image:
+  repository: ghcr.io/vpsie/vpsie-k8s-autoscaler
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+## VPSie API Configuration
+vpsie:
+  # VPSie API endpoint
+  apiURL: "https://api.vpsie.com/v2"
+
+  # VPSie API token (leave empty to use existingSecret)
+  apiToken: ""
+
+  # Existing secret containing VPSie credentials
+  # Expected keys: token, url (optional)
+  existingSecret: "vpsie-secret"
+
+  # Rate limit for VPSie API calls (requests per minute)
+  rateLimit: 100
+
+  # Request timeout in seconds
+  timeout: 30
+
+## Controller configuration
+controller:
+  # Log level: debug, info, warn, error
+  logLevel: info
+
+  # Log format: json, console
+  logFormat: json
+
+  # Metrics bind address
+  metricsAddr: ":8080"
+
+  # Health probe bind address
+  healthAddr: ":8081"
+
+  # Leader election settings
+  leaderElection:
+    enabled: true
+    id: vpsie-autoscaler-leader
+    namespace: ""  # Empty means same namespace as release
+
+  # Reconciliation interval
+  syncPeriod: 30s
+
+  # Maximum concurrent reconciles per controller
+  maxConcurrentReconciles: 5
+
+  # Node provisioning timeout
+  nodeProvisionTimeout: 10m
+
+  # Node termination timeout
+  nodeTerminationTimeout: 5m
+
+## Cost Optimization Settings
+costOptimization:
+  # Enable cost optimization engine
+  enabled: true
+
+  # Optimization strategy: auto, manual, aggressive, conservative
+  strategy: auto
+
+  # Minimum time between optimizations
+  optimizationInterval: 24h
+
+  # Thresholds for optimization decisions
+  thresholds:
+    # Downsize if CPU utilization < this % for evaluation period
+    cpuUtilization: 30
+    # Downsize if memory utilization < this % for evaluation period
+    memoryUtilization: 40
+    # How long to evaluate before optimizing
+    evaluationPeriod: 7d
+    # Minimum samples required for decision
+    minSamplesRequired: 100
+
+  # Optimization constraints
+  constraints:
+    # Only apply if saves at least this much per month (USD)
+    minMonthlySavings: 10.00
+    # Maximum performance reduction % allowed
+    maxPerformanceImpact: 5
+    # Require manual approval before applying
+    requireApproval: false
+    # Maximum nodes to optimize at once
+    maxNodesPerOptimization: 5
+
+## Node Rebalancing Settings
+rebalancing:
+  # Enable node rebalancing for cost efficiency
+  enabled: true
+
+  # Rebalancing interval
+  interval: 24h
+
+  # Maximum nodes to rebalance at once
+  maxConcurrent: 2
+
+  # Require manual approval
+  requireApproval: false
+
+## Spot Instances Support
+spotInstances:
+  # Enable spot instance support
+  enabled: true
+
+  # Default spot instance interruption grace period
+  gracePeriod: 120s
+
+## Webhook configuration
+webhook:
+  # Enable validating webhook
+  enabled: true
+
+  # Webhook service configuration
+  service:
+    type: ClusterIP
+    port: 443
+
+  # Certificate configuration
+  certificate:
+    # Use cert-manager for certificate management
+    useCertManager: true
+    # Certificate duration
+    duration: 8760h  # 1 year
+    # Certificate renewal before expiration
+    renewBefore: 720h  # 30 days
+
+## Service Account
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+## Pod annotations
+podAnnotations: {}
+
+## Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+## Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  capabilities:
+    drop:
+    - ALL
+
+## Service configuration for metrics
+service:
+  type: ClusterIP
+  port: 8080
+  annotations: {}
+
+## Resource limits and requests
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+## Autoscaling (for the controller itself, not the managed nodes)
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+## Node selector
+nodeSelector: {}
+
+## Tolerations
+tolerations: []
+
+## Affinity rules
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - vpsie-autoscaler
+        topologyKey: kubernetes.io/hostname
+
+## Priority class
+priorityClassName: ""
+
+## Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+## Prometheus monitoring
+prometheus:
+  # Enable ServiceMonitor creation (requires Prometheus Operator)
+  enabled: true
+
+  # ServiceMonitor configuration
+  serviceMonitor:
+    # Additional labels for ServiceMonitor
+    additionalLabels: {}
+    # Scrape interval
+    interval: 30s
+    # Scrape timeout
+    scrapeTimeout: 10s
+    # Metric relabelings
+    metricRelabelings: []
+    # Relabelings
+    relabelings: []
+
+  # PodMonitor configuration
+  podMonitor:
+    enabled: false
+    additionalLabels: {}
+    interval: 30s
+    scrapeTimeout: 10s
+
+## CRD installation
+crds:
+  # Install CRDs as part of Helm release
+  install: true
+  # Keep CRDs on uninstall (recommended to prevent data loss)
+  keep: true
+
+## RBAC configuration
+rbac:
+  # Create RBAC resources
+  create: true
+
+## Example NodeGroup configurations to install
+examples:
+  # Install example NodeGroup resources
+  install: false
+
+  nodeGroups:
+    - name: general-purpose
+      enabled: false
+      spec:
+        minNodes: 2
+        maxNodes: 10
+        datacenterID: "us-east-1"
+        offeringIDs:
+          - "standard-2-4"
+          - "standard-4-8"
+        osImageID: "ubuntu-22.04"
+        kubernetesVersion: "v1.28.0"
+
+    - name: high-memory
+      enabled: false
+      spec:
+        minNodes: 1
+        maxNodes: 5
+        datacenterID: "us-east-1"
+        offeringIDs:
+          - "highmem-4-16"
+          - "highmem-8-32"
+        osImageID: "ubuntu-22.04"
+        kubernetesVersion: "v1.28.0"
+
+## Additional volumes
+volumes: []
+
+## Additional volume mounts
+volumeMounts: []
+
+## Additional environment variables
+env: []
+
+## Additional container arguments
+extraArgs: []
