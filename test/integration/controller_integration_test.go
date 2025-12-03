@@ -32,13 +32,26 @@ import (
 )
 
 const (
-	// Kubeconfig path for the test cluster
-	testKubeconfig = "/Users/zozo/.kube/config-new-test"
 	// Test namespace for integration tests
 	testNamespace = "vpsie-autoscaler-test"
 	// Timeout for operations
 	testTimeout = 30 * time.Second
 )
+
+// getKubeconfigPath returns the kubeconfig path from environment or default
+func getKubeconfigPath() string {
+	// First check KUBECONFIG environment variable (used in CI)
+	if kubeconfig := os.Getenv("KUBECONFIG"); kubeconfig != "" {
+		return kubeconfig
+	}
+
+	// Fall back to default location
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".kube", "config")
+}
 
 var (
 	cfg       *rest.Config
@@ -51,12 +64,19 @@ var (
 func TestMain(m *testing.M) {
 	var err error
 
-	// Load kubeconfig
-	cfg, err = clientcmd.BuildConfigFromFlags("", testKubeconfig)
-	if err != nil {
-		fmt.Printf("Failed to load kubeconfig: %v\n", err)
+	// Load kubeconfig from environment or default location
+	kubeconfigPath := getKubeconfigPath()
+	if kubeconfigPath == "" {
+		fmt.Println("Failed to determine kubeconfig path")
 		os.Exit(1)
 	}
+
+	cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		fmt.Printf("Failed to load kubeconfig from %s: %v\n", kubeconfigPath, err)
+		os.Exit(1)
+	}
+	fmt.Printf("Using kubeconfig: %s\n", kubeconfigPath)
 
 	// Create clientset
 	clientset, err = kubernetes.NewForConfig(cfg)

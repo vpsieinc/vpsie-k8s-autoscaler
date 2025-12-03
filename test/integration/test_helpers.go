@@ -149,7 +149,7 @@ func startControllerInBackground(metricsPort, healthPort int, secretName, secret
 		"--vpsie-secret", secretName,
 		"--vpsie-namespace", secretNS,
 		"--log-level", "debug",
-		"--kubeconfig", testKubeconfig,
+		"--kubeconfig", getKubeconfigPath(),
 	)
 
 	// Set output to log files
@@ -511,7 +511,7 @@ func startControllerWithLeaderElection(metricsPort, healthPort int, secretName, 
 		"--vpsie-secret", secretName,
 		"--vpsie-namespace", secretNS,
 		"--log-level", "info",
-		"--kubeconfig", testKubeconfig,
+		"--kubeconfig", getKubeconfigPath(),
 	)
 
 	cmd.Stdout = stdoutFile
