@@ -14,7 +14,6 @@ import (
 type Analyzer struct {
 	calculator *Calculator
 	storage    CostStorage
-	mu         sync.RWMutex
 }
 
 // CostStorage interface for persisting cost data

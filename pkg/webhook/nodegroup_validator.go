@@ -80,10 +80,7 @@ func (v *NodeGroupValidator) Validate(ng *autoscalerv1alpha1.NodeGroup, operatio
 		}
 	}
 
-	// UPDATE-specific validations
-	if operation == admissionv1.Update {
-		// Additional validations for updates (if needed)
-	}
+	// UPDATE-specific validations can be added here if needed in the future
 
 	return nil
 }

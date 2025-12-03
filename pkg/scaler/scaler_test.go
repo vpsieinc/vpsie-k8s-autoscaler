@@ -484,17 +484,3 @@ func createTestPods(count int, namespace string) []*corev1.Pod {
 	}
 	return pods
 }
-
-func createTestMetrics(nodeName string, cpuMillis, memoryBytes int64) *metricsv1beta1.NodeMetrics {
-	return &metricsv1beta1.NodeMetrics{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: nodeName,
-		},
-		Timestamp: metav1.Time{Time: time.Now()},
-		Window:    metav1.Duration{Duration: 1 * time.Minute},
-		Usage: corev1.ResourceList{
-			corev1.ResourceCPU:    *resource.NewMilliQuantity(cpuMillis, resource.DecimalSI),
-			corev1.ResourceMemory: *resource.NewQuantity(memoryBytes, resource.BinarySI),
-		},
-	}
-}

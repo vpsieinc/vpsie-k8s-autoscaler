@@ -232,9 +232,7 @@ func (s *ScaleDownManager) GetUnderutilizedNodes() []*NodeUtilization {
 
 // copySlice is a helper to copy UtilizationSample slices
 func copySlice(dst, src []UtilizationSample) {
-	for i := range src {
-		dst[i] = src[i]
-	}
+	copy(dst, src)
 }
 
 // CalculateResourceRequests calculates total resource requests for pods

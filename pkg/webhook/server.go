@@ -292,11 +292,11 @@ func (s *Server) validateVPSieNode(req *admissionv1.AdmissionRequest) *admission
 // handleHealthz handles liveness probe requests
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ok"))
+	_, _ = w.Write([]byte("ok"))
 }
 
 // handleReadyz handles readiness probe requests
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ready"))
+	_, _ = w.Write([]byte("ready"))
 }

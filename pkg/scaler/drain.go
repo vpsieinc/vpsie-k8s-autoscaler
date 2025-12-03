@@ -338,7 +338,7 @@ func (s *ScaleDownManager) waitForPodTermination(ctx context.Context, nodeName s
 		zap.Int("podCount", len(evictedPods)))
 
 	// Poll for pod termination
-	err := wait.PollImmediate(5*time.Second, s.config.DrainTimeout, func() (bool, error) {
+	err := wait.PollUntilContextTimeout(ctx, 5*time.Second, s.config.DrainTimeout, true, func(ctx context.Context) (bool, error) {
 		// Get current pods on node
 		currentPods, err := s.getNodePods(ctx, nodeName)
 		if err != nil {

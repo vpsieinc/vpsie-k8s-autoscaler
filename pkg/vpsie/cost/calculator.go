@@ -15,7 +15,6 @@ import (
 type Calculator struct {
 	client client.VPSieClient
 	cache  *costCache
-	mu     sync.RWMutex
 }
 
 // costCache caches offering costs to reduce API calls

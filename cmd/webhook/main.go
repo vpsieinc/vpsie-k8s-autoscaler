@@ -42,7 +42,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to create logger: %v\n", err)
 		os.Exit(1)
 	}
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	logger.Info("starting VPSie Autoscaler validation webhook",
 		zap.Int("port", port),
