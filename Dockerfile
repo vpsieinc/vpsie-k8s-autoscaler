@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.22-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git make
@@ -13,6 +13,7 @@ RUN go mod download
 # Copy source code
 COPY cmd/ cmd/
 COPY pkg/ pkg/
+COPY internal/ internal/
 
 # Build arguments for version information
 ARG VERSION=dev
@@ -24,7 +25,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -a -installsuffix cgo \
     -ldflags="-w -s -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.BuildDate=${BUILD_DATE}" \
     -o vpsie-autoscaler \
-    ./cmd/controller/main.go
+    ./cmd/controller
 
 # Runtime stage - use distroless for minimal attack surface
 FROM gcr.io/distroless/static:nonroot

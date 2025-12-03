@@ -212,6 +212,7 @@ type CostOptimizationConfig struct {
 
 	// MinMonthlySavings is the minimum monthly savings required to apply optimization
 	// +kubebuilder:default=10.0
+	// +kubebuilder:validation:Type=number
 	// +optional
 	MinMonthlySavings float64 `json:"minMonthlySavings,omitempty"`
 

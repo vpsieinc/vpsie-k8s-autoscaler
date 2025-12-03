@@ -1,6 +1,6 @@
 module github.com/vpsie/vpsie-k8s-autoscaler
 
-go 1.21
+go 1.24
 
 require (
 	github.com/go-logr/logr v1.4.2

@@ -132,7 +132,7 @@ vet:
 generate:
 	@echo "Generating code..."
 	@controller-gen object paths="./pkg/apis/autoscaler/v1alpha1/..."
-	@controller-gen crd paths="./pkg/apis/autoscaler/v1alpha1/..." output:crd:dir=./deploy/crds
+	@controller-gen crd:allowDangerousTypes=true paths="./pkg/apis/autoscaler/v1alpha1/..." output:crd:dir=./deploy/crds
 
 ## manifests: Generate Kubernetes manifests
 manifests:
