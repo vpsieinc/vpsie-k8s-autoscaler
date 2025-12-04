@@ -71,9 +71,54 @@ spec:
                 description: AllowMixedInstances allows the node group to contain
                   nodes with different instance types
                 type: boolean
+              costOptimization:
+                description: CostOptimization defines cost optimization settings for
+                  this NodeGroup
+                properties:
+                  enabled:
+                    default: true
+                    description: Enabled controls whether cost optimization is active
+                      for this NodeGroup
+                    type: boolean
+                  maxPerformanceImpact:
+                    default: 5
+                    description: MaxPerformanceImpact is the maximum acceptable performance
+                      reduction percentage
+                    format: int32
+                    maximum: 100
+                    minimum: 0
+                    type: integer
+                  minMonthlySavings:
+                    default: 10
+                    description: MinMonthlySavings is the minimum monthly savings
+                      required to apply optimization
+                    type: number
+                  optimizationInterval:
+                    default: 24h
+                    description: OptimizationInterval is the minimum time between
+                      optimization actions
+                    type: string
+                  requireApproval:
+                    default: false
+                    description: RequireApproval controls whether optimizations require
+                      manual approval
+                    type: boolean
+                  strategy:
+                    default: auto
+                    description: |-
+                      Strategy defines the optimization strategy
+                      Values: "auto", "manual", "aggressive", "conservative"
+                    type: string
+                type: object
               datacenterID:
                 description: DatacenterID is the VPSie datacenter ID where nodes will
                   be created
+                type: string
+              kubernetesVersion:
+                description: |-
+                  KubernetesVersion is the Kubernetes version to install on new nodes (e.g., "v1.28.0", "v1.29.1")
+                  Must be within ±1 minor version of the control plane
+                pattern: ^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$
                 type: string
               labels:
                 additionalProperties:
@@ -91,6 +136,49 @@ spec:
                 format: int32
                 minimum: 0
                 type: integer
+              multiRegion:
+                description: MultiRegion enables multi-region/datacenter distribution
+                  for high availability
+                properties:
+                  datacenterIDs:
+                    description: |-
+                      DatacenterIDs is a list of datacenter IDs to distribute nodes across
+                      If empty, uses the primary DatacenterID from NodeGroupSpec
+                    items:
+                      type: string
+                    type: array
+                  distributionStrategy:
+                    default: balanced
+                    description: |-
+                      DistributionStrategy defines how to distribute nodes across regions
+                      Values: "balanced", "weighted", "primary-backup"
+                    type: string
+                  enabled:
+                    default: false
+                    description: Enabled controls whether multi-region distribution
+                      is active
+                    type: boolean
+                  minNodesPerRegion:
+                    default: 1
+                    description: MinNodesPerRegion is the minimum number of nodes
+                      per region
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  primaryDatacenter:
+                    description: PrimaryDatacenter is the primary datacenter for "primary-backup"
+                      strategy
+                    type: string
+                  weightedDistribution:
+                    additionalProperties:
+                      format: int32
+                      type: integer
+                    description: |-
+                      WeightedDistribution defines custom weights for each datacenter
+                      Only used when DistributionStrategy is "weighted"
+                      Key is datacenter ID, value is weight (higher = more nodes)
+                    type: object
+                type: object
               notes:
                 description: Notes are additional notes to attach to VPSie instances
                 type: string
@@ -188,6 +276,43 @@ spec:
                     minimum: 0
                     type: integer
                 type: object
+              spotConfig:
+                description: SpotConfig defines spot instance configuration for cost
+                  savings
+                properties:
+                  allowedInterruptionRate:
+                    default: 20
+                    description: |-
+                      AllowedInterruptionRate is the maximum interruption rate per hour
+                      Helps avoid offerings with high interruption rates
+                    format: int32
+                    maximum: 100
+                    minimum: 0
+                    type: integer
+                  enabled:
+                    default: false
+                    description: Enabled controls whether spot instances are used
+                    type: boolean
+                  fallbackToOnDemand:
+                    default: true
+                    description: FallbackToOnDemand controls whether to fall back
+                      to on-demand if spot unavailable
+                    type: boolean
+                  interruptionGracePeriod:
+                    default: 120s
+                    description: InterruptionGracePeriod is the time before spot termination
+                      to drain workloads
+                    type: string
+                  maxSpotPercentage:
+                    default: 80
+                    description: |-
+                      MaxSpotPercentage is the maximum percentage of nodes that can be spot instances
+                      This ensures some on-demand capacity for stability
+                    format: int32
+                    maximum: 100
+                    minimum: 0
+                    type: integer
+                type: object
               sshKeyIDs:
                 description: SSHKeyIDs is a list of VPSie SSH key IDs to install on
                   new nodes
@@ -238,6 +363,7 @@ spec:
                 type: string
             required:
             - datacenterID
+            - kubernetesVersion
             - maxNodes
             - minNodes
             - offeringIDs

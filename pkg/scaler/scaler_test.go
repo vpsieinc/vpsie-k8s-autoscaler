@@ -126,7 +126,8 @@ func TestHasBeenUnderutilizedForWindow(t *testing.T) {
 		{
 			name: "all samples underutilized",
 			utilization: &NodeUtilization{
-				NodeName: "node-1",
+				NodeName:    "node-1",
+				LastUpdated: now,
 				Samples: []UtilizationSample{
 					{Timestamp: now.Add(-9 * time.Minute), CPUUtilization: 30, MemoryUtilization: 30},
 					{Timestamp: now.Add(-8 * time.Minute), CPUUtilization: 35, MemoryUtilization: 35},
@@ -140,7 +141,8 @@ func TestHasBeenUnderutilizedForWindow(t *testing.T) {
 		{
 			name: "some samples over threshold",
 			utilization: &NodeUtilization{
-				NodeName: "node-2",
+				NodeName:    "node-2",
+				LastUpdated: now,
 				Samples: []UtilizationSample{
 					{Timestamp: now.Add(-9 * time.Minute), CPUUtilization: 30, MemoryUtilization: 30},
 					{Timestamp: now.Add(-8 * time.Minute), CPUUtilization: 70, MemoryUtilization: 35},

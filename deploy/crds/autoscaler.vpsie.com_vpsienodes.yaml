@@ -82,6 +82,11 @@ spec:
               ipv6Address:
                 description: IPv6Address is the IPv6 address of the VPS
                 type: string
+              kubernetesVersion:
+                description: KubernetesVersion is the Kubernetes version to install
+                  on this node (e.g., "v1.28.0")
+                pattern: ^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$
+                type: string
               nodeGroupName:
                 description: NodeGroupName is the name of the NodeGroup this node
                   belongs to
@@ -91,13 +96,27 @@ spec:
                   NodeName is the desired Kubernetes node name
                   If not specified, it will be automatically generated
                 type: string
+              osImageID:
+                description: OSImageID is the VPSie OS image ID to use for this node
+                type: string
+              sshKeyIDs:
+                description: SSHKeyIDs is a list of VPSie SSH key IDs to install on
+                  this node
+                items:
+                  type: string
+                type: array
+              userData:
+                description: UserData is cloud-init user data to configure this node
+                type: string
               vpsieInstanceID:
                 description: VPSieInstanceID is the VPSie VPS instance ID
                 type: integer
             required:
             - datacenterID
             - instanceType
+            - kubernetesVersion
             - nodeGroupName
+            - osImageID
             - vpsieInstanceID
             type: object
           status:
