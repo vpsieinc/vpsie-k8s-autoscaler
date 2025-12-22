@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -29,11 +30,15 @@ func (r *NodeGroupReconciler) reconcile(ctx context.Context, ng *v1alpha1.NodeGr
 	// Validate the NodeGroup spec
 	if err := ValidateNodeGroupSpec(ng); err != nil {
 		logger.Error("NodeGroup spec validation failed", zap.Error(err))
+		r.Recorder.Event(ng, corev1.EventTypeWarning, "ValidationFailed",
+			fmt.Sprintf("Spec validation failed: %v", err))
+
+		// Create patch BEFORE modifications for proper optimistic locking
+		patch := client.MergeFrom(ng.DeepCopy())
 		SetErrorCondition(ng, true, ReasonValidationFailed, err.Error())
 		SetReadyCondition(ng, false, ReasonValidationFailed, "Spec validation failed")
 
 		// Update status with optimistic locking
-		patch := client.MergeFrom(ng.DeepCopy())
 		if statusErr := r.Status().Patch(ctx, ng, patch); statusErr != nil {
 			if apierrors.IsConflict(statusErr) {
 				logger.Info("Status update conflict, will retry")
@@ -53,11 +58,13 @@ func (r *NodeGroupReconciler) reconcile(ctx context.Context, ng *v1alpha1.NodeGr
 	vpsieNodes, err := r.listVPSieNodesForNodeGroup(ctx, ng)
 	if err != nil {
 		logger.Error("Failed to list VPSieNodes", zap.Error(err))
+
+		// Create patch BEFORE modifications for proper optimistic locking
+		patch := client.MergeFrom(ng.DeepCopy())
 		SetErrorCondition(ng, true, ReasonKubernetesAPIError, fmt.Sprintf("Failed to list VPSieNodes: %v", err))
 
 		// Update status with optimistic locking
-		patch := client.MergeFrom(ng.DeepCopy())
-		if statusErr := r.Status().Patch(ctx, ng, patch); statusErr != nil {
+		if statusErr := r.Status().Patch(ctx, ng, patch); statusErr != nil{
 			if apierrors.IsConflict(statusErr) {
 				logger.Info("Status update conflict, will retry")
 				return ctrl.Result{Requeue: true}, nil
@@ -73,7 +80,7 @@ func (r *NodeGroupReconciler) reconcile(ctx context.Context, ng *v1alpha1.NodeGr
 		zap.Int("count", len(vpsieNodes)),
 	)
 
-	// Update status with current state
+	// Update status with current state BEFORE creating patch
 	if err := UpdateNodeGroupStatus(ctx, r.Client, ng, vpsieNodes); err != nil {
 		logger.Error("Failed to update NodeGroup status", zap.Error(err))
 		return ctrl.Result{}, err
@@ -101,12 +108,18 @@ func (r *NodeGroupReconciler) reconcile(ctx context.Context, ng *v1alpha1.NodeGr
 			zap.Int32("current", ng.Status.CurrentNodes),
 			zap.Int32("desired", ng.Status.DesiredNodes),
 		)
+		nodesToAdd := ng.Status.DesiredNodes - ng.Status.CurrentNodes
+		r.Recorder.Eventf(ng, corev1.EventTypeNormal, "ScalingUp",
+			"Scaling up from %d to %d nodes (+%d nodes)", ng.Status.CurrentNodes, ng.Status.DesiredNodes, nodesToAdd)
 		result, reconcileErr = r.reconcileScaleUp(ctx, ng, vpsieNodes, logger)
 	} else if needsScaleDown {
 		logger.Info("Scaling down",
 			zap.Int32("current", ng.Status.CurrentNodes),
 			zap.Int32("desired", ng.Status.DesiredNodes),
 		)
+		nodesToRemove := ng.Status.CurrentNodes - ng.Status.DesiredNodes
+		r.Recorder.Eventf(ng, corev1.EventTypeNormal, "ScalingDown",
+			"Scaling down from %d to %d nodes (-%d nodes)", ng.Status.CurrentNodes, ng.Status.DesiredNodes, nodesToRemove)
 		result, reconcileErr = r.reconcileScaleDown(ctx, ng, vpsieNodes, logger)
 	} else {
 		logger.Info("No scaling needed",
@@ -131,8 +144,11 @@ func (r *NodeGroupReconciler) reconcile(ctx context.Context, ng *v1alpha1.NodeGr
 		SetErrorCondition(ng, false, ReasonReconciling, "")
 	}
 
-	// Update status with optimistic locking
+	// Create patch AFTER all status modifications to capture complete delta
+	// This ensures the patch contains all changes made above
 	patch := client.MergeFrom(ng.DeepCopy())
+
+	// Apply status changes with optimistic locking
 	if err := r.Status().Patch(ctx, ng, patch); err != nil {
 		if apierrors.IsConflict(err) {
 			logger.Info("Status update conflict, will retry")

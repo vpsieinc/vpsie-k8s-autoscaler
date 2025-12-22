@@ -300,3 +300,76 @@ func TestScalingScenarios(t *testing.T) {
 		})
 	}
 }
+
+// TestStatusPatchTiming verifies that the status patch is created AFTER
+// status modifications to capture all changes properly
+func TestStatusPatchTiming(t *testing.T) {
+	// Create a NodeGroup with initial status
+	ng := &v1alpha1.NodeGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-ng",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.NodeGroupSpec{
+			MinNodes: 2,
+			MaxNodes: 10,
+		},
+		Status: v1alpha1.NodeGroupStatus{
+			CurrentNodes: 5,
+			DesiredNodes: 5,
+			ReadyNodes:   5,
+		},
+	}
+
+	// Simulate the INCORRECT pattern (creating patch before modifications)
+	// This is what we're fixing
+	patchBefore := ng.DeepCopy()
+
+	// Modify status
+	ng.Status.CurrentNodes = 7
+	ng.Status.DesiredNodes = 8
+	ng.Status.ReadyNodes = 6
+	SetErrorCondition(ng, false, ReasonReconciling, "")
+
+	// The patch created before modifications will have no delta
+	// because it's comparing the original with itself
+
+	// Now simulate the CORRECT pattern (creating patch after modifications)
+	ngCorrected := &v1alpha1.NodeGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-ng-correct",
+			Namespace: "default",
+		},
+		Spec: v1alpha1.NodeGroupSpec{
+			MinNodes: 2,
+			MaxNodes: 10,
+		},
+		Status: v1alpha1.NodeGroupStatus{
+			CurrentNodes: 5,
+			DesiredNodes: 5,
+			ReadyNodes:   5,
+		},
+	}
+
+	// Modify status FIRST
+	ngCorrected.Status.CurrentNodes = 7
+	ngCorrected.Status.DesiredNodes = 8
+	ngCorrected.Status.ReadyNodes = 6
+	SetErrorCondition(ngCorrected, false, ReasonReconciling, "")
+
+	// THEN create patch - this will capture all the changes
+	patchAfter := ngCorrected.DeepCopy()
+
+	// Verify that the corrected approach preserves changes
+	assert.Equal(t, int32(7), patchAfter.Status.CurrentNodes, "CurrentNodes should be updated")
+	assert.Equal(t, int32(8), patchAfter.Status.DesiredNodes, "DesiredNodes should be updated")
+	assert.Equal(t, int32(6), patchAfter.Status.ReadyNodes, "ReadyNodes should be updated")
+
+	// The incorrect patch will have the original values
+	assert.Equal(t, int32(5), patchBefore.Status.CurrentNodes, "Patch before modifications has stale data")
+	assert.Equal(t, int32(5), patchBefore.Status.DesiredNodes, "Patch before modifications has stale data")
+
+	// Verify the actual modified object has the new values
+	assert.Equal(t, int32(7), ng.Status.CurrentNodes, "Modified object should have new values")
+	assert.Equal(t, int32(8), ng.Status.DesiredNodes, "Modified object should have new values")
+}

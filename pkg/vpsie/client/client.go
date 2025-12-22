@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,10 @@ const (
 
 	// DefaultTokenRefreshBuffer is the time before expiration to refresh the token
 	DefaultTokenRefreshBuffer = 5 * time.Minute
+
+	// MaxResponseBodySize is the maximum size of HTTP response bodies (10MB)
+	// This prevents DoS attacks from malicious or compromised APIs
+	MaxResponseBodySize = 10 * 1024 * 1024
 
 	// SecretClientIDKey is the key name for the OAuth client ID in the secret
 	SecretClientIDKey = "clientId"
@@ -180,6 +185,11 @@ func NewClient(ctx context.Context, clientset kubernetes.Interface, opts *Client
 		return nil, NewConfigError("api_url", "API URL cannot be empty")
 	}
 
+	// Enforce HTTPS to prevent credentials from being sent over unencrypted connections
+	if !strings.HasPrefix(baseURL, "https://") {
+		return nil, NewConfigError("api_url", fmt.Sprintf("API URL must use HTTPS, got: %s", baseURL))
+	}
+
 	// Create HTTP client if not provided
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
@@ -251,6 +261,11 @@ func NewClientWithCredentialsAndContext(ctx context.Context, baseURL, clientID, 
 		baseURL = DefaultAPIEndpoint
 	}
 
+	// Enforce HTTPS to prevent credentials from being sent over unencrypted connections
+	if !strings.HasPrefix(baseURL, "https://") {
+		return nil, NewConfigError("api_url", fmt.Sprintf("API URL must use HTTPS, got: %s", baseURL))
+	}
+
 	// Set defaults
 	if opts.Timeout == 0 {
 		opts.Timeout = DefaultTimeout
@@ -313,14 +328,19 @@ func (c *Client) refreshToken(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Prepare form data (application/x-www-form-urlencoded)
-	formData := fmt.Sprintf("clientId=%s&clientSecret=%s",
-		c.clientID,
-		c.clientSecret,
-	)
+	// Prepare form data (application/x-www-form-urlencoded) with proper URL encoding
+	formData := url.Values{
+		"clientId":     {c.clientID},
+		"clientSecret": {c.clientSecret},
+	}.Encode()
 
 	// Build token URL
 	tokenURL := c.baseURL + TokenEndpoint
+
+	// Log token refresh without exposing credentials
+	c.logger.Info("refreshing OAuth token",
+		zap.String("endpoint", tokenURL),
+	)
 
 	// Create HTTP request (without using doRequest to avoid circular dependency)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(formData))
@@ -339,8 +359,8 @@ func (c *Client) refreshToken(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 
-	// Read response body
-	bodyBytes, err := io.ReadAll(resp.Body)
+	// Read response body with size limit to prevent DoS attacks
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseBodySize))
 	if err != nil {
 		return fmt.Errorf("failed to read token response: %w", err)
 	}
@@ -351,14 +371,18 @@ func (c *Client) refreshToken(ctx context.Context) error {
 		return fmt.Errorf("failed to decode token response: %w", err)
 	}
 
-	// Check for API errors
+	// Check for API errors - do not log message as it may contain credentials
 	if tokenResp.Error {
-		return fmt.Errorf("token request failed: %s (code: %d)", tokenResp.Message, tokenResp.Code)
+		c.logger.Error("token request failed",
+			zap.Int("code", tokenResp.Code),
+			zap.Bool("error", tokenResp.Error),
+		)
+		return fmt.Errorf("token request failed with code: %d", tokenResp.Code)
 	}
 
 	// Check for non-200 status
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("token request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+		return fmt.Errorf("token request failed with status %d", resp.StatusCode)
 	}
 
 	// Validate response
@@ -382,6 +406,8 @@ func (c *Client) refreshToken(ctx context.Context) error {
 		// Default to 1 hour if not specified
 		c.tokenExpiresAt = time.Now().Add(1 * time.Hour)
 	}
+
+	c.logger.Info("OAuth token refreshed successfully")
 
 	return nil
 }
@@ -520,9 +546,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 			}
 		}
 
-		// Try to parse error response
+		// Try to parse error response with size limit
 		var errResp ErrorResponse
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, MaxResponseBodySize))
 		if err := json.Unmarshal(bodyBytes, &errResp); err == nil && errResp.Message != "" {
 			requestID := resp.Header.Get("X-Request-ID")
 			apiErr := NewAPIErrorWithRequestID(resp.StatusCode, errResp.Error, errResp.Message, requestID)
@@ -608,9 +634,9 @@ func (c *Client) doRequestWithToken(ctx context.Context, method, path string, bo
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
 
-		// Try to parse error response
+		// Try to parse error response with size limit
 		var errResp ErrorResponse
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, MaxResponseBodySize))
 		if err := json.Unmarshal(bodyBytes, &errResp); err == nil && errResp.Message != "" {
 			requestID := resp.Header.Get("X-Request-ID")
 			return nil, NewAPIErrorWithRequestID(resp.StatusCode, errResp.Error, errResp.Message, requestID)

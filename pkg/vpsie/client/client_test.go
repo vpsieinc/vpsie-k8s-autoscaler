@@ -4,14 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -48,7 +52,7 @@ func createTestSecret(name, namespace, clientID, clientSecret, url string) *core
 
 // createTestServer creates a test HTTP server for mocking VPSie API with authentication
 func createTestServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Mock VPSie authentication endpoint
 		if r.URL.Path == TokenEndpoint {
 			w.Header().Set("Content-Type", "application/json")
@@ -94,7 +98,9 @@ func TestNewClient_Success(t *testing.T) {
 
 	// Create VPSie client
 	ctx := context.Background()
-	client, err := NewClient(ctx, fakeClient, nil)
+	client, err := NewClient(ctx, fakeClient, &ClientOptions{
+		HTTPClient: server.Client(),
+	})
 
 	// Assertions
 	require.NoError(t, err)
@@ -130,6 +136,7 @@ func TestNewClient_WithCustomOptions(t *testing.T) {
 		RateLimit:       200,
 		Timeout:         60 * time.Second,
 		UserAgent:       "custom-agent/2.0",
+		HTTPClient:      server.Client(),
 	})
 
 	require.NoError(t, err)
@@ -332,7 +339,9 @@ func TestNewClient_URLTrimming(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset(secret)
 
 			ctx := context.Background()
-			client, err := NewClient(ctx, fakeClient, nil)
+			client, err := NewClient(ctx, fakeClient, &ClientOptions{
+				HTTPClient: server.Client(),
+			})
 
 			require.NoError(t, err)
 			// Verify URL doesn't have trailing slashes
@@ -360,8 +369,9 @@ func TestNewClientWithCredentials_Success(t *testing.T) {
 		"test-client-id",
 		"test-client-secret",
 		&ClientOptions{
-			RateLimit: 50,
-			UserAgent: "test-agent",
+			RateLimit:  50,
+			UserAgent:  "test-agent",
+			HTTPClient: server.Client(),
 		},
 	)
 
@@ -442,7 +452,8 @@ func TestClient_RequestHeaders(t *testing.T) {
 		"test-client-id",
 		"test-client-secret",
 		&ClientOptions{
-			UserAgent: "test-user-agent/1.0",
+			UserAgent:  "test-user-agent/1.0",
+			HTTPClient: server.Client(),
 		},
 	)
 	require.NoError(t, err)
@@ -512,7 +523,7 @@ func TestClient_URLConstruction(t *testing.T) {
 			})
 			defer server.Close()
 
-			client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+			client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 			require.NoError(t, err)
 
 			_ = tt.operation(client)
@@ -537,7 +548,8 @@ func TestClient_RateLimiting(t *testing.T) {
 		"test-client-id",
 		"test-client-secret",
 		&ClientOptions{
-			RateLimit: 100, // 100 per minute
+			RateLimit:  100, // 100 per minute
+			HTTPClient: server.Client(),
 		},
 	)
 	require.NoError(t, err)
@@ -568,7 +580,7 @@ func TestClient_ContextCancellation(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	// Create context that will be cancelled
@@ -589,7 +601,7 @@ func TestClient_ContextTimeout(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	// Create context with short timeout
@@ -645,7 +657,7 @@ func TestListVMs_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -670,7 +682,7 @@ func TestListVMs_EmptyList(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	vms, err := client.ListVMs(context.Background())
@@ -692,7 +704,7 @@ func TestListVMs_APIError(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	vms, err := client.ListVMs(context.Background())
@@ -754,7 +766,7 @@ func TestCreateVM_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	vm, err := client.CreateVM(context.Background(), req)
@@ -788,7 +800,7 @@ func TestCreateVM_DefaultHostname(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	_, err = client.CreateVM(context.Background(), req)
@@ -852,7 +864,7 @@ func TestCreateVM_ValidationErrors(t *testing.T) {
 			})
 			defer server.Close()
 
-			client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+			client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 			require.NoError(t, err)
 
 			vm, err := client.CreateVM(context.Background(), tt.req)
@@ -895,7 +907,7 @@ func TestGetVM_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	vm, err := client.GetVM(context.Background(), 123)
@@ -919,7 +931,7 @@ func TestGetVM_NotFound(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	vm, err := client.GetVM(context.Background(), 999)
@@ -933,7 +945,7 @@ func TestGetVM_EmptyID(t *testing.T) {
 	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	vm, err := client.GetVM(context.Background(), 0)
@@ -959,7 +971,7 @@ func TestDeleteVM_Success(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	err = client.DeleteVM(context.Background(), 123)
@@ -979,7 +991,7 @@ func TestDeleteVM_AlreadyDeleted(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	// 404 should be treated as success (idempotent)
@@ -1000,7 +1012,7 @@ func TestDeleteVM_Conflict(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	err = client.DeleteVM(context.Background(), 456)
@@ -1015,7 +1027,7 @@ func TestDeleteVM_EmptyID(t *testing.T) {
 	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	err = client.DeleteVM(context.Background(), 0)
@@ -1043,7 +1055,7 @@ func TestAPIError_Parsing(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	_, err = client.ListVMs(context.Background())
@@ -1070,7 +1082,7 @@ func TestAPIError_RateLimit(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	_, err = client.ListVMs(context.Background())
@@ -1090,7 +1102,7 @@ func TestAPIError_ServerError(t *testing.T) {
 	})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	_, err = client.ListVMs(context.Background())
@@ -1115,7 +1127,7 @@ func TestGetBaseURL(t *testing.T) {
 	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	assert.Equal(t, server.URL, client.GetBaseURL())
@@ -1125,9 +1137,167 @@ func TestSetUserAgent(t *testing.T) {
 	server := createTestServer(t, func(w http.ResponseWriter, r *http.Request) {})
 	defer server.Close()
 
-	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", nil)
+	client, err := NewClientWithCredentials(server.URL, "test-client-id", "test-client-secret", &ClientOptions{HTTPClient: server.Client()})
 	require.NoError(t, err)
 
 	client.SetUserAgent("new-agent/2.0")
 	assert.Equal(t, "new-agent/2.0", client.userAgent)
+}
+
+// ============================================================================
+// Security Tests - Credential Exposure Fix
+// ============================================================================
+
+func TestOAuthFormEncoding(t *testing.T) {
+	tests := []struct {
+		name         string
+		clientID     string
+		clientSecret string
+		description  string
+	}{
+		{
+			name:         "special characters - percent",
+			clientID:     "client%123",
+			clientSecret: "secret%456",
+			description:  "percent sign should be encoded",
+		},
+		{
+			name:         "special characters - ampersand",
+			clientID:     "client&id",
+			clientSecret: "secret&value",
+			description:  "ampersand should be encoded",
+		},
+		{
+			name:         "special characters - equals",
+			clientID:     "client=id",
+			clientSecret: "secret=value",
+			description:  "equals sign should be encoded",
+		},
+		{
+			name:         "special characters - space",
+			clientID:     "client id",
+			clientSecret: "secret value",
+			description:  "space should be encoded",
+		},
+		{
+			name:         "special characters - plus",
+			clientID:     "client+id",
+			clientSecret: "secret+value",
+			description:  "plus sign should be encoded",
+		},
+		{
+			name:         "special characters - mixed",
+			clientID:     "client@id#123",
+			clientSecret: "secret&pass=word%test",
+			description:  "mixed special characters should be encoded",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var capturedFormData string
+			// Use TLS server for HTTPS
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Capture auth request form data
+				if r.URL.Path == TokenEndpoint {
+					bodyBytes, _ := io.ReadAll(r.Body)
+					capturedFormData = string(bodyBytes)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_ = json.NewEncoder(w).Encode(TokenResponse{
+						AccessToken: AccessTokenInfo{
+							Token:   "test-token",
+							Expires: time.Now().Add(1 * time.Hour).Format(time.RFC3339),
+						},
+					})
+					return
+				}
+			}))
+			defer server.Close()
+
+			// Create client - this triggers token refresh
+			// Use the TLS server's HTTP client to skip certificate verification
+			_, err := NewClientWithCredentials(server.URL, tt.clientID, tt.clientSecret, &ClientOptions{
+				HTTPClient: server.Client(),
+			})
+			require.NoError(t, err, "client creation should succeed")
+
+			// Verify form data was URL encoded
+			assert.NotEmpty(t, capturedFormData, "should have captured form data")
+
+			// Parse the form data
+			parsedValues, err := url.ParseQuery(capturedFormData)
+			require.NoError(t, err, "form data should be valid URL encoding")
+
+			// Verify values are properly decoded
+			assert.Equal(t, tt.clientID, parsedValues.Get("clientId"), "clientId should be properly encoded/decoded")
+			assert.Equal(t, tt.clientSecret, parsedValues.Get("clientSecret"), "clientSecret should be properly encoded/decoded")
+
+			// Verify raw credentials are not in the form data (they should be encoded)
+			// For example, if clientID is "client&id", the raw string "client&id" should not appear
+			// Instead it should be "client%26id"
+			if strings.Contains(tt.clientID, "&") || strings.Contains(tt.clientSecret, "&") {
+				assert.NotContains(t, capturedFormData, tt.clientID, "raw clientID with special chars should be encoded")
+			}
+			if strings.Contains(tt.clientID, "=") || strings.Contains(tt.clientSecret, "=") {
+				// The raw equals sign should be encoded as %3D in the value part
+				assert.Contains(t, capturedFormData, "%3D", "equals sign should be URL encoded")
+			}
+		})
+	}
+}
+
+func TestCredentialSanitization(t *testing.T) {
+	// This test verifies that credentials are not logged
+	// We'll use a custom logger that captures log output
+
+	var logOutput strings.Builder
+	testLogger := zap.New(
+		zapcore.NewCore(
+			zapcore.NewConsoleEncoder(zap.NewDevelopmentEncoderConfig()),
+			zapcore.AddSync(&logOutput),
+			zapcore.DebugLevel,
+		),
+	)
+
+	// Use TLS server for HTTPS
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == TokenEndpoint {
+			// First request - return error to test error logging
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(TokenResponse{
+				Error:   true,
+				Code:    401,
+				Message: "sensitive-credential-data-in-message",
+			})
+			return
+		}
+	}))
+	defer server.Close()
+
+	clientID := "sensitive-client-id-12345"
+	clientSecret := "super-secret-password-xyz"
+
+	// Attempt to create client (will fail due to error response)
+	_, err := NewClientWithCredentials(server.URL, clientID, clientSecret, &ClientOptions{
+		Logger:     testLogger,
+		HTTPClient: server.Client(),
+	})
+
+	// Should fail due to token error
+	assert.Error(t, err)
+
+	// Check log output
+	loggedText := logOutput.String()
+
+	// Verify credentials are NOT in logs
+	assert.NotContains(t, loggedText, clientID, "clientID should not appear in logs")
+	assert.NotContains(t, loggedText, clientSecret, "clientSecret should not appear in logs")
+
+	// Verify sensitive message from API error is NOT logged
+	assert.NotContains(t, loggedText, "sensitive-credential-data-in-message", "error message should not be logged as it may contain credentials")
+
+	// Verify that safe information IS logged
+	assert.Contains(t, loggedText, "token request failed", "error log should be present")
 }

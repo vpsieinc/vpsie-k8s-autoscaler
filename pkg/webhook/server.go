@@ -18,6 +18,12 @@ import (
 	autoscalerv1alpha1 "github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 )
 
+const (
+	// MaxRequestBodySize for admission webhook requests
+	// Typical CRD objects are 10-50KB; 128KB provides ample buffer
+	MaxRequestBodySize = 128 * 1024 // 128KB
+)
+
 // Server represents the webhook server
 type Server struct {
 	server             *http.Server
@@ -125,20 +131,34 @@ func (s *Server) Shutdown(ctx context.Context) error {
 func (s *Server) handleNodeGroupValidation(w http.ResponseWriter, r *http.Request) {
 	s.logger.Debug("received NodeGroup validation request")
 
-	// Read request body
-	body, err := io.ReadAll(r.Body)
+	// Layer 1: Validate Content-Type
+	if r.Header.Get("Content-Type") != "application/json" {
+		s.logger.Warn("invalid content type", zap.String("contentType", r.Header.Get("Content-Type")))
+		http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
+		return
+	}
+
+	// Layer 2: Enforce size limit
+	body, err := io.ReadAll(io.LimitReader(r.Body, MaxRequestBodySize))
 	if err != nil {
 		s.logger.Error("failed to read request body", zap.Error(err))
-		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 	defer r.Body.Close()
 
-	// Decode admission review
+	// Layer 3: Validate JSON structure
 	admissionReview := &admissionv1.AdmissionReview{}
 	if err := json.Unmarshal(body, admissionReview); err != nil {
 		s.logger.Error("failed to unmarshal admission review", zap.Error(err))
-		http.Error(w, "failed to unmarshal admission review", http.StatusBadRequest)
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Layer 4: Validate request not nil
+	if admissionReview.Request == nil {
+		s.logger.Warn("admission request is nil")
+		http.Error(w, "admission request is nil", http.StatusBadRequest)
 		return
 	}
 
@@ -168,20 +188,34 @@ func (s *Server) handleNodeGroupValidation(w http.ResponseWriter, r *http.Reques
 func (s *Server) handleVPSieNodeValidation(w http.ResponseWriter, r *http.Request) {
 	s.logger.Debug("received VPSieNode validation request")
 
-	// Read request body
-	body, err := io.ReadAll(r.Body)
+	// Layer 1: Validate Content-Type
+	if r.Header.Get("Content-Type") != "application/json" {
+		s.logger.Warn("invalid content type", zap.String("contentType", r.Header.Get("Content-Type")))
+		http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
+		return
+	}
+
+	// Layer 2: Enforce size limit
+	body, err := io.ReadAll(io.LimitReader(r.Body, MaxRequestBodySize))
 	if err != nil {
 		s.logger.Error("failed to read request body", zap.Error(err))
-		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 	defer r.Body.Close()
 
-	// Decode admission review
+	// Layer 3: Validate JSON structure
 	admissionReview := &admissionv1.AdmissionReview{}
 	if err := json.Unmarshal(body, admissionReview); err != nil {
 		s.logger.Error("failed to unmarshal admission review", zap.Error(err))
-		http.Error(w, "failed to unmarshal admission review", http.StatusBadRequest)
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Layer 4: Validate request not nil
+	if admissionReview.Request == nil {
+		s.logger.Warn("admission request is nil")
+		http.Error(w, "admission request is nil", http.StatusBadRequest)
 		return
 	}
 
@@ -209,6 +243,18 @@ func (s *Server) handleVPSieNodeValidation(w http.ResponseWriter, r *http.Reques
 
 // validateNodeGroup validates a NodeGroup resource
 func (s *Server) validateNodeGroup(req *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
+	// Validate Object exists and has content
+	if len(req.Object.Raw) == 0 {
+		return &admissionv1.AdmissionResponse{
+			Allowed: false,
+			Result: &metav1.Status{
+				Status:  metav1.StatusFailure,
+				Message: "request object is empty",
+				Code:    http.StatusBadRequest,
+			},
+		}
+	}
+
 	// Decode the NodeGroup
 	nodeGroup := &autoscalerv1alpha1.NodeGroup{}
 	if _, _, err := s.decoder.Decode(req.Object.Raw, nil, nodeGroup); err != nil {
@@ -250,6 +296,18 @@ func (s *Server) validateNodeGroup(req *admissionv1.AdmissionRequest) *admission
 
 // validateVPSieNode validates a VPSieNode resource
 func (s *Server) validateVPSieNode(req *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
+	// Validate Object exists and has content
+	if len(req.Object.Raw) == 0 {
+		return &admissionv1.AdmissionResponse{
+			Allowed: false,
+			Result: &metav1.Status{
+				Status:  metav1.StatusFailure,
+				Message: "request object is empty",
+				Code:    http.StatusBadRequest,
+			},
+		}
+	}
+
 	// Decode the VPSieNode
 	vpsieNode := &autoscalerv1alpha1.VPSieNode{}
 	if _, _, err := s.decoder.Decode(req.Object.Raw, nil, vpsieNode); err != nil {
