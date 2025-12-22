@@ -154,12 +154,19 @@ func (e *Executor) executeRollingBatch(ctx context.Context, plan *RebalancePlan,
 
 		// Step 1: Provision new node
 		newNode, err := e.provisionNewNode(ctx, plan, &candidate)
-		if err != nil {
-			logger.Error(err, "Failed to provision new node", "nodeName", candidate.NodeName)
+		if err != nil || newNode == nil {
+			// Handle both provisioning errors and nil node pointer
+			var errMsg error
+			if err != nil {
+				errMsg = fmt.Errorf("node provisioning failed: %w", err)
+			} else {
+				errMsg = fmt.Errorf("node provisioning returned nil node without error")
+			}
+			logger.Error(errMsg, "Failed to provision new node", "nodeName", candidate.NodeName)
 			result.FailedNodes = append(result.FailedNodes, NodeFailure{
 				NodeName:  candidate.NodeName,
 				Operation: "provision",
-				Error:     err,
+				Error:     errMsg,
 				Timestamp: time.Now(),
 			})
 			result.NodesFailed++
@@ -236,12 +243,19 @@ func (e *Executor) executeSurgeBatch(ctx context.Context, plan *RebalancePlan, b
 	logger.Info("Surge strategy: provisioning all new nodes", "count", len(batch.Nodes))
 	for _, candidate := range batch.Nodes {
 		newNode, err := e.provisionNewNode(ctx, plan, &candidate)
-		if err != nil {
-			logger.Error(err, "Failed to provision new node", "nodeName", candidate.NodeName)
+		if err != nil || newNode == nil {
+			// Handle both provisioning errors and nil node pointer
+			var errMsg error
+			if err != nil {
+				errMsg = fmt.Errorf("node provisioning failed: %w", err)
+			} else {
+				errMsg = fmt.Errorf("node provisioning returned nil node without error")
+			}
+			logger.Error(errMsg, "Failed to provision new node", "nodeName", candidate.NodeName)
 			result.FailedNodes = append(result.FailedNodes, NodeFailure{
 				NodeName:  candidate.NodeName,
 				Operation: "provision",
-				Error:     err,
+				Error:     errMsg,
 				Timestamp: time.Now(),
 			})
 			result.NodesFailed++
@@ -292,7 +306,9 @@ func (e *Executor) executeBlueGreenBatch(ctx context.Context, plan *RebalancePla
 	return e.executeSurgeBatch(ctx, plan, batch, state)
 }
 
-// ProvisionNode provisions a new node with the target instance type
+// provisionNewNode provisions a new node with the target instance type.
+// Returns (*Node, nil) on success, or (nil, error) on failure.
+// Callers MUST check both return values: if err != nil || newNode == nil
 func (e *Executor) provisionNewNode(ctx context.Context, plan *RebalancePlan, candidate *CandidateNode) (*Node, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("Provisioning new node",
@@ -308,16 +324,10 @@ func (e *Executor) provisionNewNode(ctx context.Context, plan *RebalancePlan, ca
 		// Other fields would be populated from NodeGroup spec
 	}
 
-	// This is a placeholder - actual implementation would call VPSie API
-	// to provision a new VPS instance
-	newNode := &Node{
-		Name:       fmt.Sprintf("%s-new-%d", candidate.NodeName, time.Now().Unix()),
-		OfferingID: candidate.TargetOffering,
-		Status:     corev1.NodeReady, // Use NodeReady as default condition type
-	}
-
-	logger.Info("Node provisioned", "nodeName", newNode.Name)
-	return newNode, nil
+	// IMPLEMENTATION NOT COMPLETE: Return explicit error instead of fake success
+	// This prevents silent failures in production where no node is actually provisioned
+	// TODO: Implement actual VPSie API call to provision VPS instance
+	return nil, fmt.Errorf("node provisioning not yet implemented: VPSie API integration required for offering %s", candidate.TargetOffering)
 }
 
 // DrainNode safely drains workloads from a node
