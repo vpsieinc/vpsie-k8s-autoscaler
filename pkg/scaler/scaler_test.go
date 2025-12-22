@@ -10,6 +10,7 @@ import (
 
 	"go.uber.org/zap/zaptest"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -431,6 +432,256 @@ func TestIdentifyUnderutilizedNodes(t *testing.T) {
 	}
 }
 
+func TestScaleDownManager_DeleteNodeAfterDrain(t *testing.T) {
+	// Create test node
+	node := createTestNode("node-1", "test-group", 4000, 8000000000)
+
+	// Create fake client with the node
+	client := fake.NewSimpleClientset(node)
+	logger := zaptest.NewLogger(t)
+
+	config := &Config{
+		CPUThreshold:              50.0,
+		MemoryThreshold:           50.0,
+		ObservationWindow:         10 * time.Minute,
+		CooldownPeriod:            10 * time.Minute,
+		MaxNodesPerScaleDown:      5,
+		EnablePodDisruptionBudget: true,
+		DrainTimeout:              5 * time.Minute,
+		EvictionGracePeriod:       30,
+	}
+
+	manager := NewScaleDownManager(client, nil, logger, config)
+
+	// Create NodeGroup
+	nodeGroup := &autoscalerv1alpha1.NodeGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-group",
+			Namespace: "default",
+		},
+		Spec: autoscalerv1alpha1.NodeGroupSpec{
+			MinNodes: 0,
+			MaxNodes: 10,
+		},
+		Status: autoscalerv1alpha1.NodeGroupStatus{
+			Nodes: []autoscalerv1alpha1.NodeInfo{
+				{NodeName: "node-1"},
+			},
+		},
+	}
+
+	// Create candidate for scale-down
+	candidate := &ScaleDownCandidate{
+		Node: node,
+		Utilization: &NodeUtilization{
+			NodeName:          "node-1",
+			CPUUtilization:    30.0,
+			MemoryUtilization: 30.0,
+			IsUnderutilized:   true,
+		},
+		Pods:         []*corev1.Pod{}, // No pods to drain
+		SafeToRemove: true,
+		Priority:     100,
+	}
+
+	ctx := context.Background()
+
+	// Execute scale-down
+	err := manager.ScaleDown(ctx, nodeGroup, []*ScaleDownCandidate{candidate})
+
+	if err != nil {
+		t.Fatalf("ScaleDown failed: %v", err)
+	}
+
+	// Verify node was deleted
+	_, err = client.CoreV1().Nodes().Get(ctx, "node-1", metav1.GetOptions{})
+	if err == nil {
+		t.Error("expected node to be deleted, but it still exists")
+	}
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("expected NotFound error, got: %v", err)
+	}
+}
+
+func TestScaleDownManager_DeleteNodeAfterDrain_DeletionFails(t *testing.T) {
+	// Create test node
+	node := createTestNode("node-1", "test-group", 4000, 8000000000)
+
+	// Create fake client with the node
+	client := fake.NewSimpleClientset(node)
+	logger := zaptest.NewLogger(t)
+
+	config := &Config{
+		CPUThreshold:              50.0,
+		MemoryThreshold:           50.0,
+		ObservationWindow:         10 * time.Minute,
+		CooldownPeriod:            10 * time.Minute,
+		MaxNodesPerScaleDown:      5,
+		EnablePodDisruptionBudget: true,
+		DrainTimeout:              5 * time.Minute,
+		EvictionGracePeriod:       30,
+	}
+
+	manager := NewScaleDownManager(client, nil, logger, config)
+
+	// Create NodeGroup
+	nodeGroup := &autoscalerv1alpha1.NodeGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-group",
+			Namespace: "default",
+		},
+		Spec: autoscalerv1alpha1.NodeGroupSpec{
+			MinNodes: 0,
+			MaxNodes: 10,
+		},
+		Status: autoscalerv1alpha1.NodeGroupStatus{
+			Nodes: []autoscalerv1alpha1.NodeInfo{
+				{NodeName: "node-1"},
+			},
+		},
+	}
+
+	// Create candidate for scale-down
+	candidate := &ScaleDownCandidate{
+		Node: node,
+		Utilization: &NodeUtilization{
+			NodeName:          "node-1",
+			CPUUtilization:    30.0,
+			MemoryUtilization: 30.0,
+			IsUnderutilized:   true,
+		},
+		Pods:         []*corev1.Pod{},
+		SafeToRemove: true,
+		Priority:     100,
+	}
+
+	// Delete the node before ScaleDown to simulate deletion failure
+	ctx := context.Background()
+	_ = client.CoreV1().Nodes().Delete(ctx, "node-1", metav1.DeleteOptions{})
+
+	// Execute scale-down - should handle deletion failure gracefully
+	err := manager.ScaleDown(ctx, nodeGroup, []*ScaleDownCandidate{candidate})
+
+	// Should return error indicating deletion failed
+	if err == nil {
+		t.Error("expected error when node deletion fails, got nil")
+	}
+
+	if err != nil && !apierrors.IsNotFound(err) {
+		// Error should contain information about deletion failure
+		errStr := err.Error()
+		if !contains(errStr, "failed to delete node") && !contains(errStr, "not found") {
+			t.Errorf("expected deletion failure error, got: %v", err)
+		}
+	}
+}
+
+func TestScaleDownManager_DeleteNodeAfterDrain_WithPods(t *testing.T) {
+	// Create test node
+	node := createTestNode("node-1", "test-group", 4000, 8000000000)
+
+	// Create test pods on the node (will be evicted)
+	pod1 := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod-1",
+			Namespace: "default",
+		},
+		Spec: corev1.PodSpec{
+			NodeName: "node-1",
+			Containers: []corev1.Container{
+				{
+					Name:  "container",
+					Image: "test:latest",
+				},
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+		},
+	}
+
+	// Create fake client with node and pods
+	client := fake.NewSimpleClientset(node, pod1)
+	logger := zaptest.NewLogger(t)
+
+	config := &Config{
+		CPUThreshold:              50.0,
+		MemoryThreshold:           50.0,
+		ObservationWindow:         10 * time.Minute,
+		CooldownPeriod:            10 * time.Minute,
+		MaxNodesPerScaleDown:      5,
+		EnablePodDisruptionBudget: true,
+		DrainTimeout:              1 * time.Minute, // Short timeout for test
+		EvictionGracePeriod:       1,               // Short grace period
+	}
+
+	manager := NewScaleDownManager(client, nil, logger, config)
+
+	// Create NodeGroup
+	nodeGroup := &autoscalerv1alpha1.NodeGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-group",
+			Namespace: "default",
+		},
+		Spec: autoscalerv1alpha1.NodeGroupSpec{
+			MinNodes: 0,
+			MaxNodes: 10,
+		},
+		Status: autoscalerv1alpha1.NodeGroupStatus{
+			Nodes: []autoscalerv1alpha1.NodeInfo{
+				{NodeName: "node-1"},
+			},
+		},
+	}
+
+	// Create candidate for scale-down
+	candidate := &ScaleDownCandidate{
+		Node: node,
+		Utilization: &NodeUtilization{
+			NodeName:          "node-1",
+			CPUUtilization:    30.0,
+			MemoryUtilization: 30.0,
+			IsUnderutilized:   true,
+		},
+		Pods:         []*corev1.Pod{pod1},
+		SafeToRemove: true,
+		Priority:     100,
+	}
+
+	ctx := context.Background()
+
+	// Note: This test may timeout because the fake client doesn't actually
+	// terminate pods. In a real scenario, the kubelet would terminate them.
+	// For this unit test, we just verify the drain operation is attempted.
+	_ = manager.ScaleDown(ctx, nodeGroup, []*ScaleDownCandidate{candidate})
+
+	// Verify node was cordoned (even if drain timed out)
+	updatedNode, err := client.CoreV1().Nodes().Get(ctx, "node-1", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to get node: %v", err)
+	}
+
+	if !updatedNode.Spec.Unschedulable {
+		t.Error("expected node to be cordoned")
+	}
+}
+
+// Helper function to check if string contains substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) &&
+		(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
+		containsHelper(s, substr)))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
 // Helper functions
 
 func createTestNode(name, nodeGroup string, cpuMillis, memoryBytes int64) *corev1.Node {
@@ -484,4 +735,254 @@ func createTestPods(count int, namespace string) []*corev1.Pod {
 		}
 	}
 	return pods
+}
+
+// TestScaleDownManager_UtilizationRaceCondition tests for race conditions in utilization data access.
+// This test verifies that:
+// 1. Concurrent reads don't race with modifications
+// 2. Deep copy works correctly (modifying original doesn't affect snapshot)
+// 3. Multiple goroutines can safely call GetNodeUtilization
+// This test MUST pass with the -race flag enabled: go test -race ./pkg/scaler -run TestScaleDownManager_UtilizationRaceCondition
+func TestScaleDownManager_UtilizationRaceCondition(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	logger := zaptest.NewLogger(t)
+	manager := NewScaleDownManager(client, nil, logger, DefaultConfig())
+
+	// Create test nodes
+	nodes := []*corev1.Node{
+		createTestNode("node-1", "test-group", 4000, 8000000000),
+		createTestNode("node-2", "test-group", 4000, 8000000000),
+		createTestNode("node-3", "test-group", 4000, 8000000000),
+	}
+
+	for _, node := range nodes {
+		_, err := client.CoreV1().Nodes().Create(context.Background(), node, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("failed to create node: %v", err)
+		}
+	}
+
+	// Initialize utilization data
+	now := time.Now()
+	for i, node := range nodes {
+		manager.nodeUtilization[node.Name] = &NodeUtilization{
+			NodeName:          node.Name,
+			CPUUtilization:    30.0,
+			MemoryUtilization: 30.0,
+			IsUnderutilized:   true,
+			LastUpdated:       now,
+			Samples: []UtilizationSample{
+				{Timestamp: now.Add(-9 * time.Minute), CPUUtilization: 30, MemoryUtilization: 30},
+				{Timestamp: now.Add(-8 * time.Minute), CPUUtilization: 32, MemoryUtilization: 32},
+				{Timestamp: now.Add(-7 * time.Minute), CPUUtilization: 28, MemoryUtilization: 28},
+				{Timestamp: now.Add(-6 * time.Minute), CPUUtilization: 31, MemoryUtilization: 31},
+				{Timestamp: now.Add(-5 * time.Minute), CPUUtilization: float64(29 + i), MemoryUtilization: float64(29 + i)},
+			},
+		}
+	}
+
+	nodeGroup := &autoscalerv1alpha1.NodeGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-group",
+			Namespace: "default",
+		},
+		Spec: autoscalerv1alpha1.NodeGroupSpec{
+			MinNodes: 1,
+			MaxNodes: 10,
+		},
+	}
+
+	// Test 1: Concurrent reads don't race with modifications
+	t.Run("concurrent reads and writes", func(t *testing.T) {
+		ctx := context.Background()
+		done := make(chan bool)
+		errChan := make(chan error, 100)
+
+		// Start multiple goroutines reading utilization data via IdentifyUnderutilizedNodes
+		for i := 0; i < 10; i++ {
+			go func(id int) {
+				for j := 0; j < 50; j++ {
+					candidates, err := manager.IdentifyUnderutilizedNodes(ctx, nodeGroup)
+					if err != nil {
+						errChan <- fmt.Errorf("goroutine %d iteration %d: %w", id, j, err)
+						return
+					}
+					// Verify we got expected candidates
+					if len(candidates) == 0 {
+						errChan <- fmt.Errorf("goroutine %d iteration %d: expected candidates, got none", id, j)
+						return
+					}
+				}
+				done <- true
+			}(i)
+		}
+
+		// Concurrently modify utilization data (simulating UpdateNodeUtilization)
+		for i := 0; i < 10; i++ {
+			go func(id int) {
+				for j := 0; j < 50; j++ {
+					manager.utilizationLock.Lock()
+					for _, node := range nodes {
+						if util, exists := manager.nodeUtilization[node.Name]; exists {
+							// Create new slice (matching UpdateNodeUtilization pattern)
+							// This is the safe pattern that prevents race conditions
+							newSamples := make([]UtilizationSample, len(util.Samples), len(util.Samples)+1)
+							copy(newSamples, util.Samples)
+							newSample := UtilizationSample{
+								Timestamp:         time.Now(),
+								CPUUtilization:    30.0 + float64(j%10),
+								MemoryUtilization: 30.0 + float64(j%10),
+							}
+							newSamples = append(newSamples, newSample)
+							if len(newSamples) > MaxSamplesPerNode {
+								newSamples = newSamples[len(newSamples)-MaxSamplesPerNode:]
+							}
+							util.Samples = newSamples
+							util.LastUpdated = time.Now()
+						}
+					}
+					manager.utilizationLock.Unlock()
+					time.Sleep(time.Microsecond)
+				}
+				done <- true
+			}(i)
+		}
+
+		// Wait for all goroutines to complete
+		for i := 0; i < 20; i++ {
+			select {
+			case err := <-errChan:
+				t.Fatalf("concurrent access error: %v", err)
+			case <-done:
+				// Continue waiting
+			}
+		}
+
+		// Check for any errors
+		select {
+		case err := <-errChan:
+			t.Fatalf("concurrent access error: %v", err)
+		default:
+			// No errors - success
+		}
+	})
+
+	// Test 2: Deep copy works correctly (modifying original doesn't affect snapshot)
+	t.Run("deep copy isolation", func(t *testing.T) {
+		ctx := context.Background()
+
+		// Get candidates (triggers deep copy in IdentifyUnderutilizedNodes)
+		candidates, err := manager.IdentifyUnderutilizedNodes(ctx, nodeGroup)
+		if err != nil {
+			t.Fatalf("failed to identify nodes: %v", err)
+		}
+
+		if len(candidates) == 0 {
+			t.Fatal("expected candidates, got none")
+		}
+
+		// Store original sample count and first sample value
+		originalSampleCount := len(candidates[0].Utilization.Samples)
+		firstSampleCPU := candidates[0].Utilization.Samples[0].CPUUtilization
+
+		// Modify the original data aggressively
+		manager.utilizationLock.Lock()
+		if util, exists := manager.nodeUtilization["node-1"]; exists {
+			// Add many new samples
+			for i := 0; i < 10; i++ {
+				newSamples := make([]UtilizationSample, len(util.Samples), len(util.Samples)+1)
+				copy(newSamples, util.Samples)
+				newSamples = append(newSamples, UtilizationSample{
+					Timestamp:         time.Now(),
+					CPUUtilization:    99.0, // Very different value
+					MemoryUtilization: 99.0,
+				})
+				util.Samples = newSamples
+			}
+			// Modify first sample
+			util.Samples[0].CPUUtilization = 99.0
+		}
+		manager.utilizationLock.Unlock()
+
+		// Verify the candidate's data hasn't changed (deep copy worked)
+		if len(candidates[0].Utilization.Samples) != originalSampleCount {
+			t.Errorf("deep copy failed: sample count changed from %d to %d",
+				originalSampleCount, len(candidates[0].Utilization.Samples))
+		}
+
+		if candidates[0].Utilization.Samples[0].CPUUtilization != firstSampleCPU {
+			t.Errorf("deep copy failed: first sample CPU changed from %.2f to %.2f",
+				firstSampleCPU, candidates[0].Utilization.Samples[0].CPUUtilization)
+		}
+	})
+
+	// Test 3: Multiple goroutines can safely call GetNodeUtilization
+	t.Run("concurrent GetNodeUtilization", func(t *testing.T) {
+		done := make(chan bool)
+		errChan := make(chan error, 50)
+
+		// Start multiple goroutines calling GetNodeUtilization
+		for i := 0; i < 25; i++ {
+			go func(id int) {
+				for j := 0; j < 100; j++ {
+					util, exists := manager.GetNodeUtilization("node-1")
+					if !exists {
+						errChan <- fmt.Errorf("goroutine %d iteration %d: node-1 not found", id, j)
+						return
+					}
+					if util == nil {
+						errChan <- fmt.Errorf("goroutine %d iteration %d: nil utilization", id, j)
+						return
+					}
+					if len(util.Samples) == 0 {
+						errChan <- fmt.Errorf("goroutine %d iteration %d: no samples", id, j)
+						return
+					}
+				}
+				done <- true
+			}(i)
+		}
+
+		// Concurrently modify the data
+		for i := 0; i < 25; i++ {
+			go func(id int) {
+				for j := 0; j < 100; j++ {
+					manager.utilizationLock.Lock()
+					if util, exists := manager.nodeUtilization["node-1"]; exists {
+						newSamples := make([]UtilizationSample, len(util.Samples), len(util.Samples)+1)
+						copy(newSamples, util.Samples)
+						newSamples = append(newSamples, UtilizationSample{
+							Timestamp:         time.Now(),
+							CPUUtilization:    30.0,
+							MemoryUtilization: 30.0,
+						})
+						if len(newSamples) > MaxSamplesPerNode {
+							newSamples = newSamples[1:]
+						}
+						util.Samples = newSamples
+					}
+					manager.utilizationLock.Unlock()
+				}
+				done <- true
+			}(i)
+		}
+
+		// Wait for all goroutines
+		for i := 0; i < 50; i++ {
+			select {
+			case err := <-errChan:
+				t.Fatalf("concurrent GetNodeUtilization error: %v", err)
+			case <-done:
+				// Continue
+			}
+		}
+
+		// Final error check
+		select {
+		case err := <-errChan:
+			t.Fatalf("concurrent GetNodeUtilization error: %v", err)
+		default:
+			// Success
+		}
+	})
 }

@@ -169,6 +169,23 @@ func (s *ScaleDownManager) IdentifyUnderutilizedNodes(
 		}
 
 		// Get utilization data and create a safe copy
+		// CRITICAL: We perform a DEEP COPY of the utilization data to prevent race conditions.
+		//
+		// Race Condition Prevention:
+		// The nodeUtilization map stores pointers to NodeUtilization structs, which contain
+		// a Samples slice. If we only performed a shallow copy, the slice header would be
+		// copied but the underlying array would be shared. This creates a race condition:
+		//
+		// Thread A (IdentifyUnderutilizedNodes): Reads len(Samples) = 5
+		// Thread B (UpdateNodeUtilization):      Appends new sample, Samples now points to new array
+		// Thread A: Calls copy() on old array   -> DATA CORRUPTION or PANIC
+		//
+		// Solution: We hold the RLock during the ENTIRE copy operation, including:
+		// 1. Reading the struct fields
+		// 2. Creating the new Samples slice
+		// 3. Copying all sample values
+		//
+		// This ensures the data cannot change while we're copying it.
 		s.utilizationLock.RLock()
 		utilization, exists := s.nodeUtilization[node.Name]
 		if !exists || !utilization.IsUnderutilized {
@@ -177,6 +194,7 @@ func (s *ScaleDownManager) IdentifyUnderutilizedNodes(
 		}
 
 		// Create a deep copy while holding the lock to prevent races
+		// We must complete the entire copy atomically before releasing the lock
 		utilizationCopy := &NodeUtilization{
 			NodeName:          utilization.NodeName,
 			CPUUtilization:    utilization.CPUUtilization,
@@ -185,7 +203,10 @@ func (s *ScaleDownManager) IdentifyUnderutilizedNodes(
 			LastUpdated:       utilization.LastUpdated,
 			Samples:           make([]UtilizationSample, len(utilization.Samples)),
 		}
+		// Copy all samples while still holding the lock
+		// This creates a new backing array, preventing shared references
 		copy(utilizationCopy.Samples, utilization.Samples)
+		// Only release lock after copy is complete
 		s.utilizationLock.RUnlock()
 
 		// Check if node has been underutilized for observation window
@@ -318,6 +339,34 @@ func (s *ScaleDownManager) ScaleDown(
 		}
 
 		s.logger.Info("node drained successfully",
+			"node", candidate.Node.Name,
+			"nodeGroup", nodeGroup.Name)
+
+		// Delete the Kubernetes node object after successful drain
+		// This ensures the node is fully removed from the cluster
+		s.logger.Info("deleting node from cluster",
+			"node", candidate.Node.Name,
+			"nodeGroup", nodeGroup.Name)
+
+		if err := s.client.CoreV1().Nodes().Delete(ctx, candidate.Node.Name, metav1.DeleteOptions{}); err != nil {
+			// Log error but don't fail the entire scale-down operation
+			// The node is already drained and cordoned, so it's safe to continue
+			s.logger.Error("failed to delete node - node is drained but deletion failed",
+				"node", candidate.Node.Name,
+				"error", err)
+
+			// Record node deletion failure metric
+			metrics.ScaleDownErrorsTotal.WithLabelValues(
+				nodeGroup.Name,
+				nodeGroup.Namespace,
+				"node_deletion_failed",
+			).Inc()
+
+			errors = append(errors, fmt.Errorf("failed to delete node %s after drain: %w", candidate.Node.Name, err))
+			continue
+		}
+
+		s.logger.Info("node deleted successfully",
 			"node", candidate.Node.Name,
 			"nodeGroup", nodeGroup.Name)
 
