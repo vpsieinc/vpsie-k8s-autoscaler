@@ -11,6 +11,7 @@ import (
 
 	"go.uber.org/zap"
 	admissionv1 "k8s.io/api/admission/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
@@ -26,11 +27,12 @@ const (
 
 // Server represents the webhook server
 type Server struct {
-	server             *http.Server
-	logger             *zap.Logger
-	nodeGroupValidator *NodeGroupValidator
-	vpsieNodeValidator *VPSieNodeValidator
-	decoder            runtime.Decoder
+	server                 *http.Server
+	logger                 *zap.Logger
+	nodeGroupValidator     *NodeGroupValidator
+	vpsieNodeValidator     *VPSieNodeValidator
+	nodeDeletionValidator  *NodeDeletionValidator
+	decoder                runtime.Decoder
 }
 
 // ServerConfig contains webhook server configuration
@@ -59,21 +61,27 @@ func NewServer(config ServerConfig) (*Server, error) {
 	if err := autoscalerv1alpha1.AddToScheme(scheme); err != nil {
 		return nil, fmt.Errorf("failed to add autoscaler types to scheme: %w", err)
 	}
+	// Add core types for Node validation (Fix #8)
+	if err := corev1.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("failed to add core types to scheme: %w", err)
+	}
 
 	codecFactory := serializer.NewCodecFactory(scheme)
 	decoder := codecFactory.UniversalDeserializer()
 
 	ws := &Server{
-		logger:             config.Logger,
-		nodeGroupValidator: NewNodeGroupValidator(config.Logger),
-		vpsieNodeValidator: NewVPSieNodeValidator(config.Logger),
-		decoder:            decoder,
+		logger:                config.Logger,
+		nodeGroupValidator:    NewNodeGroupValidator(config.Logger),
+		vpsieNodeValidator:    NewVPSieNodeValidator(config.Logger),
+		nodeDeletionValidator: NewNodeDeletionValidator(config.Logger),
+		decoder:               decoder,
 	}
 
 	// Create HTTP server
 	mux := http.NewServeMux()
 	mux.HandleFunc("/validate/nodegroups", ws.handleNodeGroupValidation)
 	mux.HandleFunc("/validate/vpsienodes", ws.handleVPSieNodeValidation)
+	mux.HandleFunc("/validate/node-deletion", ws.handleNodeDeletionValidation)
 	mux.HandleFunc("/healthz", ws.handleHealthz)
 	mux.HandleFunc("/readyz", ws.handleReadyz)
 
@@ -341,6 +349,126 @@ func (s *Server) validateVPSieNode(req *admissionv1.AdmissionRequest) *admission
 	s.logger.Debug("VPSieNode validation succeeded",
 		zap.String("name", vpsieNode.Name),
 		zap.String("namespace", vpsieNode.Namespace))
+
+	return &admissionv1.AdmissionResponse{
+		Allowed: true,
+	}
+}
+
+// handleNodeDeletionValidation handles node deletion validation requests
+// This addresses Fix #8: RBAC Protection - prevents deletion of non-managed nodes
+func (s *Server) handleNodeDeletionValidation(w http.ResponseWriter, r *http.Request) {
+	s.logger.Debug("received node deletion validation request")
+
+	// Layer 1: Validate Content-Type
+	if r.Header.Get("Content-Type") != "application/json" {
+		s.logger.Warn("invalid content type", zap.String("contentType", r.Header.Get("Content-Type")))
+		http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
+		return
+	}
+
+	// Layer 2: Enforce size limit
+	body, err := io.ReadAll(io.LimitReader(r.Body, MaxRequestBodySize))
+	if err != nil {
+		s.logger.Error("failed to read request body", zap.Error(err))
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	defer r.Body.Close()
+
+	// Layer 3: Validate JSON structure
+	admissionReview := &admissionv1.AdmissionReview{}
+	if err := json.Unmarshal(body, admissionReview); err != nil {
+		s.logger.Error("failed to unmarshal admission review", zap.Error(err))
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Layer 4: Validate request not nil
+	if admissionReview.Request == nil {
+		s.logger.Warn("admission request is nil")
+		http.Error(w, "admission request is nil", http.StatusBadRequest)
+		return
+	}
+
+	// Validate the request
+	response := s.validateNodeDeletion(admissionReview.Request)
+
+	// Build admission review response
+	admissionReview.Response = response
+	admissionReview.Response.UID = admissionReview.Request.UID
+
+	// Encode response
+	respBytes, err := json.Marshal(admissionReview)
+	if err != nil {
+		s.logger.Error("failed to marshal admission review response", zap.Error(err))
+		http.Error(w, "failed to marshal response", http.StatusInternalServerError)
+		return
+	}
+
+	// Write response
+	w.Header().Set("Content-Type", "application/json")
+	if _, err := w.Write(respBytes); err != nil {
+		s.logger.Error("failed to write response", zap.Error(err))
+	}
+}
+
+// validateNodeDeletion validates a node deletion request
+// Only nodes with label "autoscaler.vpsie.com/managed=true" can be deleted
+func (s *Server) validateNodeDeletion(req *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
+	// Only validate DELETE operations
+	if req.Operation != admissionv1.Delete {
+		s.logger.Warn("unexpected operation for node deletion webhook",
+			zap.String("operation", string(req.Operation)))
+		return &admissionv1.AdmissionResponse{
+			Allowed: true, // Allow non-DELETE operations
+		}
+	}
+
+	// For DELETE operations, we need to decode from OldObject, not Object
+	// The Object field is empty for DELETE operations in Kubernetes
+	if len(req.OldObject.Raw) == 0 {
+		return &admissionv1.AdmissionResponse{
+			Allowed: false,
+			Result: &metav1.Status{
+				Status:  metav1.StatusFailure,
+				Message: "request oldObject is empty",
+				Code:    http.StatusBadRequest,
+			},
+		}
+	}
+
+	// Decode the Node
+	node := &corev1.Node{}
+	if _, _, err := s.decoder.Decode(req.OldObject.Raw, nil, node); err != nil {
+		s.logger.Error("failed to decode Node", zap.Error(err))
+		return &admissionv1.AdmissionResponse{
+			Allowed: false,
+			Result: &metav1.Status{
+				Status:  metav1.StatusFailure,
+				Message: fmt.Sprintf("failed to decode Node: %v", err),
+				Code:    http.StatusBadRequest,
+			},
+		}
+	}
+
+	// Validate the node deletion
+	if err := s.nodeDeletionValidator.ValidateDelete(node); err != nil {
+		s.logger.Info("node deletion validation failed",
+			zap.String("node", node.Name),
+			zap.Error(err))
+		return &admissionv1.AdmissionResponse{
+			Allowed: false,
+			Result: &metav1.Status{
+				Status:  metav1.StatusFailure,
+				Message: err.Error(),
+				Code:    http.StatusForbidden,
+			},
+		}
+	}
+
+	s.logger.Debug("node deletion validation succeeded",
+		zap.String("node", node.Name))
 
 	return &admissionv1.AdmissionResponse{
 		Allowed: true,

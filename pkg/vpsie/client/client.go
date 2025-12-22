@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -196,6 +197,20 @@ func NewClient(ctx context.Context, clientset kubernetes.Interface, opts *Client
 		httpClient = &http.Client{
 			Timeout: opts.Timeout,
 			Transport: &http.Transport{
+				// TLS configuration - enforce TLS 1.2+ with strong cipher suites
+				// This addresses Fix #9: TLS Validation
+				TLSClientConfig: &tls.Config{
+					MinVersion: tls.VersionTLS12, // Disables TLS 1.0 and 1.1
+					CipherSuites: []uint16{
+						// ECDHE provides forward secrecy, AES-GCM is authenticated encryption
+						tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+						tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+						tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+						tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+					},
+					PreferServerCipherSuites: true,
+					InsecureSkipVerify:       false, // Explicit for security audits
+				},
 				MaxIdleConns:        100,
 				MaxIdleConnsPerHost: 10,
 				IdleConnTimeout:     90 * time.Second,
@@ -283,6 +298,20 @@ func NewClientWithCredentialsAndContext(ctx context.Context, baseURL, clientID, 
 		httpClient = &http.Client{
 			Timeout: opts.Timeout,
 			Transport: &http.Transport{
+				// TLS configuration - enforce TLS 1.2+ with strong cipher suites
+				// This addresses Fix #9: TLS Validation
+				TLSClientConfig: &tls.Config{
+					MinVersion: tls.VersionTLS12, // Disables TLS 1.0 and 1.1
+					CipherSuites: []uint16{
+						// ECDHE provides forward secrecy, AES-GCM is authenticated encryption
+						tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+						tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+						tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+						tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+					},
+					PreferServerCipherSuites: true,
+					InsecureSkipVerify:       false, // Explicit for security audits
+				},
 				MaxIdleConns:        100,
 				MaxIdleConnsPerHost: 10,
 				IdleConnTimeout:     90 * time.Second,

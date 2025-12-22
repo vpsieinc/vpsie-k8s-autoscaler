@@ -1,0 +1,63 @@
+---
+# Service for webhook server
+# This service routes admission webhook requests to the controller pods
+apiVersion: v1
+kind: Service
+metadata:
+  name: vpsie-autoscaler-webhook
+  namespace: kube-system
+  labels:
+    app: vpsie-autoscaler
+    component: webhook
+spec:
+  type: ClusterIP
+  selector:
+    app: vpsie-autoscaler
+    component: controller
+  ports:
+  - name: webhook
+    port: 443
+    targetPort: webhook
+    protocol: TCP
+
+---
+# ValidatingWebhookConfiguration for node deletion protection
+# This addresses Fix #8: RBAC Protection
+# Only allows deletion of nodes with label autoscaler.vpsie.com/managed=true
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: vpsie-autoscaler-node-deletion
+  labels:
+    app: vpsie-autoscaler
+    component: webhook
+webhooks:
+- name: node-deletion.autoscaler.vpsie.com
+  admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: vpsie-autoscaler-webhook
+      namespace: kube-system
+      path: /validate/node-deletion
+      port: 443
+    # caBundle will be injected by cert-manager or manually configured
+    # caBundle: <base64-encoded-ca-cert>
+  rules:
+  - operations:
+    - DELETE
+    apiGroups:
+    - ""
+    apiVersions:
+    - v1
+    resources:
+    - nodes
+    scope: Cluster
+  # Fail closed for security - if webhook is unavailable, deny deletion
+  failurePolicy: Fail
+  # Match all node deletion requests
+  matchPolicy: Equivalent
+  # No namespace selector needed (nodes are cluster-scoped)
+  sideEffects: None
+  timeoutSeconds: 10
