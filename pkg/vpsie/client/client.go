@@ -688,7 +688,9 @@ func (c *Client) get(ctx context.Context, path string, result interface{}) error
 	defer resp.Body.Close()
 
 	if result != nil {
-		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+		// Limit response body size to prevent DoS attacks
+		limitedReader := io.LimitReader(resp.Body, MaxResponseBodySize)
+		if err := json.NewDecoder(limitedReader).Decode(result); err != nil {
 			return fmt.Errorf("failed to decode response: %w", err)
 		}
 	}
@@ -705,7 +707,9 @@ func (c *Client) post(ctx context.Context, path string, body, result interface{}
 	defer resp.Body.Close()
 
 	if result != nil {
-		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+		// Limit response body size to prevent DoS attacks
+		limitedReader := io.LimitReader(resp.Body, MaxResponseBodySize)
+		if err := json.NewDecoder(limitedReader).Decode(result); err != nil {
 			return fmt.Errorf("failed to decode response: %w", err)
 		}
 	}
