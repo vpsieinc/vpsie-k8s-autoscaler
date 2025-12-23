@@ -356,21 +356,35 @@ func (c *Calculator) CalculateCostPerResource(ctx context.Context, offeringID st
 func (cc *costCache) get(offeringID string) *OfferingCost {
 	cc.mu.RLock()
 	cost, ok := cc.offerings[offeringID]
-	cc.mu.RUnlock()
 
+	// Hold read lock through expiration check to prevent race conditions
+	// If we find an expired entry, we upgrade to write lock safely
 	if !ok {
+		cc.mu.RUnlock()
 		return nil
 	}
 
-	// Check if expired
+	// Check if expired while still holding read lock
 	if time.Since(cost.LastUpdated) < cc.ttl {
+		cc.mu.RUnlock()
 		return cost
 	}
 
-	// Expired - remove with write lock
+	// Entry is expired - need to upgrade to write lock
+	// Release read lock first to prevent deadlock
+	cc.mu.RUnlock()
+
+	// Acquire write lock to delete expired entry
+	// Re-check existence and expiration after acquiring write lock
+	// (another goroutine may have already deleted or updated it)
 	cc.mu.Lock()
-	delete(cc.offerings, offeringID)
-	cc.mu.Unlock()
+	defer cc.mu.Unlock()
+
+	// Double-check that entry still exists and is still expired
+	cost, ok = cc.offerings[offeringID]
+	if ok && time.Since(cost.LastUpdated) >= cc.ttl {
+		delete(cc.offerings, offeringID)
+	}
 
 	return nil
 }
