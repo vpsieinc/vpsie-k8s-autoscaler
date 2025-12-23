@@ -7,6 +7,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
+// NodeDeletionValidatorInterface defines the interface for node deletion validation
+type NodeDeletionValidatorInterface interface {
+	ValidateDelete(node *corev1.Node) error
+}
+
 // NodeDeletionValidator validates node deletion requests
 // This addresses Fix #8: RBAC Protection - only allows deletion of autoscaler-managed nodes
 type NodeDeletionValidator struct {

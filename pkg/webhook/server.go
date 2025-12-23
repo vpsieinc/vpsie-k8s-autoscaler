@@ -31,7 +31,7 @@ type Server struct {
 	logger                *zap.Logger
 	nodeGroupValidator    *NodeGroupValidator
 	vpsieNodeValidator    *VPSieNodeValidator
-	nodeDeletionValidator *NodeDeletionValidator
+	nodeDeletionValidator NodeDeletionValidatorInterface
 	decoder               runtime.Decoder
 }
 
@@ -92,7 +92,10 @@ func NewServer(config ServerConfig) (*Server, error) {
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
 		TLSConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12,
+			// Require TLS 1.3 for enhanced security
+			MinVersion: tls.VersionTLS13,
+			// CipherSuites only affect TLS 1.2 and below (if fallback needed)
+			// TLS 1.3 uses its own secure cipher suites automatically
 			CipherSuites: []uint16{
 				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
