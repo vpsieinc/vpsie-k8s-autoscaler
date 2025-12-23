@@ -82,7 +82,7 @@ func TestTerminationFlow(t *testing.T) {
 		Logger:      logger,
 	}
 
-	provisioner := NewProvisioner(mockVPSie, "", nil)
+	provisioner := NewProvisioner(mockVPSie, nil)
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
@@ -248,7 +248,7 @@ func TestTerminationWithPods(t *testing.T) {
 		Logger:      logger,
 	}
 
-	provisioner := NewProvisioner(mockVPSie, "", nil)
+	provisioner := NewProvisioner(mockVPSie, nil)
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
@@ -346,7 +346,7 @@ func TestTerminationWithNonExistentNode(t *testing.T) {
 		Logger:      logger,
 	}
 
-	provisioner := NewProvisioner(mockVPSie, "", nil)
+	provisioner := NewProvisioner(mockVPSie, nil)
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
@@ -428,7 +428,7 @@ func TestVPSDeletionFailure(t *testing.T) {
 
 	logger := zap.NewNop()
 
-	provisioner := NewProvisioner(mockVPSie, "", nil)
+	provisioner := NewProvisioner(mockVPSie, nil)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
 
@@ -477,7 +477,7 @@ func TestVPSAlreadyDeleted(t *testing.T) {
 	mockVPSie := NewMockVPSieClient()
 	logger := zap.NewNop()
 
-	provisioner := NewProvisioner(mockVPSie, "", nil)
+	provisioner := NewProvisioner(mockVPSie, nil)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
 
@@ -522,7 +522,7 @@ func TestTerminationWithNoVPSID(t *testing.T) {
 	mockVPSie := NewMockVPSieClient()
 	logger := zap.NewNop()
 
-	provisioner := NewProvisioner(mockVPSie, "", nil)
+	provisioner := NewProvisioner(mockVPSie, nil)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
 

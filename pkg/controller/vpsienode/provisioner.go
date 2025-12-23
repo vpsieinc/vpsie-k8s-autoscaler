@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"time"
 
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,18 +16,15 @@ import (
 // Provisioner handles VPS provisioning operations
 type Provisioner struct {
 	vpsieClient VPSieClientInterface
-	// Cloud-init template for node bootstrapping
-	cloudInitTemplate string
 	// SSH key IDs to inject into VPS
 	sshKeyIDs []string
 }
 
 // NewProvisioner creates a new Provisioner
-func NewProvisioner(vpsieClient VPSieClientInterface, cloudInitTemplate string, sshKeyIDs []string) *Provisioner {
+func NewProvisioner(vpsieClient VPSieClientInterface, sshKeyIDs []string) *Provisioner {
 	return &Provisioner{
-		vpsieClient:       vpsieClient,
-		cloudInitTemplate: cloudInitTemplate,
-		sshKeyIDs:         sshKeyIDs,
+		vpsieClient: vpsieClient,
+		sshKeyIDs:   sshKeyIDs,
 	}
 }
 
@@ -56,6 +52,7 @@ func (p *Provisioner) createVPS(ctx context.Context, vn *v1alpha1.VPSieNode, log
 	hostname := p.generateHostname(vn)
 
 	// Create VPS request
+	// Note: Node configuration is handled by VPSie API via QEMU agent
 	req := vpsieclient.CreateVPSRequest{
 		Name:         vn.Name,
 		Hostname:     hostname,
@@ -63,7 +60,6 @@ func (p *Provisioner) createVPS(ctx context.Context, vn *v1alpha1.VPSieNode, log
 		DatacenterID: vn.Spec.DatacenterID,
 		OSImageID:    vn.Spec.OSImageID,
 		SSHKeyIDs:    p.getSSHKeyIDs(vn),
-		UserData:     vn.Spec.UserData,
 		Tags:         []string{"kubernetes", "autoscaler", vn.Spec.NodeGroupName},
 		Notes:        fmt.Sprintf("Managed by VPSie Kubernetes Autoscaler - NodeGroup: %s", vn.Spec.NodeGroupName),
 	}
@@ -235,36 +231,6 @@ func (p *Provisioner) generateHostname(vn *v1alpha1.VPSieNode) string {
 	// Generate hostname from VPSieNode name
 	// Kubernetes node names must be lowercase and can contain dashes
 	return vn.Name
-}
-
-// generateCloudInit generates cloud-init user data for node bootstrapping
-func (p *Provisioner) generateCloudInit(vn *v1alpha1.VPSieNode) string {
-	// If a template is provided, use it
-	if p.cloudInitTemplate != "" {
-		// TODO: Replace template variables with actual values
-		// For now, return the template as-is
-		return p.cloudInitTemplate
-	}
-
-	// Generate basic cloud-init that sets hostname and prepares for kubeadm
-	hostname := p.generateHostname(vn)
-	return fmt.Sprintf(`#cloud-config
-hostname: %s
-fqdn: %s
-manage_etc_hosts: true
-
-packages:
-  - curl
-  - apt-transport-https
-  - ca-certificates
-  - gnupg
-
-runcmd:
-  - echo "VPSie Kubernetes Node - %s" > /etc/motd
-  - echo "NodeGroup: %s" >> /etc/motd
-  - echo "VPSieNode: %s" >> /etc/motd
-  - echo "Node provisioned at: %s" >> /etc/motd
-`, hostname, hostname, vn.Name, vn.Spec.NodeGroupName, vn.Name, time.Now().Format(time.RFC3339))
 }
 
 // getSSHKeyIDs returns SSH key IDs to use for VPS provisioning

@@ -104,12 +104,7 @@ func TestNodeGroup_WithScalingPolicies(t *testing.T) {
 	assert.Equal(t, int32(600), ng.Spec.ScaleDownPolicy.CooldownSeconds)
 }
 
-func TestNodeGroup_WithUserData(t *testing.T) {
-	userData := `#!/bin/bash
-set -euo pipefail
-apt-get update
-kubeadm join control-plane:6443 --token xxx --discovery-token-ca-cert-hash sha256:yyy`
-
+func TestNodeGroup_BasicSpec(t *testing.T) {
 	ng := &NodeGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-nodegroup",
@@ -121,14 +116,16 @@ kubeadm join control-plane:6443 --token xxx --discovery-token-ca-cert-hash sha25
 			DatacenterID: "us-east-1",
 			OfferingIDs:  []string{"small-2cpu-4gb"},
 			OSImageID:    "ubuntu-22.04-lts",
-			UserData:     userData,
 			SSHKeyIDs:    []string{"ssh-key-1", "ssh-key-2"},
 			Tags:         []string{"k8s-cluster", "production"},
 			Notes:        "Test node group",
 		},
 	}
 
-	assert.Contains(t, ng.Spec.UserData, "kubeadm join")
+	// Verify basic NodeGroup spec (UserData was removed in v0.6.0)
+	assert.Equal(t, int32(2), ng.Spec.MinNodes)
+	assert.Equal(t, int32(10), ng.Spec.MaxNodes)
+	assert.Equal(t, "us-east-1", ng.Spec.DatacenterID)
 	assert.Len(t, ng.Spec.SSHKeyIDs, 2)
 	assert.Len(t, ng.Spec.Tags, 2)
 	assert.Equal(t, "Test node group", ng.Spec.Notes)

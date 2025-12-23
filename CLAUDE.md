@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 VPSie Kubernetes Node Autoscaler - An intelligent Kubernetes node autoscaler that dynamically provisions and optimizes nodes using the VPSie cloud platform. The autoscaler automatically scales cluster nodes based on workload demands, optimizes costs by selecting appropriate instance types, and continuously rebalances nodes for best price/performance.
 
+**Current Version:** v0.5.0-alpha (Phase 5 Complete - Cost Optimization & Node Rebalancer)
+
 ## Build and Development Commands
 
 ### Building
@@ -149,37 +151,96 @@ The client implements:
 
 ### Key Package Structure
 
-- `pkg/vpsie/client/` - VPSie API client implementation
-  - `client.go` - Main client with Kubernetes secret integration and rate limiting
-  - `types.go` - API request/response types for VPSie API v2
-  - `errors.go` - Custom error types (APIError, SecretError, ConfigError)
+```
+pkg/
+├── apis/autoscaler/v1alpha1/  # CRD definitions and validation
+│   ├── types.go               # NodeGroup and VPSieNode type definitions
+│   └── validation.go          # OpenAPI v3 validation rules
+├── controller/                # Kubernetes controllers
+│   ├── nodegroup/             # NodeGroup controller (main reconciliation loop)
+│   └── vpsienode/             # VPSieNode controller (VPS lifecycle)
+├── scaler/                    # Scaling logic
+│   ├── scaler.go              # ScaleDownManager for node utilization analysis
+│   ├── policy.go              # PolicyEngine for scale-down safety checks
+│   └── drain.go               # Node draining and pod eviction
+├── rebalancer/                # Cost optimization and node rebalancing
+│   ├── analyzer.go            # Identifies rebalance candidates with safety checks
+│   ├── planner.go             # Creates migration plans (rolling, surge, blue-green)
+│   └── executor.go            # Executes node replacement operations
+├── vpsie/                     # VPSie cloud integration
+│   ├── client/                # VPSie API v2 client with rate limiting
+│   │   ├── client.go          # Main client with K8s secret integration
+│   │   ├── types.go           # API request/response types
+│   │   └── errors.go          # Custom error types
+│   └── cost/                  # Cost calculation and optimization
+│       ├── calculator.go      # Offering cost calculation with caching
+│       └── optimizer.go       # Right-sizing and savings recommendations
+├── metrics/                   # Prometheus metrics collection
+├── events/                    # Kubernetes event management
+└── webhook/                   # Validation webhooks
 
-- `pkg/apis/autoscaler/v1alpha1/` - NodeGroup CRD types and validation
+cmd/
+├── controller/                # Main controller binary with CLI
+└── webhook/                   # Webhook server binary
+```
 
-- `pkg/controller/nodegroup/` - NodeGroup controller reconciliation logic
+### Critical Architecture Notes
 
-- `internal/config/` - Configuration management
-- `internal/logging/` - Structured logging utilities
+1. **Controller Separation of Concerns:**
+   - `ScaleDownManager` (pkg/scaler/) identifies and drains nodes
+   - `NodeGroupReconciler` (pkg/controller/nodegroup/) handles VPSie VM termination and K8s node deletion
+   - This prevents race conditions between draining and VM termination
+
+2. **Rebalancer Safety:**
+   - `Analyzer` performs 5 safety checks (cluster health, PDB, local storage, maintenance windows, cooldowns)
+   - `Planner` creates strategic migration plans with rollback support
+   - `Executor` handles cordon, drain, provision, and rollback operations
+   - All operations respect PodDisruptionBudgets
+
+3. **VPSie Client:**
+   - Reads credentials from K8s secret `vpsie-secret` in `kube-system` namespace
+   - Implements automatic rate limiting (100 req/min default)
+   - Thread-safe credential updates for rotation
+   - Uses typed errors for better error handling
 
 ## Development Guidelines
 
 ### Dependencies
 
-The project uses Go 1.25.2 and key dependencies include:
-- Kubernetes client-go v0.28.0
-- controller-runtime v0.16.0
-- Prometheus client
+The project uses Go 1.24+ and key dependencies include:
+- Kubernetes client-go v0.28.4
+- controller-runtime v0.16.3
+- Prometheus client_golang v1.17.0
+- k8s.io/metrics v0.28.4 (for node utilization metrics)
 - Cobra for CLI
-- Viper for configuration
+- zap for structured logging
+- golang.org/x/time for rate limiting
 
 ### Testing Patterns
 
 When writing tests:
 - Unit tests go in `*_test.go` files alongside the code
-- Integration tests use build tag `// +build integration`
-- E2E tests use build tag `// +build e2e`
+- Integration tests use build tag `//go:build integration` (or legacy `// +build integration`)
+- Performance tests use build tag `//go:build performance`
+- E2E tests use build tag `//go:build e2e`
 - Use table-driven tests for multiple test cases
 - Mock external dependencies (VPSie API, Kubernetes API)
+
+### Running Individual Tests
+
+```bash
+# Run a specific test by name
+go test ./pkg/scaler -run TestScaleDownManager_IdentifyUnderutilizedNodes -v
+
+# Run tests in a specific package
+go test ./pkg/rebalancer/... -v
+
+# Run tests with race detector
+go test -race ./pkg/controller/nodegroup -v
+
+# Run a single integration test
+go test -tags=integration ./test/integration -run TestNodeGroup_CRUD -v
+```
 
 ### VPSie API Client Usage
 
@@ -243,7 +304,24 @@ The autoscaler can be deployed via:
 Required Kubernetes secret before deployment:
 ```bash
 kubectl create secret generic vpsie-secret \
-  --from-literal=token='your-vpsie-api-token' \
-  --from-literal=url='https://api.vpsie.com/v2' \
+  --from-literal=clientId='your-client-id' \
+  --from-literal=clientSecret='your-client-secret' \
   -n kube-system
 ```
+
+Note: The VPSie client uses OAuth authentication with `clientId` and `clientSecret`, not a simple API token.
+
+## Important Code Generation
+
+After modifying CRD types in `pkg/apis/autoscaler/v1alpha1/`:
+```bash
+# Regenerate DeepCopy methods and CRD manifests
+make generate
+
+# Verify generated CRDs
+ls -la deploy/crds/
+```
+
+The `controller-gen` tool generates:
+- `zz_generated.deepcopy.go` - DeepCopy methods for CRD types
+- `deploy/crds/*.yaml` - OpenAPI v3 validated CRD manifests

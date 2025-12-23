@@ -64,10 +64,8 @@ func (v *VPSieNodeValidator) Validate(vn *autoscalerv1alpha1.VPSieNode, operatio
 			return err
 		}
 
-		// Validate user data
-		if err := v.validateUserData(vn); err != nil {
-			return err
-		}
+		// User data/cloud-init validation was removed in v0.6.0
+		// Node configuration is now handled entirely by VPSie API
 	}
 
 	// UPDATE-specific validations
@@ -196,22 +194,11 @@ func (v *VPSieNodeValidator) validateSSHKeyIDs(vn *autoscalerv1alpha1.VPSieNode)
 	return nil
 }
 
-// validateUserData validates user data (cloud-init) - optional field
-func (v *VPSieNodeValidator) validateUserData(vn *autoscalerv1alpha1.VPSieNode) error {
-	// User data is optional
-	if vn.Spec.UserData == "" {
-		return nil
-	}
-
-	// Validate length (VPSie API may have limits)
-	const maxUserDataSize = 65536 // 64KB
-	if len(vn.Spec.UserData) > maxUserDataSize {
-		return fmt.Errorf("spec.userData exceeds maximum size of %d bytes", maxUserDataSize)
-	}
-
-	// Could add more validation here (e.g., check for valid cloud-init format)
-	// For now, just check basic constraints
-
+// validateInstanceConfiguration validates instance configuration
+// (User data/cloud-init support was removed in v0.6.0)
+func (v *VPSieNodeValidator) validateInstanceConfiguration(vn *autoscalerv1alpha1.VPSieNode) error {
+	// Instance configuration is now handled entirely by VPSie API
+	// No additional validation needed beyond CRD schema validation
 	return nil
 }
 

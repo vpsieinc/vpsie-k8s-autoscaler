@@ -35,10 +35,6 @@ type VPSieNodeSpec struct {
 	// +optional
 	SSHKeyIDs []string `json:"sshKeyIDs,omitempty"`
 
-	// UserData is cloud-init user data to configure this node
-	// +optional
-	UserData string `json:"userData,omitempty"`
-
 	// NodeName is the desired Kubernetes node name
 	// If not specified, it will be automatically generated
 	// +optional

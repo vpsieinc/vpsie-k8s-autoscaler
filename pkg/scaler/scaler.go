@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -165,6 +166,8 @@ func (s *ScaleDownManager) IdentifyUnderutilizedNodes(
 			s.logger.Info("skipping protected node",
 				"node", node.Name,
 				"nodeGroup", nodeGroup.Name)
+			// Note: This is during candidate identification, not a block decision
+			// Blocking metrics are recorded in CanScaleDown where the final decision is made
 			continue
 		}
 
@@ -247,12 +250,24 @@ func (s *ScaleDownManager) CanScaleDown(
 ) (bool, string, error) {
 	// Check cooldown period
 	if !s.isOutsideCooldownPeriod(nodeGroup.Name) {
+		// Record scale-down blocked due to cooldown
+		metrics.ScaleDownBlockedTotal.WithLabelValues(
+			nodeGroup.Name,
+			nodeGroup.Namespace,
+			"cooldown",
+		).Inc()
 		return false, "within cooldown period", nil
 	}
 
 	// Check minimum nodes constraint
 	currentNodes := len(nodeGroup.Status.Nodes)
 	if currentNodes <= int(nodeGroup.Spec.MinNodes) {
+		// Record scale-down blocked due to minimum nodes constraint
+		metrics.ScaleDownBlockedTotal.WithLabelValues(
+			nodeGroup.Name,
+			nodeGroup.Namespace,
+			"min_nodes",
+		).Inc()
 		return false, "at minimum nodes", nil
 	}
 
@@ -269,11 +284,37 @@ func (s *ScaleDownManager) CanScaleDown(
 	}
 
 	if !safe {
+		// Record scale-down blocked by safety checks
+		// Determine the specific reason for blocking
+		blockReason := "safety_check"
+		if strings.Contains(reason, "local storage") {
+			blockReason = "local_storage"
+		} else if strings.Contains(reason, "capacity") || strings.Contains(reason, "utilization") {
+			blockReason = "capacity"
+		} else if strings.Contains(reason, "anti-affinity") {
+			blockReason = "affinity"
+		} else if strings.Contains(reason, "protected") {
+			blockReason = "protected_node"
+		} else if strings.Contains(reason, "PDB") || strings.Contains(reason, "disruptions") {
+			blockReason = "pdb"
+		}
+
+		metrics.ScaleDownBlockedTotal.WithLabelValues(
+			nodeGroup.Name,
+			nodeGroup.Namespace,
+			blockReason,
+		).Inc()
 		return false, reason, nil
 	}
 
 	// Check policy constraints
 	if !s.policyEngine.AllowScaleDown(ctx, nodeGroup, node) {
+		// Record scale-down blocked by policy constraint
+		metrics.ScaleDownBlockedTotal.WithLabelValues(
+			nodeGroup.Name,
+			nodeGroup.Namespace,
+			"policy_constraint",
+		).Inc()
 		return false, "policy constraint", nil
 	}
 
@@ -322,6 +363,7 @@ func (s *ScaleDownManager) ScaleDown(
 			s.logger.Info("skipping node - cannot scale down",
 				"node", candidate.Node.Name,
 				"reason", reason)
+			// Metrics already recorded in CanScaleDown function
 			continue
 		}
 
@@ -598,6 +640,8 @@ func (s *ScaleDownManager) validatePDB(
 
 	// Check if eviction would violate PDB
 	if pdb.Status.DisruptionsAllowed < 1 {
+		// Note: PDB violations are also tracked as SafetyCheckFailuresTotal
+		// in the IsSafeToRemove function when this error is returned
 		return fmt.Errorf("PDB %s/%s does not allow disruptions", pdb.Namespace, pdb.Name)
 	}
 

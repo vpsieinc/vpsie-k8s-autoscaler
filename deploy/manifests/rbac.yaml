@@ -73,6 +73,9 @@ rules:
   - update
 
 # Core Kubernetes resources
+# NOTE: Node delete permission is broad and should be used carefully
+# In production, consider using ValidatingWebhook to restrict which nodes can be deleted
+# (e.g., only nodes with label autoscaler.vpsie.com/managed=true)
 - apiGroups:
   - ""
   resources:
@@ -83,7 +86,7 @@ rules:
   - watch
   - update
   - patch
-  - delete
+  - delete  # Required for scale-down operations
 - apiGroups:
   - ""
   resources:
@@ -106,13 +109,16 @@ rules:
   - create
   - patch
   - update
+# Restricted secret access: only the specific secret for VPSie credentials
+# This follows principle of least privilege
 - apiGroups:
   - ""
   resources:
   - secrets
+  resourceNames:
+  - vpsie-secret
   verbs:
   - get
-  - list
   - watch
 
 # PodDisruptionBudget permissions for safe scale-down

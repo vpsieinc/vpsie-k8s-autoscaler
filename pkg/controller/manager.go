@@ -179,12 +179,12 @@ func (cm *ControllerManager) setupControllers() error {
 	cm.logger.Info("Successfully registered NodeGroup controller")
 
 	// Setup VPSieNode controller
+	// Note: Node configuration is handled by VPSie API via QEMU agent
 	vpsieNodeReconciler := vpsienode.NewVPSieNodeReconciler(
 		cm.mgr.GetClient(),
 		cm.scheme,
 		cm.vpsieClient,
 		cm.logger,
-		cm.options.CloudInitTemplate,
 		cm.options.SSHKeyIDs,
 	)
 

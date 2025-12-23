@@ -53,7 +53,7 @@ func TestPendingPhaseTransition(t *testing.T) {
 		Logger:      logger,
 	}
 
-	provisioner := NewProvisioner(mockVPSie, "", nil)
+	provisioner := NewProvisioner(mockVPSie, nil)
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
@@ -114,7 +114,7 @@ func TestProvisioningPhaseTransition(t *testing.T) {
 		Logger:      logger,
 	}
 
-	provisioner := NewProvisioner(mockVPSie, "", nil)
+	provisioner := NewProvisioner(mockVPSie, nil)
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
@@ -207,7 +207,7 @@ func TestProvisioningPhaseWithExistingVPS(t *testing.T) {
 		Logger:      logger,
 	}
 
-	provisioner := NewProvisioner(mockVPSie, "", nil)
+	provisioner := NewProvisioner(mockVPSie, nil)
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
@@ -272,7 +272,7 @@ func TestProvisionedPhaseTransition(t *testing.T) {
 		Logger:      logger,
 	}
 
-	provisioner := NewProvisioner(mockVPSie, "", nil)
+	provisioner := NewProvisioner(mockVPSie, nil)
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
@@ -357,7 +357,7 @@ func TestJoiningPhaseTransitionWithNode(t *testing.T) {
 		Logger:      logger,
 	}
 
-	provisioner := NewProvisioner(mockVPSie, "", nil)
+	provisioner := NewProvisioner(mockVPSie, nil)
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
@@ -428,7 +428,7 @@ func TestJoiningPhaseWaitingForNode(t *testing.T) {
 		Logger:      logger,
 	}
 
-	provisioner := NewProvisioner(mockVPSie, "", nil)
+	provisioner := NewProvisioner(mockVPSie, nil)
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
@@ -501,7 +501,7 @@ func TestProvisioningTimeout(t *testing.T) {
 		Logger:      logger,
 	}
 
-	provisioner := NewProvisioner(mockVPSie, "", nil)
+	provisioner := NewProvisioner(mockVPSie, nil)
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
@@ -568,7 +568,7 @@ func TestJoiningTimeout(t *testing.T) {
 		Logger:      logger,
 	}
 
-	provisioner := NewProvisioner(mockVPSie, "", nil)
+	provisioner := NewProvisioner(mockVPSie, nil)
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
@@ -630,7 +630,7 @@ func TestVPSNotFoundError(t *testing.T) {
 		Logger:      logger,
 	}
 
-	provisioner := NewProvisioner(mockVPSie, "", nil)
+	provisioner := NewProvisioner(mockVPSie, nil)
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)

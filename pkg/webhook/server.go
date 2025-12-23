@@ -27,12 +27,12 @@ const (
 
 // Server represents the webhook server
 type Server struct {
-	server                 *http.Server
-	logger                 *zap.Logger
-	nodeGroupValidator     *NodeGroupValidator
-	vpsieNodeValidator     *VPSieNodeValidator
-	nodeDeletionValidator  *NodeDeletionValidator
-	decoder                runtime.Decoder
+	server                *http.Server
+	logger                *zap.Logger
+	nodeGroupValidator    *NodeGroupValidator
+	vpsieNodeValidator    *VPSieNodeValidator
+	nodeDeletionValidator *NodeDeletionValidator
+	decoder               runtime.Decoder
 }
 
 // ServerConfig contains webhook server configuration

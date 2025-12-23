@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2025-12-23
+
+### BREAKING CHANGES
+
+#### Cloud-Init Removal
+Node configuration is now handled entirely by VPSie API via QEMU agent. All cloud-init related fields have been removed from the NodeGroup CRD.
+
+**Removed Fields:**
+- `spec.userData` (deprecated)
+- `spec.cloudInitTemplate`
+- `spec.cloudInitTemplateRef`
+- `spec.cloudInitVariables`
+
+**Migration Required:**
+If you have NodeGroups using any of the removed cloud-init fields:
+
+1. **Remove cloud-init fields** from all NodeGroup resources:
+   ```bash
+   # Edit your NodeGroup manifests to remove:
+   # - userData
+   # - cloudInitTemplate
+   # - cloudInitTemplateRef
+   # - cloudInitVariables
+   kubectl edit nodegroup <your-nodegroup>
+   ```
+
+2. **Update CRDs:**
+   ```bash
+   kubectl apply -f deploy/crds/autoscaler.vpsie.com_nodegroups.yaml
+   ```
+
+3. **Restart the autoscaler controller** to pick up the new CRD version
+
+**Why this change:**
+Nodes are provisioned and configured through the VPSie API using QEMU agent, making cloud-init unnecessary. This simplifies the architecture and removes potential security vulnerabilities from template injection.
+
+### Changed
+- Node provisioning now relies entirely on VPSie API configuration via QEMU agent
+- Controller no longer accepts `cloudInitTemplate` configuration option
+- VPSie API handles all node configuration based on `osImageID` and `kubernetesVersion`
+
 ## [0.5.0-alpha] - 2024-12-03
 
 ### Phase 5: Cost Optimization & Node Rebalancer ✅

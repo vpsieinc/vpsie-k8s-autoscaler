@@ -7,6 +7,7 @@ import (
 
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -41,10 +42,16 @@ type NodeGroupReconciler struct {
 	VPSieClient      *vpsieclient.Client
 	ScaleDownManager ScaleDownManagerInterface
 	Logger           *zap.Logger
+	Recorder         record.EventRecorder
 }
 
 // SetupWithManager sets up the controller with the Manager
 func (r *NodeGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Initialize event recorder if not already set
+	if r.Recorder == nil {
+		r.Recorder = mgr.GetEventRecorderFor(ControllerName)
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.NodeGroup{}).
 		Owns(&v1alpha1.VPSieNode{}).

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
+
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,8 +21,28 @@ func (s *ScaleDownManager) IsSafeToRemove(
 ) (bool, string, error) {
 	s.logger.Debug("running safety checks for node removal", "node", node.Name)
 
+	// Get nodegroup labels for metrics (best effort)
+	nodeGroupName := node.Labels["autoscaler.vpsie.com/nodegroup"]
+	nodeGroupNamespace := node.Labels["autoscaler.vpsie.com/nodegroup-namespace"]
+	if nodeGroupName == "" {
+		nodeGroupName = "unknown"
+	}
+	if nodeGroupNamespace == "" {
+		nodeGroupNamespace = "unknown"
+	}
+
+	// Sanitize label values to prevent cardinality explosion
+	nodeGroupName, _ = metrics.SanitizeLabel(nodeGroupName)
+	nodeGroupNamespace, _ = metrics.SanitizeLabel(nodeGroupNamespace)
+
 	// Check 1: Node has no pods with local storage
 	if hasLocalStorage, reason := s.hasPodsWithLocalStorage(ctx, pods); hasLocalStorage {
+		// Record safety check failure: local storage
+		metrics.SafetyCheckFailuresTotal.WithLabelValues(
+			"local_storage",
+			nodeGroupName,
+			nodeGroupNamespace,
+		).Inc()
 		return false, reason, nil
 	}
 
@@ -28,11 +50,23 @@ func (s *ScaleDownManager) IsSafeToRemove(
 	if canSchedule, reason, err := s.canPodsBeRescheduled(ctx, pods); err != nil {
 		return false, "", err
 	} else if !canSchedule {
+		// Record safety check failure: rescheduling
+		metrics.SafetyCheckFailuresTotal.WithLabelValues(
+			"rescheduling",
+			nodeGroupName,
+			nodeGroupNamespace,
+		).Inc()
 		return false, reason, nil
 	}
 
 	// Check 3: System pods have alternatives
 	if hasUniqueSystem, reason := s.hasUniqueSystemPods(pods); hasUniqueSystem {
+		// Record safety check failure: unique system pods
+		metrics.SafetyCheckFailuresTotal.WithLabelValues(
+			"system_pods",
+			nodeGroupName,
+			nodeGroupNamespace,
+		).Inc()
 		return false, reason, nil
 	}
 
@@ -40,6 +74,12 @@ func (s *ScaleDownManager) IsSafeToRemove(
 	if hasViolation, reason, err := s.hasAntiAffinityViolations(ctx, pods); err != nil {
 		return false, "", err
 	} else if hasViolation {
+		// Record safety check failure: affinity
+		metrics.SafetyCheckFailuresTotal.WithLabelValues(
+			"affinity",
+			nodeGroupName,
+			nodeGroupNamespace,
+		).Inc()
 		return false, reason, nil
 	}
 
@@ -47,11 +87,23 @@ func (s *ScaleDownManager) IsSafeToRemove(
 	if insufficient, reason, err := s.hasInsufficientCapacity(ctx, node, pods); err != nil {
 		return false, "", err
 	} else if insufficient {
+		// Record safety check failure: capacity
+		metrics.SafetyCheckFailuresTotal.WithLabelValues(
+			"capacity",
+			nodeGroupName,
+			nodeGroupNamespace,
+		).Inc()
 		return false, reason, nil
 	}
 
 	// Check 6: Node is not annotated as protected
 	if s.isNodeProtected(node) {
+		// Record safety check failure: protection
+		metrics.SafetyCheckFailuresTotal.WithLabelValues(
+			"protection",
+			nodeGroupName,
+			nodeGroupNamespace,
+		).Inc()
 		return false, "node is protected", nil
 	}
 

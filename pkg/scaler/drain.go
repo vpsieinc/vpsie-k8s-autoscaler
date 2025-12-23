@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
+
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -34,11 +36,39 @@ const (
 // This ensures that nodes remain cordoned when pods are actively terminating,
 // preventing new pods from scheduling on nodes that are being removed.
 func (s *ScaleDownManager) DrainNode(ctx context.Context, node *corev1.Node) error {
+	// Start timing the drain operation
+	startTime := time.Now()
+
+	// Get nodegroup labels for metrics (best effort)
+	nodeGroupName := node.Labels["autoscaler.vpsie.com/nodegroup"]
+	nodeGroupNamespace := node.Labels["autoscaler.vpsie.com/nodegroup-namespace"]
+	if nodeGroupName == "" {
+		nodeGroupName = "unknown"
+	}
+	if nodeGroupNamespace == "" {
+		nodeGroupNamespace = "unknown"
+	}
+
+	// Sanitize label values to prevent cardinality explosion
+	nodeGroupName, _ = metrics.SanitizeLabel(nodeGroupName)
+	nodeGroupNamespace, _ = metrics.SanitizeLabel(nodeGroupNamespace)
+
+	// Helper function to record drain duration metric
+	recordDrainDuration := func(result string) {
+		duration := time.Since(startTime).Seconds()
+		metrics.NodeDrainDuration.WithLabelValues(
+			nodeGroupName,
+			nodeGroupNamespace,
+			result,
+		).Observe(duration)
+	}
+
 	s.logger.Info("starting node drain",
 		zap.String("node", node.Name))
 
 	// Step 1: Cordon the node
 	if err := s.cordonNode(ctx, node); err != nil {
+		recordDrainDuration("error")
 		return fmt.Errorf("failed to cordon node: %w", err)
 	}
 
@@ -49,6 +79,7 @@ func (s *ScaleDownManager) DrainNode(ctx context.Context, node *corev1.Node) err
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
 		_ = s.uncordonNode(cleanupCtx, node)
+		recordDrainDuration("error")
 		return fmt.Errorf("failed to get pods: %w", err)
 	}
 
@@ -58,6 +89,12 @@ func (s *ScaleDownManager) DrainNode(ctx context.Context, node *corev1.Node) err
 	if len(podsToEvict) == 0 {
 		s.logger.Info("no pods to evict",
 			zap.String("node", node.Name))
+		// Record successful drain with no pods to evict
+		recordDrainDuration("success")
+		metrics.NodeDrainPodsEvicted.WithLabelValues(
+			nodeGroupName,
+			nodeGroupNamespace,
+		).Observe(0)
 		return nil
 	}
 
@@ -71,6 +108,7 @@ func (s *ScaleDownManager) DrainNode(ctx context.Context, node *corev1.Node) err
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
 		_ = s.uncordonNode(cleanupCtx, node)
+		recordDrainDuration("error")
 		return fmt.Errorf("PDB validation failed: %w", err)
 	}
 
@@ -122,6 +160,13 @@ func (s *ScaleDownManager) DrainNode(ctx context.Context, node *corev1.Node) err
 		// Mark drain as failed
 		_ = s.annotateNodeDrainStatus(cleanupCtx, node, "failed")
 
+		// Determine result type for metrics
+		result := "error"
+		if drainCtx.Err() == context.DeadlineExceeded {
+			result = "timeout"
+		}
+		recordDrainDuration(result)
+
 		// Only uncordon on non-timeout failures
 		// If it's a timeout, pods are still being evicted, so leave node cordoned
 		// If it's a PDB violation or other error, rollback by uncordoning
@@ -149,6 +194,9 @@ func (s *ScaleDownManager) DrainNode(ctx context.Context, node *corev1.Node) err
 		defer cleanupCancel()
 		_ = s.annotateNodeDrainStatus(cleanupCtx, node, "timeout")
 
+		// Record timeout
+		recordDrainDuration("timeout")
+
 		// Don't uncordon here - pods are being terminated
 		if parentCancelled {
 			return fmt.Errorf("drain detached (parent cancelled), termination wait failed: %w", err)
@@ -160,6 +208,7 @@ func (s *ScaleDownManager) DrainNode(ctx context.Context, node *corev1.Node) err
 	// Use drain context for final verification
 	remainingPods, err := s.getNodePods(drainCtx, node.Name)
 	if err != nil {
+		recordDrainDuration("error")
 		if parentCancelled {
 			return fmt.Errorf("drain detached (parent cancelled), migration verification failed: %w", err)
 		}
@@ -169,6 +218,7 @@ func (s *ScaleDownManager) DrainNode(ctx context.Context, node *corev1.Node) err
 	// Filter out DaemonSets and static pods
 	activePods := s.filterPodsForEviction(remainingPods)
 	if len(activePods) > 0 {
+		recordDrainDuration("error")
 		if parentCancelled {
 			return fmt.Errorf("drain detached (parent cancelled), %d pods still running", len(activePods))
 		}
@@ -179,6 +229,13 @@ func (s *ScaleDownManager) DrainNode(ctx context.Context, node *corev1.Node) err
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cleanupCancel()
 	_ = s.annotateNodeDrainStatus(cleanupCtx, node, "complete")
+
+	// Record successful drain metrics
+	recordDrainDuration("success")
+	metrics.NodeDrainPodsEvicted.WithLabelValues(
+		nodeGroupName,
+		nodeGroupNamespace,
+	).Observe(float64(len(podsToEvict)))
 
 	s.logger.Info("node drain completed successfully",
 		zap.String("node", node.Name),

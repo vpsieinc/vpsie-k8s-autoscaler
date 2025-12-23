@@ -3,6 +3,8 @@ package cost
 import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+
+	metricsutil "github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 )
 
 // Metrics holds all Prometheus metrics for cost optimization
@@ -226,6 +228,11 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 
 // RecordCost records cost metrics for a NodeGroup
 func (m *Metrics) RecordCost(nodeGroup, namespace, datacenter string, cost *NodeGroupCost) {
+	// Sanitize label values to prevent cardinality explosion
+	nodeGroup, _ = metricsutil.SanitizeLabel(nodeGroup)
+	namespace, _ = metricsutil.SanitizeLabel(namespace)
+	datacenter, _ = metricsutil.SanitizeLabel(datacenter)
+
 	m.NodeGroupCostHourly.WithLabelValues(nodeGroup, namespace, datacenter).Set(cost.TotalHourly)
 	m.NodeGroupCostMonthly.WithLabelValues(nodeGroup, namespace, datacenter).Set(cost.TotalMonthly)
 	m.CostPerNode.WithLabelValues(nodeGroup, namespace).Set(cost.CostPerNode)
@@ -233,6 +240,10 @@ func (m *Metrics) RecordCost(nodeGroup, namespace, datacenter string, cost *Node
 
 // RecordUtilization records utilization metrics
 func (m *Metrics) RecordUtilization(nodeGroup, namespace string, utilization ResourceUtilization, efficiency float64) {
+	// Sanitize label values to prevent cardinality explosion
+	nodeGroup, _ = metricsutil.SanitizeLabel(nodeGroup)
+	namespace, _ = metricsutil.SanitizeLabel(namespace)
+
 	m.ResourceUtilizationCPU.WithLabelValues(nodeGroup, namespace).Set(utilization.CPUPercent)
 	m.ResourceUtilizationMemory.WithLabelValues(nodeGroup, namespace).Set(utilization.MemoryPercent)
 	m.ResourceUtilizationDisk.WithLabelValues(nodeGroup, namespace).Set(utilization.DiskPercent)
@@ -241,6 +252,10 @@ func (m *Metrics) RecordUtilization(nodeGroup, namespace string, utilization Res
 
 // RecordOptimizationOpportunities records optimization opportunity metrics
 func (m *Metrics) RecordOptimizationOpportunities(nodeGroup, namespace string, report *OptimizationReport) {
+	// Sanitize label values to prevent cardinality explosion
+	nodeGroup, _ = metricsutil.SanitizeLabel(nodeGroup)
+	namespace, _ = metricsutil.SanitizeLabel(namespace)
+
 	// Count opportunities by type
 	oppCounts := make(map[OptimizationType]int)
 	for _, opp := range report.Opportunities {
@@ -258,16 +273,29 @@ func (m *Metrics) RecordOptimizationOpportunities(nodeGroup, namespace string, r
 
 // RecordOptimizationApplied records a successful optimization
 func (m *Metrics) RecordOptimizationApplied(nodeGroup, namespace string, optimizationType OptimizationType) {
+	// Sanitize label values to prevent cardinality explosion
+	nodeGroup, _ = metricsutil.SanitizeLabel(nodeGroup)
+	namespace, _ = metricsutil.SanitizeLabel(namespace)
+
 	m.OptimizationsApplied.WithLabelValues(nodeGroup, namespace, string(optimizationType)).Inc()
 }
 
 // RecordOptimizationFailed records a failed optimization
 func (m *Metrics) RecordOptimizationFailed(nodeGroup, namespace string, optimizationType OptimizationType, reason string) {
+	// Sanitize label values to prevent cardinality explosion
+	nodeGroup, _ = metricsutil.SanitizeLabel(nodeGroup)
+	namespace, _ = metricsutil.SanitizeLabel(namespace)
+	reason, _ = metricsutil.SanitizeLabel(reason)
+
 	m.OptimizationsFailed.WithLabelValues(nodeGroup, namespace, string(optimizationType), reason).Inc()
 }
 
 // RecordTrend records cost trend metrics
 func (m *Metrics) RecordTrend(nodeGroup, namespace string, trend *CostTrend) {
+	// Sanitize label values to prevent cardinality explosion
+	nodeGroup, _ = metricsutil.SanitizeLabel(nodeGroup)
+	namespace, _ = metricsutil.SanitizeLabel(namespace)
+
 	// Convert trend direction to numeric value
 	trendValue := 0.0
 	switch trend.Trend {
@@ -284,31 +312,56 @@ func (m *Metrics) RecordTrend(nodeGroup, namespace string, trend *CostTrend) {
 	m.CostTrend.WithLabelValues(nodeGroup, namespace).Set(trendValue)
 
 	period := trend.EndTime.Sub(trend.StartTime).String()
+	// Sanitize period as well since it's user-derived
+	period, _ = metricsutil.SanitizeLabel(period)
 	m.CostChangePercent.WithLabelValues(nodeGroup, namespace, period).Set(trend.ChangePercent)
 }
 
 // RecordSnapshot increments snapshot counter
 func (m *Metrics) RecordSnapshot(nodeGroup, namespace string) {
+	// Sanitize label values to prevent cardinality explosion
+	nodeGroup, _ = metricsutil.SanitizeLabel(nodeGroup)
+	namespace, _ = metricsutil.SanitizeLabel(namespace)
+
 	m.SnapshotsRecorded.WithLabelValues(nodeGroup, namespace).Inc()
 }
 
 // RecordAnalysis records analysis execution metrics
 func (m *Metrics) RecordAnalysis(nodeGroup, namespace, analysisType string, duration float64) {
+	// Sanitize label values to prevent cardinality explosion
+	nodeGroup, _ = metricsutil.SanitizeLabel(nodeGroup)
+	namespace, _ = metricsutil.SanitizeLabel(namespace)
+	analysisType, _ = metricsutil.SanitizeLabel(analysisType)
+
 	m.AnalysisExecuted.WithLabelValues(nodeGroup, namespace, analysisType).Inc()
 	m.AnalysisDurationSeconds.WithLabelValues(nodeGroup, namespace, analysisType).Observe(duration)
 }
 
 // RecordAnalysisError records analysis error metrics
 func (m *Metrics) RecordAnalysisError(nodeGroup, namespace, analysisType, errorType string) {
+	// Sanitize label values to prevent cardinality explosion
+	nodeGroup, _ = metricsutil.SanitizeLabel(nodeGroup)
+	namespace, _ = metricsutil.SanitizeLabel(namespace)
+	analysisType, _ = metricsutil.SanitizeLabel(analysisType)
+	errorType, _ = metricsutil.SanitizeLabel(errorType)
+
 	m.AnalysisErrors.WithLabelValues(nodeGroup, namespace, analysisType, errorType).Inc()
 }
 
 // RecordWaste records waste estimate metrics
 func (m *Metrics) RecordWaste(nodeGroup, namespace string, wasteAmount float64) {
+	// Sanitize label values to prevent cardinality explosion
+	nodeGroup, _ = metricsutil.SanitizeLabel(nodeGroup)
+	namespace, _ = metricsutil.SanitizeLabel(namespace)
+
 	m.WasteEstimateMonthly.WithLabelValues(nodeGroup, namespace).Set(wasteAmount)
 }
 
 // RecordSavingsRealized records realized savings
 func (m *Metrics) RecordSavingsRealized(nodeGroup, namespace string, savings float64) {
+	// Sanitize label values to prevent cardinality explosion
+	nodeGroup, _ = metricsutil.SanitizeLabel(nodeGroup)
+	namespace, _ = metricsutil.SanitizeLabel(namespace)
+
 	m.SavingsRealizedMonthly.WithLabelValues(nodeGroup, namespace).Set(savings)
 }

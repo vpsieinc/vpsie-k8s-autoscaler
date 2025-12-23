@@ -3,6 +3,7 @@ package webhook
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,8 +11,11 @@ import (
 
 	"go.uber.org/zap"
 	admissionv1 "k8s.io/api/admission/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
 
+	"github.com/stretchr/testify/assert"
 	autoscalerv1alpha1 "github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 )
 
@@ -220,10 +224,10 @@ func TestHandleNodeGroupValidation_NilRequestValidation(t *testing.T) {
 	server := createTestServer(t)
 
 	tests := []struct {
-		name           string
+		name            string
 		admissionReview *admissionv1.AdmissionReview
-		expectedStatus int
-		expectedBody   string
+		expectedStatus  int
+		expectedBody    string
 	}{
 		{
 			name: "nil request",
@@ -518,4 +522,164 @@ func TestValidationLayers_AllLayersInOrder(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestHandleNodeDeletion_Security tests security aspects of node deletion validation
+func TestHandleNodeDeletion_Security(t *testing.T) {
+	logger := zap.NewNop()
+	validator := &mockNodeDeletionValidator{allowed: true}
+	server := &Server{
+		logger:                logger,
+		decoder:               getTestDecoder(),
+		nodeDeletionValidator: validator,
+	}
+
+	tests := []struct {
+		name            string
+		node            *corev1.Node
+		validatorError  error
+		expectedAllowed bool
+		expectedReason  string
+	}{
+		{
+			name: "managed node can be deleted",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "managed-node",
+					Labels: map[string]string{
+						"autoscaler.vpsie.com/managed": "true",
+					},
+				},
+			},
+			validatorError:  nil,
+			expectedAllowed: true,
+		},
+		{
+			name: "unmanaged node deletion blocked",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "unmanaged-node",
+				},
+			},
+			validatorError:  fmt.Errorf("node is not managed by autoscaler"),
+			expectedAllowed: false,
+			expectedReason:  "not managed",
+		},
+		{
+			name: "node with protection annotation blocked",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "protected-node",
+					Annotations: map[string]string{
+						"autoscaler.vpsie.com/scale-down-disabled": "true",
+					},
+					Labels: map[string]string{
+						"autoscaler.vpsie.com/managed": "true",
+					},
+				},
+			},
+			validatorError:  fmt.Errorf("node has scale-down protection"),
+			expectedAllowed: false,
+			expectedReason:  "protection",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			validator.err = tt.validatorError
+
+			// Create admission request
+			nodeBytes, _ := json.Marshal(tt.node)
+			admissionReq := &admissionv1.AdmissionRequest{
+				UID:       "test-uid",
+				Operation: admissionv1.Delete,
+				OldObject: runtime.RawExtension{
+					Raw: nodeBytes,
+				},
+			}
+
+			response := server.validateNodeDeletion(admissionReq)
+			assert.Equal(t, tt.expectedAllowed, response.Allowed)
+
+			if !tt.expectedAllowed && response.Result != nil {
+				assert.Contains(t, response.Result.Message, tt.expectedReason)
+			}
+		})
+	}
+}
+
+// TestHandleNodeDeletion_MalformedRequests tests handling of malformed requests
+func TestHandleNodeDeletion_MalformedRequests(t *testing.T) {
+	logger := zap.NewNop()
+	validator := &mockNodeDeletionValidator{allowed: true}
+	server := &Server{
+		logger:                logger,
+		decoder:               getTestDecoder(),
+		nodeDeletionValidator: validator,
+	}
+
+	tests := []struct {
+		name            string
+		operation       admissionv1.Operation
+		oldObject       runtime.RawExtension
+		expectedAllowed bool
+		expectedCode    int32
+	}{
+		{
+			name:            "non-DELETE operation allowed",
+			operation:       admissionv1.Update,
+			oldObject:       runtime.RawExtension{},
+			expectedAllowed: true,
+		},
+		{
+			name:            "empty oldObject rejected",
+			operation:       admissionv1.Delete,
+			oldObject:       runtime.RawExtension{},
+			expectedAllowed: false,
+			expectedCode:    http.StatusBadRequest,
+		},
+		{
+			name:      "invalid JSON in oldObject rejected",
+			operation: admissionv1.Delete,
+			oldObject: runtime.RawExtension{
+				Raw: []byte(`{"invalid json`),
+			},
+			expectedAllowed: false,
+			expectedCode:    http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			admissionReq := &admissionv1.AdmissionRequest{
+				UID:       "test-uid",
+				Operation: tt.operation,
+				OldObject: tt.oldObject,
+			}
+
+			response := server.validateNodeDeletion(admissionReq)
+			assert.Equal(t, tt.expectedAllowed, response.Allowed)
+
+			if !tt.expectedAllowed && response.Result != nil {
+				assert.Equal(t, tt.expectedCode, response.Result.Code)
+			}
+		})
+	}
+}
+
+// mockNodeDeletionValidator is a mock implementation for testing
+type mockNodeDeletionValidator struct {
+	allowed bool
+	err     error
+}
+
+func (m *mockNodeDeletionValidator) ValidateDelete(node *corev1.Node) error {
+	return m.err
+}
+
+// getTestDecoder returns a decoder for testing
+func getTestDecoder() runtime.Decoder {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	return serializer.NewCodecFactory(scheme).UniversalDeserializer()
 }

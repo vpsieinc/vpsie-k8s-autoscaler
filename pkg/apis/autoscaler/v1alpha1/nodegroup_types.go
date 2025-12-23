@@ -66,11 +66,6 @@ type NodeGroupSpec struct {
 	// +optional
 	SSHKeyIDs []string `json:"sshKeyIDs,omitempty"`
 
-	// UserData is cloud-init user data to configure new nodes
-	// This should include the script to join the node to the Kubernetes cluster
-	// +optional
-	UserData string `json:"userData,omitempty"`
-
 	// Tags are key-value pairs to tag VPSie instances for organization and billing
 	// +optional
 	Tags []string `json:"tags,omitempty"`

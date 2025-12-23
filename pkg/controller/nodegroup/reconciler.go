@@ -64,7 +64,7 @@ func (r *NodeGroupReconciler) reconcile(ctx context.Context, ng *v1alpha1.NodeGr
 		SetErrorCondition(ng, true, ReasonKubernetesAPIError, fmt.Sprintf("Failed to list VPSieNodes: %v", err))
 
 		// Update status with optimistic locking
-		if statusErr := r.Status().Patch(ctx, ng, patch); statusErr != nil{
+		if statusErr := r.Status().Patch(ctx, ng, patch); statusErr != nil {
 			if apierrors.IsConflict(statusErr) {
 				logger.Info("Status update conflict, will retry")
 				return ctrl.Result{Requeue: true}, nil
@@ -341,7 +341,8 @@ func (r *NodeGroupReconciler) buildVPSieNode(ng *v1alpha1.NodeGroup) *v1alpha1.V
 			OSImageID:         ng.Spec.OSImageID,
 			KubernetesVersion: ng.Spec.KubernetesVersion,
 			SSHKeyIDs:         ng.Spec.SSHKeyIDs,
-			UserData:          ng.Spec.UserData,
+			// Note: UserData/cloud-init support removed in v0.6.0
+			// Node configuration is now handled entirely via VPSie API
 		},
 	}
 
