@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 VPSie Kubernetes Node Autoscaler - An intelligent Kubernetes node autoscaler that dynamically provisions and optimizes nodes using the VPSie cloud platform. The autoscaler automatically scales cluster nodes based on workload demands, optimizes costs by selecting appropriate instance types, and continuously rebalances nodes for best price/performance.
 
-**Current Version:** v0.5.0-alpha (Phase 5 Complete - Cost Optimization & Node Rebalancer)
+**Current Version:** v0.6.0 (Phase 5+ Complete - Cost Optimization, Node Rebalancer, Security Hardening)
 
 ## Build and Development Commands
 
@@ -127,7 +127,7 @@ make helm-uninstall
 3. **Scaler** (`pkg/scaler/`) - Core scaling logic that determines when to scale up/down
 4. **Rebalancer** (`pkg/rebalancer/`) - Node rebalancing logic for cost optimization
 5. **Cost Calculator** (`pkg/vpsie/cost/`) - Analyzes and compares VPSie instance type costs
-6. **Metrics** (`pkg/metrics/`) - Prometheus metrics for observability
+6. **Metrics** (`pkg/metrics/`) - Prometheus metrics for observability with label sanitization
 
 ### Custom Resource Definitions (CRDs)
 
@@ -139,15 +139,19 @@ The autoscaler introduces a `NodeGroup` CRD (`autoscaler.vpsie.io/v1alpha1`) whi
 
 ### VPSie API Integration
 
-The client reads credentials from a Kubernetes secret named `vpsie-secret` in the `kube-system` namespace containing:
-- `token`: Base64-encoded VPSie API key
-- `url`: Base64-encoded VPSie API endpoint (optional, defaults to https://api.vpsie.com/v2)
+The client reads OAuth credentials from a Kubernetes secret named `vpsie-secret` in the `kube-system` namespace containing:
+- `clientId`: VPSie OAuth client ID
+- `clientSecret`: VPSie OAuth client secret
+- `url`: VPSie API endpoint (optional, defaults to https://api.vpsie.com/v2)
 
 The client implements:
+- OAuth authentication with automatic token refresh (RFC3339 expiry tracking)
 - Automatic rate limiting (100 requests/minute by default)
+- Circuit breaker for fault tolerance (prevents cascading failures to VPSie API)
 - Request retries with exponential backoff
 - Proper error handling with typed errors
 - Thread-safe credential updates for rotation
+- TLS validation (configurable, defaults to enabled)
 
 ### Key Package Structure
 
@@ -176,6 +180,9 @@ pkg/
 │       ├── calculator.go      # Offering cost calculation with caching
 │       └── optimizer.go       # Right-sizing and savings recommendations
 ├── metrics/                   # Prometheus metrics collection
+│   ├── metrics.go             # Core metrics definitions and registration
+│   ├── sanitize.go            # Label sanitization for security (v0.6.0+)
+│   └── sanitize_test.go       # Sanitization test suite
 ├── events/                    # Kubernetes event management
 └── webhook/                   # Validation webhooks
 
@@ -198,8 +205,10 @@ cmd/
    - All operations respect PodDisruptionBudgets
 
 3. **VPSie Client:**
-   - Reads credentials from K8s secret `vpsie-secret` in `kube-system` namespace
+   - Reads OAuth credentials (clientId, clientSecret) from K8s secret `vpsie-secret` in `kube-system` namespace
    - Implements automatic rate limiting (100 req/min default)
+   - Circuit breaker for fault tolerance (prevents cascading failures)
+   - Automatic token refresh with RFC3339 expiry tracking
    - Thread-safe credential updates for rotation
    - Uses typed errors for better error handling
 
@@ -325,3 +334,29 @@ ls -la deploy/crds/
 The `controller-gen` tool generates:
 - `zz_generated.deepcopy.go` - DeepCopy methods for CRD types
 - `deploy/crds/*.yaml` - OpenAPI v3 validated CRD manifests
+
+**Note:** If `controller-gen` is not installed:
+```bash
+go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
+```
+
+## Recent Breaking Changes (v0.6.0)
+
+### Cloud-Init Removal
+
+Node configuration is now handled entirely by VPSie API via QEMU agent. **All cloud-init related fields have been removed** from the NodeGroup CRD:
+
+**Removed Fields:**
+- `spec.userData` (deprecated)
+- `spec.cloudInitTemplate`
+- `spec.cloudInitTemplateRef`
+- `spec.cloudInitVariables`
+
+**Why:** VPSie API handles all node configuration based on `osImageID` and `kubernetesVersion`, making cloud-init unnecessary and removing potential security vulnerabilities from template injection.
+
+### Metrics Label Sanitization (v0.6.0)
+
+All Prometheus metric labels are now automatically sanitized to prevent cardinality explosion and injection attacks:
+- Special characters replaced with underscores
+- Maximum length enforced (100 characters)
+- See `pkg/metrics/sanitize.go` for implementation details

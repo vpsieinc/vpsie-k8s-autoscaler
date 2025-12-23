@@ -9,9 +9,12 @@ import (
 
 // RecordNodeGroupMetrics records all metrics for a NodeGroup
 func RecordNodeGroupMetrics(ng *v1alpha1.NodeGroup) {
+	nodegroup, _ := SanitizeLabel(ng.Name)
+	namespace, _ := SanitizeLabel(ng.Namespace)
+
 	labels := prometheus.Labels{
-		"nodegroup": ng.Name,
-		"namespace": ng.Namespace,
+		"nodegroup": nodegroup,
+		"namespace": namespace,
 	}
 
 	NodeGroupDesiredNodes.With(labels).Set(float64(ng.Status.DesiredNodes))
@@ -23,56 +26,77 @@ func RecordNodeGroupMetrics(ng *v1alpha1.NodeGroup) {
 
 // RecordVPSieNodePhase records the phase of a VPSieNode
 func RecordVPSieNodePhase(vn *v1alpha1.VPSieNode, phase v1alpha1.VPSieNodePhase, value float64) {
+	phaseStr, _ := SanitizeLabel(string(phase))
+	nodegroup, _ := SanitizeLabel(vn.Spec.NodeGroupName)
+	namespace, _ := SanitizeLabel(vn.Namespace)
+
 	labels := prometheus.Labels{
-		"phase":     string(phase),
-		"nodegroup": vn.Spec.NodeGroupName,
-		"namespace": vn.Namespace,
+		"phase":     phaseStr,
+		"nodegroup": nodegroup,
+		"namespace": namespace,
 	}
 	VPSieNodePhase.With(labels).Set(value)
 }
 
 // RecordPhaseTransition records a phase transition for a VPSieNode
 func RecordPhaseTransition(vn *v1alpha1.VPSieNode, fromPhase, toPhase v1alpha1.VPSieNodePhase) {
+	fromPhaseStr, _ := SanitizeLabel(string(fromPhase))
+	toPhaseStr, _ := SanitizeLabel(string(toPhase))
+	nodegroup, _ := SanitizeLabel(vn.Spec.NodeGroupName)
+	namespace, _ := SanitizeLabel(vn.Namespace)
+
 	labels := prometheus.Labels{
-		"from_phase": string(fromPhase),
-		"to_phase":   string(toPhase),
-		"nodegroup":  vn.Spec.NodeGroupName,
-		"namespace":  vn.Namespace,
+		"from_phase": fromPhaseStr,
+		"to_phase":   toPhaseStr,
+		"nodegroup":  nodegroup,
+		"namespace":  namespace,
 	}
 	VPSieNodePhaseTransitions.With(labels).Inc()
 }
 
 // RecordReconcileDuration records the duration of a reconciliation
 func RecordReconcileDuration(controller string, duration time.Duration) {
-	ControllerReconcileDuration.WithLabelValues(controller).Observe(duration.Seconds())
+	controllerSan, _ := SanitizeLabel(controller)
+	ControllerReconcileDuration.WithLabelValues(controllerSan).Observe(duration.Seconds())
 }
 
 // RecordReconcileError records a reconciliation error
 func RecordReconcileError(controller string, errorType string) {
-	ControllerReconcileErrors.WithLabelValues(controller, errorType).Inc()
+	controllerSan, _ := SanitizeLabel(controller)
+	errorTypeSan, _ := SanitizeLabel(errorType)
+	ControllerReconcileErrors.WithLabelValues(controllerSan, errorTypeSan).Inc()
 }
 
 // RecordReconcileResult records the result of a reconciliation
 func RecordReconcileResult(controller string, result string) {
-	ControllerReconcileTotal.WithLabelValues(controller, result).Inc()
+	controllerSan, _ := SanitizeLabel(controller)
+	resultSan, _ := SanitizeLabel(result)
+	ControllerReconcileTotal.WithLabelValues(controllerSan, resultSan).Inc()
 }
 
 // RecordAPIRequest records a VPSie API request
 func RecordAPIRequest(method string, status string, duration time.Duration) {
-	VPSieAPIRequests.WithLabelValues(method, status).Inc()
-	VPSieAPIRequestDuration.WithLabelValues(method).Observe(duration.Seconds())
+	methodSan, _ := SanitizeLabel(method)
+	statusSan, _ := SanitizeLabel(status)
+	VPSieAPIRequests.WithLabelValues(methodSan, statusSan).Inc()
+	VPSieAPIRequestDuration.WithLabelValues(methodSan).Observe(duration.Seconds())
 }
 
 // RecordAPIError records a VPSie API error
 func RecordAPIError(method string, errorType string) {
-	VPSieAPIErrors.WithLabelValues(method, errorType).Inc()
+	methodSan, _ := SanitizeLabel(method)
+	errorTypeSan, _ := SanitizeLabel(errorType)
+	VPSieAPIErrors.WithLabelValues(methodSan, errorTypeSan).Inc()
 }
 
 // RecordScaleUp records a scale-up operation
 func RecordScaleUp(nodeGroup, namespace string, nodesAdded int32) {
+	nodeGroupSan, _ := SanitizeLabel(nodeGroup)
+	namespaceSan, _ := SanitizeLabel(namespace)
+
 	labels := prometheus.Labels{
-		"nodegroup": nodeGroup,
-		"namespace": namespace,
+		"nodegroup": nodeGroupSan,
+		"namespace": namespaceSan,
 	}
 	ScaleUpTotal.With(labels).Inc()
 	ScaleUpNodesAdded.With(labels).Observe(float64(nodesAdded))
@@ -80,9 +104,12 @@ func RecordScaleUp(nodeGroup, namespace string, nodesAdded int32) {
 
 // RecordScaleDown records a scale-down operation
 func RecordScaleDown(nodeGroup, namespace string, nodesRemoved int32) {
+	nodeGroupSan, _ := SanitizeLabel(nodeGroup)
+	namespaceSan, _ := SanitizeLabel(namespace)
+
 	labels := prometheus.Labels{
-		"nodegroup": nodeGroup,
-		"namespace": namespace,
+		"nodegroup": nodeGroupSan,
+		"namespace": namespaceSan,
 	}
 	ScaleDownTotal.With(labels).Inc()
 	ScaleDownNodesRemoved.With(labels).Observe(float64(nodesRemoved))
@@ -90,33 +117,45 @@ func RecordScaleDown(nodeGroup, namespace string, nodesRemoved int32) {
 
 // RecordUnschedulablePod records an unschedulable pod
 func RecordUnschedulablePod(constraint, namespace string) {
-	UnschedulablePodsTotal.WithLabelValues(constraint, namespace).Inc()
+	constraintSan, _ := SanitizeLabel(constraint)
+	namespaceSan, _ := SanitizeLabel(namespace)
+	UnschedulablePodsTotal.WithLabelValues(constraintSan, namespaceSan).Inc()
 }
 
 // RecordPendingPods records the current number of pending pods
 func RecordPendingPods(namespace string, count int) {
-	PendingPodsGauge.WithLabelValues(namespace).Set(float64(count))
+	namespaceSan, _ := SanitizeLabel(namespace)
+	PendingPodsGauge.WithLabelValues(namespaceSan).Set(float64(count))
 }
 
 // RecordNodeProvisioningDuration records the time taken to provision a node
 func RecordNodeProvisioningDuration(nodeGroup, namespace string, duration time.Duration) {
+	nodeGroupSan, _ := SanitizeLabel(nodeGroup)
+	namespaceSan, _ := SanitizeLabel(namespace)
+
 	labels := prometheus.Labels{
-		"nodegroup": nodeGroup,
-		"namespace": namespace,
+		"nodegroup": nodeGroupSan,
+		"namespace": namespaceSan,
 	}
 	NodeProvisioningDuration.With(labels).Observe(duration.Seconds())
 }
 
 // RecordNodeTerminationDuration records the time taken to terminate a node
 func RecordNodeTerminationDuration(nodeGroup, namespace string, duration time.Duration) {
+	nodeGroupSan, _ := SanitizeLabel(nodeGroup)
+	namespaceSan, _ := SanitizeLabel(namespace)
+
 	labels := prometheus.Labels{
-		"nodegroup": nodeGroup,
-		"namespace": namespace,
+		"nodegroup": nodeGroupSan,
+		"namespace": namespaceSan,
 	}
 	NodeTerminationDuration.With(labels).Observe(duration.Seconds())
 }
 
 // RecordEventEmitted records a Kubernetes event emission
 func RecordEventEmitted(eventType, reason, objectKind string) {
-	EventsEmitted.WithLabelValues(eventType, reason, objectKind).Inc()
+	eventTypeSan, _ := SanitizeLabel(eventType)
+	reasonSan, _ := SanitizeLabel(reason)
+	objectKindSan, _ := SanitizeLabel(objectKind)
+	EventsEmitted.WithLabelValues(eventTypeSan, reasonSan, objectKindSan).Inc()
 }

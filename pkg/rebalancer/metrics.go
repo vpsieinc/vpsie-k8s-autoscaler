@@ -3,6 +3,7 @@ package rebalancer
 import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 )
 
 // Metrics holds all Prometheus metrics for node rebalancing
@@ -236,92 +237,142 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 
 // RecordPlanCreated records a plan creation
 func (m *Metrics) RecordPlanCreated(nodeGroup, namespace, strategy string) {
-	m.PlansCreated.WithLabelValues(nodeGroup, namespace, strategy).Inc()
+	nodeGroupSan, _ := metrics.SanitizeLabel(nodeGroup)
+	namespaceSan, _ := metrics.SanitizeLabel(namespace)
+	strategySan, _ := metrics.SanitizeLabel(strategy)
+	m.PlansCreated.WithLabelValues(nodeGroupSan, namespaceSan, strategySan).Inc()
 }
 
 // RecordPlanExecuted records a successful plan execution
 func (m *Metrics) RecordPlanExecuted(nodeGroup, namespace, strategy string, duration float64) {
-	m.PlansExecuted.WithLabelValues(nodeGroup, namespace, strategy).Inc()
-	m.PlansDuration.WithLabelValues(nodeGroup, namespace, strategy).Observe(duration)
+	nodeGroupSan, _ := metrics.SanitizeLabel(nodeGroup)
+	namespaceSan, _ := metrics.SanitizeLabel(namespace)
+	strategySan, _ := metrics.SanitizeLabel(strategy)
+	m.PlansExecuted.WithLabelValues(nodeGroupSan, namespaceSan, strategySan).Inc()
+	m.PlansDuration.WithLabelValues(nodeGroupSan, namespaceSan, strategySan).Observe(duration)
 }
 
 // RecordPlanFailed records a failed plan execution
 func (m *Metrics) RecordPlanFailed(nodeGroup, namespace, strategy, reason string) {
-	m.PlansFailed.WithLabelValues(nodeGroup, namespace, strategy, reason).Inc()
+	nodeGroupSan, _ := metrics.SanitizeLabel(nodeGroup)
+	namespaceSan, _ := metrics.SanitizeLabel(namespace)
+	strategySan, _ := metrics.SanitizeLabel(strategy)
+	reasonSan, _ := metrics.SanitizeLabel(reason)
+	m.PlansFailed.WithLabelValues(nodeGroupSan, namespaceSan, strategySan, reasonSan).Inc()
 }
 
 // RecordNodeProvisioned records a successful node provisioning
 func (m *Metrics) RecordNodeProvisioned(nodeGroup, namespace, offering string, duration float64) {
-	m.NodesProvisioned.WithLabelValues(nodeGroup, namespace, offering).Inc()
-	m.ProvisionDuration.WithLabelValues(nodeGroup, namespace, offering).Observe(duration)
+	nodeGroupSan, _ := metrics.SanitizeLabel(nodeGroup)
+	namespaceSan, _ := metrics.SanitizeLabel(namespace)
+	offeringSan, _ := metrics.SanitizeLabel(offering)
+	m.NodesProvisioned.WithLabelValues(nodeGroupSan, namespaceSan, offeringSan).Inc()
+	m.ProvisionDuration.WithLabelValues(nodeGroupSan, namespaceSan, offeringSan).Observe(duration)
 }
 
 // RecordNodeDrained records a successful node drain
 func (m *Metrics) RecordNodeDrained(nodeGroup, namespace string, duration float64) {
-	m.NodesDrained.WithLabelValues(nodeGroup, namespace).Inc()
-	m.DrainDuration.WithLabelValues(nodeGroup, namespace).Observe(duration)
+	nodeGroupSan, _ := metrics.SanitizeLabel(nodeGroup)
+	namespaceSan, _ := metrics.SanitizeLabel(namespace)
+	m.NodesDrained.WithLabelValues(nodeGroupSan, namespaceSan).Inc()
+	m.DrainDuration.WithLabelValues(nodeGroupSan, namespaceSan).Observe(duration)
 }
 
 // RecordNodeTerminated records a successful node termination
 func (m *Metrics) RecordNodeTerminated(nodeGroup, namespace string, duration float64) {
-	m.NodesTerminated.WithLabelValues(nodeGroup, namespace).Inc()
-	m.TerminateDuration.WithLabelValues(nodeGroup, namespace).Observe(duration)
+	nodeGroupSan, _ := metrics.SanitizeLabel(nodeGroup)
+	namespaceSan, _ := metrics.SanitizeLabel(namespace)
+	m.NodesTerminated.WithLabelValues(nodeGroupSan, namespaceSan).Inc()
+	m.TerminateDuration.WithLabelValues(nodeGroupSan, namespaceSan).Observe(duration)
 }
 
 // RecordNodeFailed records a failed node operation
 func (m *Metrics) RecordNodeFailed(nodeGroup, namespace, operation, reason string) {
-	m.NodesFailed.WithLabelValues(nodeGroup, namespace, operation, reason).Inc()
+	nodeGroupSan, _ := metrics.SanitizeLabel(nodeGroup)
+	namespaceSan, _ := metrics.SanitizeLabel(namespace)
+	operationSan, _ := metrics.SanitizeLabel(operation)
+	reasonSan, _ := metrics.SanitizeLabel(reason)
+	m.NodesFailed.WithLabelValues(nodeGroupSan, namespaceSan, operationSan, reasonSan).Inc()
 }
 
 // RecordSafetyCheckPassed records a passed safety check
 func (m *Metrics) RecordSafetyCheckPassed(nodeGroup, namespace, category string) {
-	m.SafetyChecksPassed.WithLabelValues(nodeGroup, namespace, category).Inc()
+	nodeGroupSan, _ := metrics.SanitizeLabel(nodeGroup)
+	namespaceSan, _ := metrics.SanitizeLabel(namespace)
+	categorySan, _ := metrics.SanitizeLabel(category)
+	m.SafetyChecksPassed.WithLabelValues(nodeGroupSan, namespaceSan, categorySan).Inc()
 }
 
 // RecordSafetyCheckFailed records a failed safety check
 func (m *Metrics) RecordSafetyCheckFailed(nodeGroup, namespace, category, reason string) {
-	m.SafetyChecksFailed.WithLabelValues(nodeGroup, namespace, category, reason).Inc()
+	nodeGroupSan, _ := metrics.SanitizeLabel(nodeGroup)
+	namespaceSan, _ := metrics.SanitizeLabel(namespace)
+	categorySan, _ := metrics.SanitizeLabel(category)
+	reasonSan, _ := metrics.SanitizeLabel(reason)
+	m.SafetyChecksFailed.WithLabelValues(nodeGroupSan, namespaceSan, categorySan, reasonSan).Inc()
 }
 
 // RecordRollback records a rollback execution
 func (m *Metrics) RecordRollback(nodeGroup, namespace, reason string) {
-	m.RollbacksExecuted.WithLabelValues(nodeGroup, namespace, reason).Inc()
+	nodeGroupSan, _ := metrics.SanitizeLabel(nodeGroup)
+	namespaceSan, _ := metrics.SanitizeLabel(namespace)
+	reasonSan, _ := metrics.SanitizeLabel(reason)
+	m.RollbacksExecuted.WithLabelValues(nodeGroupSan, namespaceSan, reasonSan).Inc()
 }
 
 // UpdateProgress updates the current progress of a rebalancing operation
 func (m *Metrics) UpdateProgress(nodeGroup, namespace, planID string, percent float64) {
-	m.CurrentProgress.WithLabelValues(nodeGroup, namespace, planID).Set(percent)
+	nodeGroupSan, _ := metrics.SanitizeLabel(nodeGroup)
+	namespaceSan, _ := metrics.SanitizeLabel(namespace)
+	planIDSan, _ := metrics.SanitizeLabel(planID)
+	m.CurrentProgress.WithLabelValues(nodeGroupSan, namespaceSan, planIDSan).Set(percent)
 }
 
 // UpdateCurrentBatch updates the current batch number
 func (m *Metrics) UpdateCurrentBatch(nodeGroup, namespace, planID string, batchNumber int) {
-	m.CurrentBatch.WithLabelValues(nodeGroup, namespace, planID).Set(float64(batchNumber))
+	nodeGroupSan, _ := metrics.SanitizeLabel(nodeGroup)
+	namespaceSan, _ := metrics.SanitizeLabel(namespace)
+	planIDSan, _ := metrics.SanitizeLabel(planID)
+	m.CurrentBatch.WithLabelValues(nodeGroupSan, namespaceSan, planIDSan).Set(float64(batchNumber))
 }
 
 // UpdateEstimatedCompletion updates the estimated completion time
 func (m *Metrics) UpdateEstimatedCompletion(nodeGroup, namespace, planID string, seconds float64) {
-	m.EstimatedCompletionTime.WithLabelValues(nodeGroup, namespace, planID).Set(seconds)
+	nodeGroupSan, _ := metrics.SanitizeLabel(nodeGroup)
+	namespaceSan, _ := metrics.SanitizeLabel(namespace)
+	planIDSan, _ := metrics.SanitizeLabel(planID)
+	m.EstimatedCompletionTime.WithLabelValues(nodeGroupSan, namespaceSan, planIDSan).Set(seconds)
 }
 
 // RecordBatchExecuted records a successful batch execution
 func (m *Metrics) RecordBatchExecuted(nodeGroup, namespace string, duration float64) {
-	m.BatchesExecuted.WithLabelValues(nodeGroup, namespace).Inc()
-	m.BatchDuration.WithLabelValues(nodeGroup, namespace).Observe(duration)
+	nodeGroupSan, _ := metrics.SanitizeLabel(nodeGroup)
+	namespaceSan, _ := metrics.SanitizeLabel(namespace)
+	m.BatchesExecuted.WithLabelValues(nodeGroupSan, namespaceSan).Inc()
+	m.BatchDuration.WithLabelValues(nodeGroupSan, namespaceSan).Observe(duration)
 }
 
 // RecordBatchFailed records a failed batch execution
 func (m *Metrics) RecordBatchFailed(nodeGroup, namespace, reason string) {
-	m.BatchesFailed.WithLabelValues(nodeGroup, namespace, reason).Inc()
+	nodeGroupSan, _ := metrics.SanitizeLabel(nodeGroup)
+	namespaceSan, _ := metrics.SanitizeLabel(namespace)
+	reasonSan, _ := metrics.SanitizeLabel(reason)
+	m.BatchesFailed.WithLabelValues(nodeGroupSan, namespaceSan, reasonSan).Inc()
 }
 
 // RecordSavingsRealized records the cost savings realized from rebalancing
 func (m *Metrics) RecordSavingsRealized(nodeGroup, namespace string, monthlySavings float64) {
-	m.SavingsRealized.WithLabelValues(nodeGroup, namespace).Set(monthlySavings)
+	nodeGroupSan, _ := metrics.SanitizeLabel(nodeGroup)
+	namespaceSan, _ := metrics.SanitizeLabel(namespace)
+	m.SavingsRealized.WithLabelValues(nodeGroupSan, namespaceSan).Set(monthlySavings)
 }
 
 // ClearProgressMetrics clears progress metrics after rebalancing completes
 func (m *Metrics) ClearProgressMetrics(nodeGroup, namespace, planID string) {
-	m.CurrentProgress.DeleteLabelValues(nodeGroup, namespace, planID)
-	m.CurrentBatch.DeleteLabelValues(nodeGroup, namespace, planID)
-	m.EstimatedCompletionTime.DeleteLabelValues(nodeGroup, namespace, planID)
+	nodeGroupSan, _ := metrics.SanitizeLabel(nodeGroup)
+	namespaceSan, _ := metrics.SanitizeLabel(namespace)
+	planIDSan, _ := metrics.SanitizeLabel(planID)
+	m.CurrentProgress.DeleteLabelValues(nodeGroupSan, namespaceSan, planIDSan)
+	m.CurrentBatch.DeleteLabelValues(nodeGroupSan, namespaceSan, planIDSan)
+	m.EstimatedCompletionTime.DeleteLabelValues(nodeGroupSan, namespaceSan, planIDSan)
 }
