@@ -184,16 +184,18 @@ func TestExecutor_ProvisioningErrorHandling(t *testing.T) {
 			return
 		}
 
-		// Both nodes should fail at provisioning
-		if result.NodesFailed != 2 {
-			t.Errorf("Expected NodesFailed=2, got %d", result.NodesFailed)
+		// Surge strategy: 2 nodes fail at provisioning, then 2 more fail during drain (nodes don't exist)
+		// Total: 4 failures (2 provisioning + 2 drain)
+		if result.NodesFailed != 4 {
+			t.Errorf("Expected NodesFailed=4, got %d", result.NodesFailed)
 		}
 
+		// Only the provisioning failures are recorded in FailedNodes slice
 		if len(result.FailedNodes) != 2 {
-			t.Errorf("Expected 2 failed nodes, got %d", len(result.FailedNodes))
+			t.Errorf("Expected 2 failed nodes in FailedNodes slice, got %d", len(result.FailedNodes))
 		}
 
-		// Verify both failures are provision operations
+		// Verify provisioning failures are recorded with correct operation
 		for i, failure := range result.FailedNodes {
 			if failure.Operation != "provision" {
 				t.Errorf("Failed node %d: expected operation 'provision', got '%s'", i, failure.Operation)

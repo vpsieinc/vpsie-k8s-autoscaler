@@ -211,7 +211,8 @@ func TestNewClient_MissingClientIDKey(t *testing.T) {
 
 	var secretErr *SecretError
 	require.True(t, errors.As(err, &secretErr))
-	assert.Contains(t, secretErr.Reason, "does not contain 'clientId' key")
+	// Error message was updated to mention both token and OAuth options
+	assert.Contains(t, secretErr.Reason, "secret must contain either 'token'")
 }
 
 func TestNewClient_MissingClientSecretKey(t *testing.T) {
