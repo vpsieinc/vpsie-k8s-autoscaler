@@ -99,12 +99,23 @@ spec:
               osImageID:
                 description: OSImageID is the VPSie OS image ID to use for this node
                 type: string
+              project:
+                description: Project is the VPSie project ID
+                type: string
+              resourceIdentifier:
+                description: ResourceIdentifier is the VPSie Kubernetes cluster identifier
+                type: string
               sshKeyIDs:
                 description: SSHKeyIDs is a list of VPSie SSH key IDs to install on
                   this node
                 items:
                   type: string
                 type: array
+              vpsieGroupID:
+                description: |-
+                  VPSieGroupID is the numeric VPSie node group ID this node belongs to
+                  This is the numeric ID from ListK8sNodeGroups, used for adding nodes via API
+                type: integer
               vpsieInstanceID:
                 description: VPSieInstanceID is the VPSie VPS instance ID
                 type: integer
@@ -114,6 +125,8 @@ spec:
             - kubernetesVersion
             - nodeGroupName
             - osImageID
+            - project
+            - resourceIdentifier
             - vpsieInstanceID
             type: object
           status:

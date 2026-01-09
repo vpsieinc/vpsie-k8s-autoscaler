@@ -300,3 +300,55 @@ env: []
 
 ## Additional container arguments
 extraArgs: []
+
+## Network Policy configuration
+networkPolicy:
+  # Enable NetworkPolicy
+  enabled: true
+
+  # Ingress rules - who can access the autoscaler
+  ingress:
+    # Allow metrics scraping from Prometheus
+    prometheus:
+      enabled: true
+      # Namespace selector for Prometheus pods
+      namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      # Pod selector for Prometheus pods
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+
+    # Allow webhook calls from kube-apiserver
+    apiserver:
+      enabled: true
+      # Custom CIDR blocks for API server (if needed)
+      # Some clusters have API servers outside the cluster network
+      cidrBlocks: []
+
+  # Egress rules - what the autoscaler can access
+  egress:
+    # Allow DNS resolution
+    dns:
+      enabled: true
+      port: 53
+      protocol: UDP
+
+    # Allow Kubernetes API access
+    kubeapi:
+      enabled: true
+      port: 443
+
+    # Allow VPSie API access
+    vpsie:
+      enabled: true
+      # VPSie API typically on HTTPS
+      port: 443
+
+    # Additional custom egress rules
+    # custom:
+    #   - port: 8443
+    #     protocol: TCP
+    #     cidrBlocks:
+    #       - 10.0.0.0/8

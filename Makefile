@@ -111,7 +111,23 @@ test-coverage-integration:
 ## test-e2e: Run end-to-end tests
 test-e2e:
 	@echo "Running E2E tests..."
-	@go test -v -tags=e2e ./test/e2e/...
+	@go test -v -tags=e2e -timeout 30m ./test/e2e/...
+
+## test-e2e-quick: Run quick E2E tests (no cluster required)
+test-e2e-quick:
+	@echo "Running quick E2E tests..."
+	@go test -v -tags=e2e -timeout 10m ./test/e2e/ -run "TestAutoscaling_NodeGroupLifecycle|TestAutoscaling_ValidationRejection"
+
+## test-chaos: Run chaos engineering tests
+test-chaos:
+	@echo "Running chaos engineering tests..."
+	@go test -v -tags=chaos -timeout 20m ./test/chaos/...
+
+## test-real-api: Run tests against real VPSie API (requires credentials)
+test-real-api:
+	@echo "Running real VPSie API tests..."
+	@echo "Requires: VPSIE_CLIENT_ID, VPSIE_CLIENT_SECRET environment variables"
+	@VPSIE_REAL_API_TEST=true go test -v -tags=integration ./test/integration/ -run "TestRealAPI" -timeout 10m
 
 ## lint: Run linters
 lint:

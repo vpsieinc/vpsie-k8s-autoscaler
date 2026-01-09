@@ -1,0 +1,429 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vpsie-autoscaler-alerts
+  namespace: monitoring
+  labels:
+    app: vpsie-autoscaler
+    component: monitoring
+data:
+  alerts.yaml: |
+    groups:
+      # ========================================================================
+      # CRITICAL ALERTS - Require immediate attention
+      # ========================================================================
+      - name: vpsie-autoscaler-critical
+        interval: 30s
+        rules:
+          # CRITICAL-1: High VPSie API Error Rate
+          - alert: HighVPSieAPIErrorRate
+            expr: |
+              (
+                sum(rate(vpsie_api_errors_total[5m])) by (method)
+                /
+                sum(rate(vpsie_api_requests_total[5m])) by (method)
+              ) > 0.10
+            for: 5m
+            labels:
+              severity: critical
+              component: vpsie-api
+              team: platform
+            annotations:
+              summary: "High VPSie API error rate ({{ $value | humanizePercentage }})"
+              description: |
+                VPSie API method {{ $labels.method }} has an error rate of {{ $value | humanizePercentage }},
+                which is above the 10% threshold for 5 minutes.
+
+                This may indicate:
+                - VPSie API outage or degradation
+                - Invalid credentials or expired API token
+                - Rate limiting or quota exhaustion
+                - Network connectivity issues
+              runbook_url: "https://github.com/vpsie/vpsie-k8s-autoscaler/blob/main/docs/runbooks/high-api-error-rate.md"
+              dashboard_url: "https://grafana.example.com/d/vpsie-autoscaler"
+              action: "Check VPSie API status and autoscaler logs immediately"
+
+          # CRITICAL-2: Controller Down
+          - alert: ControllerDown
+            expr: |
+              absent(controller_reconcile_total{controller="nodegroup"}) == 1
+              or
+              rate(controller_reconcile_total{controller="nodegroup"}[10m]) == 0
+            for: 10m
+            labels:
+              severity: critical
+              component: controller
+              team: platform
+            annotations:
+              summary: "VPSie Autoscaler controller is down"
+              description: |
+                No reconciliation activity detected for 10 minutes. The controller may have crashed,
+                be stuck in a deadlock, or be unable to connect to the Kubernetes API.
+
+                Impact:
+                - No automatic scaling operations
+                - Pods may remain unschedulable
+                - Cluster capacity won't adjust to demand
+              runbook_url: "https://github.com/vpsie/vpsie-k8s-autoscaler/blob/main/docs/runbooks/controller-down.md"
+              action: "Check controller pod status and logs: kubectl -n kube-system logs -l app=vpsie-autoscaler"
+
+          # CRITICAL-3: Multiple Node Provisioning Failures
+          - alert: NodeProvisioningFailed
+            expr: |
+              sum(increase(vpsienode_phase{phase="Failed"}[15m])) by (nodegroup, namespace) > 3
+            for: 0m
+            labels:
+              severity: critical
+              component: provisioner
+              team: platform
+            annotations:
+              summary: "Multiple node provisioning failures in {{ $labels.nodegroup }}"
+              description: |
+                {{ $value }} nodes failed to provision in the last 15 minutes for NodeGroup {{ $labels.nodegroup }}.
+
+                Common causes:
+                - VPSie datacenter capacity exhausted
+                - Invalid offering ID or datacenter ID
+                - Insufficient VPSie account balance or quota
+                - Cloud-init script errors
+              runbook_url: "https://github.com/vpsie/vpsie-k8s-autoscaler/blob/main/docs/runbooks/provisioning-failed.md"
+              action: "Review failed VPSieNode resources and VPSie API responses"
+
+          # CRITICAL-4: NodeGroup at Max Capacity with Pending Pods
+          - alert: NodeGroupAtMaxCapacity
+            expr: |
+              (
+                nodegroup_current_nodes >= nodegroup_max_nodes
+              )
+              and
+              (
+                pending_pods_current{nodegroup!=""} > 0
+              )
+            for: 30m
+            labels:
+              severity: critical
+              component: scaler
+              team: platform
+            annotations:
+              summary: "NodeGroup {{ $labels.nodegroup }} at maximum capacity with pending pods"
+              description: |
+                NodeGroup {{ $labels.nodegroup }} has reached max_nodes={{ $value }} but still has
+                {{ $labels.pending_pods }} unschedulable pods waiting for 30 minutes.
+
+                Action required:
+                - Increase max_nodes if capacity is justified
+                - Review pod resource requests (may be too large)
+                - Check for scheduling constraints (affinity, taints)
+              runbook_url: "https://github.com/vpsie/vpsie-k8s-autoscaler/blob/main/docs/runbooks/max-capacity.md"
+              dashboard_url: "https://grafana.example.com/d/vpsie-autoscaler"
+
+      # ========================================================================
+      # WARNING ALERTS - Should be investigated soon
+      # ========================================================================
+      - name: vpsie-autoscaler-warning
+        interval: 60s
+        rules:
+          # WARNING-1: Slow Node Provisioning
+          - alert: SlowNodeProvisioning
+            expr: |
+              histogram_quantile(0.95,
+                sum(rate(node_provisioning_duration_seconds_bucket[30m])) by (le, nodegroup)
+              ) > 600
+            for: 15m
+            labels:
+              severity: warning
+              component: provisioner
+              team: platform
+            annotations:
+              summary: "Slow node provisioning in {{ $labels.nodegroup }} (P95 > 10 minutes)"
+              description: |
+                95th percentile provisioning time is {{ $value | humanizeDuration }} for NodeGroup {{ $labels.nodegroup }},
+                exceeding the 10-minute threshold.
+
+                This may cause:
+                - Delayed response to scaling events
+                - Extended pod pending time
+                - Poor user experience during traffic spikes
+
+                Investigate:
+                - VPSie API latency
+                - Cloud-init script performance
+                - Kubernetes node registration delays
+              runbook_url: "https://github.com/vpsie/vpsie-k8s-autoscaler/blob/main/docs/runbooks/slow-provisioning.md"
+
+          # WARNING-2: High Controller Reconciliation Duration
+          - alert: HighControllerReconcileDuration
+            expr: |
+              histogram_quantile(0.99,
+                sum(rate(controller_reconcile_duration_seconds_bucket{controller="nodegroup"}[15m])) by (le)
+              ) > 30
+            for: 15m
+            labels:
+              severity: warning
+              component: controller
+              team: platform
+            annotations:
+              summary: "High controller reconciliation duration (P99 > 30s)"
+              description: |
+                99th percentile reconciliation time is {{ $value | humanizeDuration }}, exceeding 30 seconds.
+
+                Possible causes:
+                - High VPSie API latency
+                - Large number of NodeGroups
+                - Kubernetes API slowness
+                - Resource contention on controller pod
+              runbook_url: "https://github.com/vpsie/vpsie-k8s-autoscaler/blob/main/docs/runbooks/slow-reconciliation.md"
+              action: "Check controller resource limits and API latencies"
+
+          # WARNING-3: VPSie API Rate Limiting
+          - alert: VPSieAPIRateLimited
+            expr: |
+              sum(rate(vpsie_api_rate_limited_total[5m])) by (method) > 0
+            for: 5m
+            labels:
+              severity: warning
+              component: vpsie-api
+              team: platform
+            annotations:
+              summary: "VPSie API rate limiting detected for method {{ $labels.method }}"
+              description: |
+                The autoscaler is being rate-limited by the VPSie API for {{ $labels.method }} calls.
+
+                Impact:
+                - Delayed scaling operations
+                - Slower reconciliation loops
+                - Potential timeout errors
+
+                Actions:
+                - Review rate limit configuration in autoscaler
+                - Contact VPSie support for quota increase
+                - Consider batching operations if possible
+              runbook_url: "https://github.com/vpsie/vpsie-k8s-autoscaler/blob/main/docs/runbooks/rate-limited.md"
+
+          # WARNING-4: Frequent Scale-Down Blocking
+          - alert: FrequentScaleDownBlocking
+            expr: |
+              sum(increase(scale_down_blocked_total{reason!="cooldown"}[30m])) by (nodegroup, reason) > 10
+            for: 30m
+            labels:
+              severity: warning
+              component: scaler
+              team: platform
+            annotations:
+              summary: "Frequent scale-down blocking in {{ $labels.nodegroup }} due to {{ $labels.reason }}"
+              description: |
+                Scale-down has been blocked {{ $value }} times in 30 minutes for {{ $labels.nodegroup }}
+                due to {{ $labels.reason }}.
+
+                Common reasons:
+                - local_storage: Pods using EmptyDir or HostPath
+                - pdb: PodDisruptionBudgets preventing eviction
+                - protected_node: Nodes with scale-down-disabled annotation
+                - affinity: Anti-affinity rules preventing rescheduling
+
+                This may indicate:
+                - Overly restrictive safety policies
+                - Workloads not designed for scaling
+                - Configuration issues
+              runbook_url: "https://github.com/vpsie/vpsie-k8s-autoscaler/blob/main/docs/runbooks/scale-down-blocked.md"
+              dashboard_url: "https://grafana.example.com/d/vpsie-autoscaler"
+
+          # WARNING-5: High Safety Check Failure Rate
+          - alert: HighSafetyCheckFailureRate
+            expr: |
+              sum(rate(safety_check_failures_total[15m])) by (check_type, nodegroup) > 0.1
+            for: 15m
+            labels:
+              severity: warning
+              component: scaler
+              team: platform
+            annotations:
+              summary: "High {{ $labels.check_type }} safety check failure rate in {{ $labels.nodegroup }}"
+              description: |
+                Safety check {{ $labels.check_type }} is failing at {{ $value | humanize }} failures/sec
+                for NodeGroup {{ $labels.nodegroup }}.
+
+                Check types and meanings:
+                - local_storage: Pods using local volumes
+                - rescheduling: Insufficient cluster capacity
+                - system_pods: Critical system pods without replicas
+                - affinity: Anti-affinity constraints
+                - capacity: Cluster resource exhaustion
+                - protection: Protected node annotations
+              runbook_url: "https://github.com/vpsie/vpsie-k8s-autoscaler/blob/main/docs/runbooks/safety-check-failures.md"
+
+          # WARNING-6: Nodes Stuck in Draining Phase
+          - alert: NodesStuckDraining
+            expr: |
+              sum(vpsienode_phase{phase="Draining"}) by (nodegroup, namespace) > 0
+            for: 30m
+            labels:
+              severity: warning
+              component: scaler
+              team: platform
+            annotations:
+              summary: "{{ $value }} nodes stuck in Draining phase for 30+ minutes"
+              description: |
+                {{ $value }} nodes in {{ $labels.nodegroup }} have been in Draining phase for over 30 minutes.
+
+                Common causes:
+                - PodDisruptionBudgets preventing eviction
+                - Pods with long termination grace periods
+                - Pods stuck in Terminating state
+                - Finalizers blocking deletion
+
+                Check drain status:
+                kubectl get vpsienodes -n {{ $labels.namespace }} -l phase=Draining
+              runbook_url: "https://github.com/vpsie/vpsie-k8s-autoscaler/blob/main/docs/runbooks/stuck-draining.md"
+
+          # WARNING-7: Rebalancing Failures
+          - alert: RebalancingFailed
+            expr: |
+              sum(increase(rebalancer_execution_errors_total[1h])) by (nodegroup) > 0
+            for: 0m
+            labels:
+              severity: warning
+              component: rebalancer
+              team: platform
+            annotations:
+              summary: "Rebalancing failures detected in {{ $labels.nodegroup }}"
+              description: |
+                {{ $value }} rebalancing operations failed in the last hour for {{ $labels.nodegroup }}.
+
+                Rebalancing optimizes costs by migrating to cheaper instance types.
+                Failures may indicate:
+                - Insufficient capacity in target datacenter
+                - Invalid target offering configuration
+                - Pod scheduling constraints preventing migration
+
+                Review rebalancer logs and recent NodeGroup changes.
+              runbook_url: "https://github.com/vpsie/vpsie-k8s-autoscaler/blob/main/docs/runbooks/rebalancing-failed.md"
+
+          # WARNING-8: Unschedulable Pods for Extended Period
+          - alert: UnschedulablePodsExtended
+            expr: |
+              sum(pending_pods_current{constraint!=""}) by (constraint, nodegroup) > 0
+            for: 15m
+            labels:
+              severity: warning
+              component: scaler
+              team: platform
+            annotations:
+              summary: "{{ $value }} pods unschedulable due to {{ $labels.constraint }} for 15+ minutes"
+              description: |
+                {{ $value }} pods have been pending for over 15 minutes due to {{ $labels.constraint }}.
+
+                Constraint types:
+                - cpu: Insufficient CPU capacity
+                - memory: Insufficient memory capacity
+                - storage: Insufficient disk space
+                - gpu: No nodes with GPUs available
+                - custom: Custom resource constraints
+
+                Actions:
+                - Check if NodeGroup can scale up (not at max_nodes)
+                - Review pod resource requests (may be too large)
+                - Verify NodeGroup offerings meet requirements
+              runbook_url: "https://github.com/vpsie/vpsie-k8s-autoscaler/blob/main/docs/runbooks/unschedulable-pods.md"
+              dashboard_url: "https://grafana.example.com/d/vpsie-autoscaler"
+
+          # WARNING-9: High Reconciliation Queue Depth (Phase 2)
+          - alert: HighReconciliationQueueDepth
+            expr: |
+              reconciliation_queue_depth{controller="nodegroup"} > 10
+            for: 10m
+            labels:
+              severity: warning
+              component: controller
+              team: platform
+            annotations:
+              summary: "High reconciliation queue depth ({{ $value }} items)"
+              description: |
+                The NodeGroup controller has {{ $value }} items in its reconciliation queue,
+                which indicates the controller cannot keep up with changes.
+
+                Possible causes:
+                - High rate of NodeGroup/VPSieNode changes
+                - Slow VPSie API responses
+                - Controller resource constraints
+                - Kubernetes API latency
+
+                Impact:
+                - Delayed scaling decisions
+                - Longer time to provision/terminate nodes
+                - Stale status information
+
+                Actions:
+                - Check controller CPU/memory usage
+                - Review VPSie API response times
+                - Consider increasing MaxConcurrentReconciles
+              runbook_url: "https://github.com/vpsie/vpsie-k8s-autoscaler/blob/main/docs/runbooks/high-queue-depth.md"
+              dashboard_url: "https://grafana.example.com/d/vpsie-autoscaler"
+
+          # WARNING-10: Cost Optimization Stalled (Phase 2)
+          - alert: CostOptimizationStalled
+            expr: |
+              (
+                cost_savings_estimated_monthly > 50
+              )
+              and on (nodegroup, namespace)
+              (
+                increase(rebalancer_operations_total{status="success"}[7d]) == 0
+              )
+            for: 24h
+            labels:
+              severity: warning
+              component: rebalancer
+              team: platform
+            annotations:
+              summary: "Cost optimization stalled for {{ $labels.nodegroup }} (${{ $value }}/month potential savings)"
+              description: |
+                NodeGroup {{ $labels.nodegroup }} has estimated monthly savings of ${{ $value }}
+                but no successful rebalancing operations in the last 7 days.
+
+                This may indicate:
+                - Rebalancer is disabled or not running
+                - Safety checks blocking all rebalance candidates
+                - Maintenance windows blocking operations
+                - Configuration issues preventing optimization
+
+                Potential monthly savings being missed: ${{ $value }}
+
+                Actions:
+                - Review rebalancer configuration and logs
+                - Check maintenance window settings
+                - Verify safety check policies are not overly restrictive
+              runbook_url: "https://github.com/vpsie/vpsie-k8s-autoscaler/blob/main/docs/runbooks/cost-optimization-stalled.md"
+              dashboard_url: "https://grafana.example.com/d/vpsie-autoscaler"
+
+          # WARNING-11: High Webhook Validation Latency (Phase 2)
+          - alert: HighWebhookValidationLatency
+            expr: |
+              histogram_quantile(0.95,
+                sum(rate(webhook_validation_duration_seconds_bucket[5m])) by (le, webhook)
+              ) > 1
+            for: 10m
+            labels:
+              severity: warning
+              component: webhook
+              team: platform
+            annotations:
+              summary: "High webhook validation latency for {{ $labels.webhook }} (P95 > 1s)"
+              description: |
+                Webhook {{ $labels.webhook }} P95 validation latency is {{ $value | humanizeDuration }}.
+
+                High webhook latency can impact:
+                - kubectl response time
+                - API server performance
+                - Pod/NodeGroup creation throughput
+
+                Possible causes:
+                - Complex validation logic
+                - External API calls in validation path
+                - Controller resource constraints
+
+                Actions:
+                - Review webhook implementation for optimization
+                - Check controller resource allocation
+                - Consider async validation where possible
+              runbook_url: "https://github.com/vpsie/vpsie-k8s-autoscaler/blob/main/docs/runbooks/high-webhook-latency.md"

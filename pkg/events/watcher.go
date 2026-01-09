@@ -10,6 +10,7 @@ import (
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -46,7 +47,19 @@ const (
 	// ConstraintPods indicates too many pods
 	ConstraintPods ResourceConstraint = "pods"
 
-	// ConstraintUnknown indicates an unknown constraint
+	// ConstraintNodeSelector indicates pod's node selector couldn't be satisfied
+	ConstraintNodeSelector ResourceConstraint = "node_selector"
+
+	// ConstraintTaint indicates node(s) had taints the pod didn't tolerate
+	ConstraintTaint ResourceConstraint = "taint"
+
+	// ConstraintAffinity indicates pod affinity rules couldn't be satisfied
+	ConstraintAffinity ResourceConstraint = "affinity"
+
+	// ConstraintAntiAffinity indicates pod anti-affinity rules couldn't be satisfied
+	ConstraintAntiAffinity ResourceConstraint = "anti_affinity"
+
+	// ConstraintUnknown indicates an unknown constraint (still triggers scale-up)
 	ConstraintUnknown ResourceConstraint = "unknown"
 )
 
@@ -160,11 +173,9 @@ func (w *EventWatcher) handleEvent(ctx context.Context, event *corev1.Event) {
 	}
 
 	// Parse the constraint type from the message
+	// All FailedScheduling events are considered - the ResourceAnalyzer will filter
+	// pods that can't match any NodeGroup
 	constraint := parseConstraint(event.Message)
-	if constraint == ConstraintUnknown {
-		// Not a resource constraint we care about
-		return
-	}
 
 	w.logger.Debug("Detected scheduling failure",
 		zap.String("pod", event.InvolvedObject.Name),
@@ -173,12 +184,8 @@ func (w *EventWatcher) handleEvent(ctx context.Context, event *corev1.Event) {
 		zap.String("message", event.Message),
 	)
 
-	// Get the pod
-	pod := &corev1.Pod{}
-	err := w.client.Get(ctx, client.ObjectKey{
-		Name:      event.InvolvedObject.Name,
-		Namespace: event.InvolvedObject.Namespace,
-	}, pod)
+	// Get the pod using direct clientset (not cached client) to avoid cache startup issues
+	pod, err := w.clientset.CoreV1().Pods(event.InvolvedObject.Namespace).Get(ctx, event.InvolvedObject.Name, metav1.GetOptions{})
 	if err != nil {
 		w.logger.Warn("Failed to get pod for event",
 			zap.String("pod", event.InvolvedObject.Name),
@@ -296,12 +303,15 @@ func parseConstraint(message string) ResourceConstraint {
 	message = strings.ToLower(message)
 
 	// Common patterns in FailedScheduling messages
-	// Check pods first since "too many pods" should be ConstraintPods not ConstraintCPU
+	// Check in order of specificity
+
+	// Pod count patterns
 	podsPatterns := []string{
 		"too many pods",
 		"maximum number of pods",
 	}
 
+	// Resource patterns
 	cpuPatterns := []string{
 		"insufficient cpu",
 		"insufficient.*cpu",
@@ -312,7 +322,35 @@ func parseConstraint(message string) ResourceConstraint {
 		"insufficient.*memory",
 	}
 
-	// Check pods first (more specific)
+	// Affinity/Anti-affinity patterns
+	antiAffinityPatterns := []string{
+		"anti-affinity",
+		"didn't match pod anti-affinity",
+		"pod anti-affinity",
+	}
+
+	affinityPatterns := []string{
+		"pod affinity",
+		"didn't match pod affinity",
+	}
+
+	// Taint patterns
+	taintPatterns := []string{
+		"untolerated taint",
+		"had taint",
+		"taints that the pod didn't tolerate",
+	}
+
+	// Node selector patterns
+	nodeSelectorPatterns := []string{
+		"node selector",
+		"didn't match pod's node selector",
+		"didn't match pod requirements",
+		"no nodes available",
+		"nodes are available",
+	}
+
+	// Check pods first (most specific resource constraint)
 	for _, pattern := range podsPatterns {
 		if matched, _ := regexp.MatchString(pattern, message); matched {
 			return ConstraintPods
@@ -330,6 +368,34 @@ func parseConstraint(message string) ResourceConstraint {
 	for _, pattern := range memoryPatterns {
 		if matched, _ := regexp.MatchString(pattern, message); matched {
 			return ConstraintMemory
+		}
+	}
+
+	// Check taints first (often combined with affinity in messages)
+	for _, pattern := range taintPatterns {
+		if matched, _ := regexp.MatchString(pattern, message); matched {
+			return ConstraintTaint
+		}
+	}
+
+	// Check anti-affinity (before affinity since anti-affinity contains "affinity")
+	for _, pattern := range antiAffinityPatterns {
+		if matched, _ := regexp.MatchString(pattern, message); matched {
+			return ConstraintAntiAffinity
+		}
+	}
+
+	// Check affinity
+	for _, pattern := range affinityPatterns {
+		if matched, _ := regexp.MatchString(pattern, message); matched {
+			return ConstraintAffinity
+		}
+	}
+
+	// Check node selector
+	for _, pattern := range nodeSelectorPatterns {
+		if matched, _ := regexp.MatchString(pattern, message); matched {
+			return ConstraintNodeSelector
 		}
 	}
 

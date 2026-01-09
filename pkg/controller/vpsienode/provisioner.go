@@ -40,52 +40,84 @@ func (p *Provisioner) Provision(ctx context.Context, vn *v1alpha1.VPSieNode, log
 	return p.createVPS(ctx, vn, logger)
 }
 
-// createVPS creates a new VPS instance via VPSie API
+// AnnotationCreationRequested is set when node creation has been requested but ID is not yet known
+const AnnotationCreationRequested = "autoscaler.vpsie.com/creation-requested"
+
+// createVPS creates a new VPS instance via VPSie Kubernetes API
 func (p *Provisioner) createVPS(ctx context.Context, vn *v1alpha1.VPSieNode, logger *zap.Logger) (ctrl.Result, error) {
-	logger.Info("Creating new VPS",
+	// Check if creation was already requested (to avoid duplicate API calls)
+	if vn.Annotations != nil && vn.Annotations[AnnotationCreationRequested] == "true" {
+		logger.Info("Node creation already requested, waiting for node to appear",
+			zap.String("vpsienode", vn.Name),
+		)
+		// TODO: In future, could try to discover node ID by listing nodes in the group
+		// For now, just wait and requeue
+		return ctrl.Result{RequeueAfter: FastRequeueAfter}, nil
+	}
+
+	logger.Info("Creating new Kubernetes node via VPSie API",
 		zap.String("vpsienode", vn.Name),
 		zap.String("instanceType", vn.Spec.InstanceType),
 		zap.String("datacenter", vn.Spec.DatacenterID),
+		zap.String("resourceIdentifier", vn.Spec.ResourceIdentifier),
+		zap.String("project", vn.Spec.Project),
+		zap.Int("groupID", vn.Spec.VPSieGroupID),
 	)
 
-	// Generate hostname
-	hostname := p.generateHostname(vn)
-
-	// Create VPS request
-	// Note: Node configuration is handled by VPSie API via QEMU agent
-	req := vpsieclient.CreateVPSRequest{
-		Name:         vn.Name,
-		Hostname:     hostname,
-		OfferingID:   vn.Spec.InstanceType,
-		DatacenterID: vn.Spec.DatacenterID,
-		OSImageID:    vn.Spec.OSImageID,
-		SSHKeyIDs:    p.getSSHKeyIDs(vn),
-		Tags:         []string{"kubernetes", "autoscaler", vn.Spec.NodeGroupName},
-		Notes:        fmt.Sprintf("Managed by VPSie Kubernetes Autoscaler - NodeGroup: %s", vn.Spec.NodeGroupName),
+	// Validate that we have the numeric group ID
+	if vn.Spec.VPSieGroupID == 0 {
+		logger.Error("VPSieGroupID is required to add node to cluster",
+			zap.String("vpsienode", vn.Name),
+		)
+		return ctrl.Result{RequeueAfter: DefaultRequeueAfter}, fmt.Errorf("VPSieGroupID is required")
 	}
 
-	// Call VPSie API to create VPS
-	vps, err := p.vpsieClient.CreateVM(ctx, req)
+	// Call VPSie Kubernetes API to add slave node to the specific group
+	// Uses the endpoint: POST /k8s/cluster/byId/{clusterIdentifier}/add/slave/group/{groupID}
+	vps, err := p.vpsieClient.AddK8sSlaveToGroup(ctx, vn.Spec.ResourceIdentifier, vn.Spec.VPSieGroupID)
 	if err != nil {
-		logger.Error("Failed to create VPS via VPSie API",
+		logger.Error("Failed to create K8s node via VPSie API",
 			zap.String("vpsienode", vn.Name),
+			zap.Int("groupID", vn.Spec.VPSieGroupID),
 			zap.Error(err),
 		)
 		return ctrl.Result{RequeueAfter: DefaultRequeueAfter}, fmt.Errorf("failed to create VPS: %w", err)
 	}
 
-	logger.Info("VPS created successfully",
+	logger.Info("K8s node creation request accepted",
 		zap.String("vpsienode", vn.Name),
 		zap.Int("vpsID", vps.ID),
 		zap.String("hostname", vps.Hostname),
+		zap.String("status", vps.Status),
 	)
+
+	// If API returned ID=0, it means the request was accepted but node creation is async
+	// Set an annotation to track that we've requested creation
+	if vps.ID == 0 {
+		logger.Info("Node creation requested but ID not yet assigned (async provisioning)",
+			zap.String("vpsienode", vn.Name),
+		)
+		if vn.Annotations == nil {
+			vn.Annotations = make(map[string]string)
+		}
+		vn.Annotations[AnnotationCreationRequested] = "true"
+		vn.Status.VPSieStatus = "provisioning"
+		SetVPSReadyCondition(vn, false, ReasonProvisioning, "Node creation requested, waiting for VPSie to provision")
+		now := metav1.Now()
+		vn.Status.CreatedAt = &now
+		return ctrl.Result{RequeueAfter: FastRequeueAfter}, nil
+	}
 
 	// Update VPSieNode spec with VPS information
 	vn.Spec.VPSieInstanceID = vps.ID
 	vn.Spec.IPAddress = vps.IPAddress
 	vn.Spec.IPv6Address = vps.IPv6Address
 	if vn.Spec.NodeName == "" {
-		vn.Spec.NodeName = hostname
+		if vps.Hostname != "" {
+			vn.Spec.NodeName = vps.Hostname
+		} else {
+			vn.Spec.NodeName = p.generateHostname(vn)
+		}
 	}
 
 	// Update status

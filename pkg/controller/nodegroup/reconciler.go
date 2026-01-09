@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	vpsieclient "github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/client"
 )
 
 const (
@@ -49,6 +50,17 @@ func (r *NodeGroupReconciler) reconcile(ctx context.Context, ng *v1alpha1.NodeGr
 		}
 
 		return ctrl.Result{}, err
+	}
+
+	// Ensure VPSie node group exists on the platform
+	if ng.Status.VPSieGroupID == 0 && r.VPSieClient != nil {
+		result, err := r.ensureVPSieNodeGroup(ctx, ng, logger)
+		if err != nil {
+			return result, err
+		}
+		if result.Requeue || result.RequeueAfter > 0 {
+			return result, nil
+		}
 	}
 
 	// Update conditions for reconciliation start
@@ -334,13 +346,16 @@ func (r *NodeGroupReconciler) buildVPSieNode(ng *v1alpha1.NodeGroup) *v1alpha1.V
 			Labels:    GetNodeGroupLabels(ng),
 		},
 		Spec: v1alpha1.VPSieNodeSpec{
-			VPSieInstanceID:   0, // Will be set by VPSieNode controller
-			InstanceType:      instanceType,
-			NodeGroupName:     ng.Name,
-			DatacenterID:      ng.Spec.DatacenterID,
-			OSImageID:         ng.Spec.OSImageID,
-			KubernetesVersion: ng.Spec.KubernetesVersion,
-			SSHKeyIDs:         ng.Spec.SSHKeyIDs,
+			VPSieInstanceID:    0, // Will be set by VPSieNode controller
+			InstanceType:       instanceType,
+			NodeGroupName:      ng.Name,
+			DatacenterID:       ng.Spec.DatacenterID,
+			ResourceIdentifier: ng.Spec.ResourceIdentifier,
+			Project:            ng.Spec.Project,
+			OSImageID:          ng.Spec.OSImageID,
+			KubernetesVersion:  ng.Spec.KubernetesVersion,
+			SSHKeyIDs:          ng.Spec.SSHKeyIDs,
+			VPSieGroupID:       ng.Status.VPSieGroupID, // Pass VPSie node group ID for API
 			// Note: UserData/cloud-init support removed in v0.6.0
 			// Node configuration is now handled entirely via VPSie API
 		},
@@ -394,4 +409,133 @@ func generateRandomSuffix() string {
 		return fmt.Sprintf("%x", time.Now().UnixNano()%0xFFFFFFFF)
 	}
 	return fmt.Sprintf("%x", b)
+}
+
+// ensureVPSieNodeGroup ensures the node group exists on VPSie platform
+// Creates the node group if it doesn't exist and stores the numeric group ID in status
+func (r *NodeGroupReconciler) ensureVPSieNodeGroup(ctx context.Context, ng *v1alpha1.NodeGroup, logger *zap.Logger) (ctrl.Result, error) {
+	logger.Info("Ensuring node group exists on VPSie platform",
+		zap.String("nodegroup", ng.Name),
+		zap.String("cluster", ng.Spec.ResourceIdentifier),
+		zap.Int("kubeSizeID", ng.Spec.KubeSizeID),
+	)
+
+	// Validate required fields for VPSie node group creation
+	if ng.Spec.KubeSizeID == 0 {
+		logger.Error("KubeSizeID is required to create node group on VPSie")
+		r.Recorder.Event(ng, corev1.EventTypeWarning, "ValidationFailed",
+			"KubeSizeID is required to create node group on VPSie platform")
+		SetErrorCondition(ng, true, ReasonValidationFailed, "KubeSizeID is required")
+		return ctrl.Result{}, fmt.Errorf("kubeSizeID is required")
+	}
+
+	if ng.Spec.ResourceIdentifier == "" {
+		logger.Error("ResourceIdentifier is required to create node group on VPSie")
+		r.Recorder.Event(ng, corev1.EventTypeWarning, "ValidationFailed",
+			"ResourceIdentifier (cluster ID) is required to create node group on VPSie platform")
+		SetErrorCondition(ng, true, ReasonValidationFailed, "ResourceIdentifier is required")
+		return ctrl.Result{}, fmt.Errorf("resourceIdentifier is required")
+	}
+
+	// First, check if node group already exists on VPSie by listing groups
+	groups, err := r.VPSieClient.ListK8sNodeGroups(ctx, ng.Spec.ResourceIdentifier)
+	if err != nil {
+		logger.Error("Failed to list node groups from VPSie",
+			zap.String("cluster", ng.Spec.ResourceIdentifier),
+			zap.Error(err),
+		)
+		r.Recorder.Eventf(ng, corev1.EventTypeWarning, "VPSieAPIError",
+			"Failed to list node groups from VPSie: %v", err)
+		SetErrorCondition(ng, true, ReasonVPSieAPIError, fmt.Sprintf("Failed to list VPSie node groups: %v", err))
+		return ctrl.Result{RequeueAfter: DefaultRequeueAfter}, err
+	}
+
+	// Check if group already exists by name
+	var numericGroupID int
+	for _, group := range groups {
+		if group.GroupName == ng.Name {
+			numericGroupID = group.ID
+			logger.Info("Found existing node group on VPSie platform",
+				zap.String("nodegroup", ng.Name),
+				zap.Int("vpsieGroupID", numericGroupID),
+			)
+			break
+		}
+	}
+
+	// If group doesn't exist, create it
+	if numericGroupID == 0 {
+		logger.Info("Creating node group on VPSie platform",
+			zap.String("nodegroup", ng.Name),
+			zap.Int("kubeSizeID", ng.Spec.KubeSizeID),
+		)
+
+		// Create node group on VPSie
+		req := vpsieclient.CreateK8sNodeGroupRequest{
+			ClusterIdentifier: ng.Spec.ResourceIdentifier,
+			GroupName:         ng.Name,
+			KubeSizeID:        ng.Spec.KubeSizeID,
+		}
+
+		_, err := r.VPSieClient.CreateK8sNodeGroup(ctx, req)
+		if err != nil {
+			logger.Error("Failed to create node group on VPSie",
+				zap.String("nodegroup", ng.Name),
+				zap.Error(err),
+			)
+			r.Recorder.Eventf(ng, corev1.EventTypeWarning, "VPSieAPIError",
+				"Failed to create node group on VPSie: %v", err)
+			SetErrorCondition(ng, true, ReasonVPSieAPIError, fmt.Sprintf("Failed to create VPSie node group: %v", err))
+			return ctrl.Result{RequeueAfter: DefaultRequeueAfter}, err
+		}
+
+		// Fetch the list again to get the numeric ID
+		groups, err = r.VPSieClient.ListK8sNodeGroups(ctx, ng.Spec.ResourceIdentifier)
+		if err != nil {
+			logger.Error("Failed to list node groups after creation",
+				zap.String("cluster", ng.Spec.ResourceIdentifier),
+				zap.Error(err),
+			)
+			return ctrl.Result{RequeueAfter: DefaultRequeueAfter}, err
+		}
+
+		// Find the newly created group
+		for _, group := range groups {
+			if group.GroupName == ng.Name {
+				numericGroupID = group.ID
+				break
+			}
+		}
+
+		if numericGroupID == 0 {
+			logger.Error("Created node group but could not find its numeric ID",
+				zap.String("nodegroup", ng.Name),
+			)
+			return ctrl.Result{RequeueAfter: DefaultRequeueAfter}, fmt.Errorf("could not find numeric ID for created node group")
+		}
+
+		logger.Info("Created node group on VPSie platform",
+			zap.String("nodegroup", ng.Name),
+			zap.Int("vpsieGroupID", numericGroupID),
+		)
+
+		r.Recorder.Eventf(ng, corev1.EventTypeNormal, "VPSieNodeGroupCreated",
+			"Created node group %s on VPSie platform (ID: %d)", ng.Name, numericGroupID)
+	}
+
+	// Update status with numeric VPSie group ID
+	patch := client.MergeFrom(ng.DeepCopy())
+	ng.Status.VPSieGroupID = numericGroupID
+
+	if err := r.Status().Patch(ctx, ng, patch); err != nil {
+		if apierrors.IsConflict(err) {
+			logger.Info("Status update conflict after setting VPSie node group ID, will retry")
+			return ctrl.Result{Requeue: true}, nil
+		}
+		logger.Error("Failed to update status with VPSie group ID", zap.Error(err))
+		return ctrl.Result{}, err
+	}
+
+	// Requeue to continue with normal reconciliation
+	return ctrl.Result{Requeue: true}, nil
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/vpsie/vpsie-k8s-autoscaler/internal/logging"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/client"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -41,11 +42,18 @@ func NewExecutor(kubeClient kubernetes.Interface, vpsieClient *client.Client, co
 
 // ExecuteRebalance executes a complete rebalancing plan
 func (e *Executor) ExecuteRebalance(ctx context.Context, plan *RebalancePlan) (*RebalanceResult, error) {
+	// Add correlation ID for request tracing if not already present
+	if logging.GetRequestID(ctx) == "" {
+		ctx = logging.WithRequestID(ctx)
+	}
+	requestID := logging.GetRequestID(ctx)
+
 	logger := log.FromContext(ctx)
 	logger.Info("Starting rebalance execution",
 		"planID", plan.ID,
 		"strategy", plan.Strategy,
-		"batches", len(plan.Batches))
+		"batches", len(plan.Batches),
+		"requestID", requestID)
 
 	result := &RebalanceResult{
 		PlanID:          plan.ID,
@@ -451,6 +459,7 @@ func (e *Executor) Rollback(ctx context.Context, plan *RebalancePlan, state *Exe
 	logger.Info("Starting rollback", "planID", plan.ID)
 
 	state.Status = StatusRollingBack
+	var rollbackErrors []error
 
 	if plan.RollbackPlan == nil {
 		return fmt.Errorf("no rollback plan available")
@@ -463,27 +472,147 @@ func (e *Executor) Rollback(ctx context.Context, plan *RebalancePlan, state *Exe
 		switch step.Action {
 		case "pause_execution":
 			state.Status = StatusPaused
+
 		case "uncordon_old_nodes":
-			// Uncordon any cordoned old nodes
-			// Implementation would iterate through state and uncordon nodes
+			// Uncordon any cordoned old nodes to restore cluster capacity
+			for _, batch := range plan.Batches {
+				for _, candidate := range batch.Nodes {
+					// Skip nodes that were fully replaced (not in failed state)
+					wasCompleted := false
+					for _, completed := range state.CompletedNodes {
+						if completed == candidate.NodeName {
+							wasCompleted = true
+							break
+						}
+					}
+					if wasCompleted {
+						continue
+					}
+
+					// Attempt to uncordon the node
+					err := e.UncordonNode(ctx, &Node{Name: candidate.NodeName})
+					if err != nil {
+						logger.Error(err, "Failed to uncordon node during rollback", "nodeName", candidate.NodeName)
+						rollbackErrors = append(rollbackErrors, fmt.Errorf("uncordon %s: %w", candidate.NodeName, err))
+					} else {
+						logger.Info("Node uncordoned during rollback", "nodeName", candidate.NodeName)
+					}
+				}
+			}
+
 		case "terminate_new_nodes":
-			// Terminate newly provisioned nodes
+			// Terminate newly provisioned nodes that are no longer needed
 			for _, nodeName := range state.ProvisionedNodes {
+				// Check if this node successfully replaced an old one
+				wasCompleted := false
+				for _, completed := range state.CompletedNodes {
+					if completed == nodeName {
+						wasCompleted = true
+						break
+					}
+				}
+				// Only terminate nodes that weren't part of successful replacements
+				if wasCompleted {
+					continue
+				}
+
 				node := &Node{Name: nodeName}
 				err := e.TerminateNode(ctx, node)
 				if err != nil {
 					logger.Error(err, "Failed to terminate node during rollback", "nodeName", nodeName)
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("terminate %s: %w", nodeName, err))
+				} else {
+					logger.Info("Node terminated during rollback", "nodeName", nodeName)
 				}
 			}
+
 		case "verify_workloads":
-			// Verify workloads are running
-			// Implementation would check pod status
+			// Verify workloads are running after rollback
+			err := e.verifyClusterHealth(ctx)
+			if err != nil {
+				logger.Error(err, "Cluster health check failed after rollback")
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("health check: %w", err))
+			} else {
+				logger.Info("Cluster health verified after rollback")
+			}
+
 		case "update_status":
 			state.Status = StatusFailed
 		}
 	}
 
-	logger.Info("Rollback completed", "planID", plan.ID)
+	logger.Info("Rollback completed", "planID", plan.ID, "errors", len(rollbackErrors))
+
+	if len(rollbackErrors) > 0 {
+		return fmt.Errorf("rollback completed with %d errors: %v", len(rollbackErrors), rollbackErrors)
+	}
+	return nil
+}
+
+// UncordonNode removes the unschedulable taint from a node
+func (e *Executor) UncordonNode(ctx context.Context, node *Node) error {
+	logger := log.FromContext(ctx)
+	logger.Info("Uncordoning node", "nodeName", node.Name)
+
+	k8sNode, err := e.kubeClient.CoreV1().Nodes().Get(ctx, node.Name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get node %s: %w", node.Name, err)
+	}
+
+	// Skip if already uncordoned
+	if !k8sNode.Spec.Unschedulable {
+		logger.Info("Node already schedulable", "nodeName", node.Name)
+		return nil
+	}
+
+	// Uncordon the node
+	k8sNode.Spec.Unschedulable = false
+	_, err = e.kubeClient.CoreV1().Nodes().Update(ctx, k8sNode, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to uncordon node %s: %w", node.Name, err)
+	}
+
+	logger.Info("Node uncordoned successfully", "nodeName", node.Name)
+	return nil
+}
+
+// verifyClusterHealth checks that the cluster is healthy after rollback
+func (e *Executor) verifyClusterHealth(ctx context.Context) error {
+	logger := log.FromContext(ctx)
+
+	// Check that nodes are ready
+	nodes, err := e.kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	readyCount := 0
+	totalCount := len(nodes.Items)
+
+	for _, node := range nodes.Items {
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+				readyCount++
+				break
+			}
+		}
+	}
+
+	if readyCount == 0 {
+		return fmt.Errorf("no ready nodes in cluster")
+	}
+
+	readyRatio := float64(readyCount) / float64(totalCount)
+	if readyRatio < 0.8 { // Require at least 80% ready nodes
+		return fmt.Errorf("cluster health degraded: only %d/%d nodes ready (%.0f%%)",
+			readyCount, totalCount, readyRatio*100)
+	}
+
+	logger.Info("Cluster health verified",
+		"readyNodes", readyCount,
+		"totalNodes", totalCount,
+		"readyRatio", fmt.Sprintf("%.0f%%", readyRatio*100))
+
 	return nil
 }
 

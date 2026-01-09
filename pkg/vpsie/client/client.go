@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
@@ -51,18 +53,111 @@ const (
 	// SecretClientSecretKey is the key name for the OAuth client secret in the secret
 	SecretClientSecretKey = "clientSecret"
 
+	// SecretTokenKey is the key name for a simple API token in the secret (alternative to OAuth)
+	SecretTokenKey = "token"
+
 	// SecretURLKey is the key name for the API URL in the secret (optional)
 	SecretURLKey = "url"
 
 	// TokenEndpoint is the VPSie authentication endpoint path
 	TokenEndpoint = "/auth/from/api"
+
+	// DefaultMaxRetries is the default maximum number of retries for transient errors
+	DefaultMaxRetries = 3
+
+	// DefaultInitialBackoff is the initial backoff duration for retries
+	DefaultInitialBackoff = 100 * time.Millisecond
+
+	// DefaultMaxBackoff is the maximum backoff duration between retries
+	DefaultMaxBackoff = 30 * time.Second
+
+	// DefaultBackoffMultiplier is the multiplier for exponential backoff
+	DefaultBackoffMultiplier = 2.0
+
+	// DefaultJitterFactor is the maximum jitter as a fraction of backoff (0.0-1.0)
+	DefaultJitterFactor = 0.2
 )
+
+// RetryConfig configures the retry behavior with exponential backoff
+type RetryConfig struct {
+	// MaxRetries is the maximum number of retry attempts (0 = no retries)
+	MaxRetries int
+
+	// InitialBackoff is the initial backoff duration
+	InitialBackoff time.Duration
+
+	// MaxBackoff is the maximum backoff duration
+	MaxBackoff time.Duration
+
+	// BackoffMultiplier is the multiplier for exponential backoff
+	BackoffMultiplier float64
+
+	// JitterFactor is the maximum jitter as a fraction of backoff (0.0-1.0)
+	JitterFactor float64
+
+	// RetryableStatusCodes are HTTP status codes that should trigger a retry
+	RetryableStatusCodes []int
+}
+
+// DefaultRetryConfig returns the default retry configuration
+func DefaultRetryConfig() RetryConfig {
+	return RetryConfig{
+		MaxRetries:        DefaultMaxRetries,
+		InitialBackoff:    DefaultInitialBackoff,
+		MaxBackoff:        DefaultMaxBackoff,
+		BackoffMultiplier: DefaultBackoffMultiplier,
+		JitterFactor:      DefaultJitterFactor,
+		// Retry on server errors and rate limiting
+		RetryableStatusCodes: []int{
+			http.StatusTooManyRequests,
+			http.StatusInternalServerError,
+			http.StatusBadGateway,
+			http.StatusServiceUnavailable,
+			http.StatusGatewayTimeout,
+		},
+	}
+}
+
+// calculateBackoff calculates the backoff duration with jitter for a given attempt
+func (r *RetryConfig) calculateBackoff(attempt int) time.Duration {
+	if attempt <= 0 {
+		return r.InitialBackoff
+	}
+
+	// Calculate exponential backoff: initialBackoff * (multiplier ^ attempt)
+	backoff := float64(r.InitialBackoff) * math.Pow(r.BackoffMultiplier, float64(attempt))
+
+	// Cap at max backoff
+	if backoff > float64(r.MaxBackoff) {
+		backoff = float64(r.MaxBackoff)
+	}
+
+	// Add jitter: backoff * (1 - jitterFactor + random * jitterFactor * 2)
+	// This gives us a range of [backoff * (1 - jitterFactor), backoff * (1 + jitterFactor)]
+	if r.JitterFactor > 0 {
+		jitter := (rand.Float64()*2 - 1) * r.JitterFactor
+		backoff = backoff * (1 + jitter)
+	}
+
+	return time.Duration(backoff)
+}
+
+// isRetryableStatusCode checks if a status code should trigger a retry
+func (r *RetryConfig) isRetryableStatusCode(statusCode int) bool {
+	for _, code := range r.RetryableStatusCodes {
+		if code == statusCode {
+			return true
+		}
+	}
+	return false
+}
 
 // Client represents a VPSie API client
 type Client struct {
 	httpClient     *http.Client
 	rateLimiter    *rate.Limiter
 	circuitBreaker *CircuitBreaker
+	retryConfig    RetryConfig
 	baseURL        string
 	clientID       string
 	clientSecret   string
@@ -71,6 +166,8 @@ type Client struct {
 	userAgent      string
 	logger         *zap.Logger
 	mu             sync.RWMutex
+	// useSimpleToken indicates whether to use simple token auth instead of OAuth
+	useSimpleToken bool
 }
 
 // ClientOptions represents options for creating a new Client
@@ -98,6 +195,14 @@ type ClientOptions struct {
 
 	// Logger is the logger to use (optional, defaults to no-op logger)
 	Logger *zap.Logger
+
+	// RetryConfig configures retry behavior with exponential backoff
+	// If nil, DefaultRetryConfig() is used
+	RetryConfig *RetryConfig
+
+	// CircuitBreakerConfig configures the circuit breaker
+	// If nil, DefaultCircuitBreakerConfig() is used
+	CircuitBreakerConfig *CircuitBreakerConfig
 }
 
 // TokenResponse represents the authentication response from the VPSie API
@@ -150,28 +255,38 @@ func NewClient(ctx context.Context, clientset kubernetes.Interface, opts *Client
 		return nil, NewSecretError(opts.SecretName, opts.SecretNamespace, "failed to get secret", err)
 	}
 
-	// Extract client ID from secret
-	clientIDBytes, ok := secret.Data[SecretClientIDKey]
-	if !ok {
-		return nil, NewSecretError(opts.SecretName, opts.SecretNamespace,
-			fmt.Sprintf("secret does not contain '%s' key", SecretClientIDKey), nil)
-	}
-	clientID := string(clientIDBytes)
-	if clientID == "" {
-		return nil, NewSecretError(opts.SecretName, opts.SecretNamespace,
-			fmt.Sprintf("secret key '%s' is empty", SecretClientIDKey), nil)
-	}
+	// Check for simple token authentication first (preferred for simplicity)
+	var clientID, clientSecret, simpleToken string
+	var useSimpleToken bool
 
-	// Extract client secret from secret
-	clientSecretBytes, ok := secret.Data[SecretClientSecretKey]
-	if !ok {
-		return nil, NewSecretError(opts.SecretName, opts.SecretNamespace,
-			fmt.Sprintf("secret does not contain '%s' key", SecretClientSecretKey), nil)
-	}
-	clientSecret := string(clientSecretBytes)
-	if clientSecret == "" {
-		return nil, NewSecretError(opts.SecretName, opts.SecretNamespace,
-			fmt.Sprintf("secret key '%s' is empty", SecretClientSecretKey), nil)
+	if tokenBytes, ok := secret.Data[SecretTokenKey]; ok && len(tokenBytes) > 0 {
+		// Use simple token authentication
+		simpleToken = string(tokenBytes)
+		useSimpleToken = true
+	} else {
+		// Fall back to OAuth credentials
+		clientIDBytes, ok := secret.Data[SecretClientIDKey]
+		if !ok {
+			return nil, NewSecretError(opts.SecretName, opts.SecretNamespace,
+				fmt.Sprintf("secret must contain either '%s' (simple token) or '%s'/'%s' (OAuth)",
+					SecretTokenKey, SecretClientIDKey, SecretClientSecretKey), nil)
+		}
+		clientID = string(clientIDBytes)
+		if clientID == "" {
+			return nil, NewSecretError(opts.SecretName, opts.SecretNamespace,
+				fmt.Sprintf("secret key '%s' is empty", SecretClientIDKey), nil)
+		}
+
+		clientSecretBytes, ok := secret.Data[SecretClientSecretKey]
+		if !ok {
+			return nil, NewSecretError(opts.SecretName, opts.SecretNamespace,
+				fmt.Sprintf("secret does not contain '%s' key", SecretClientSecretKey), nil)
+		}
+		clientSecret = string(clientSecretBytes)
+		if clientSecret == "" {
+			return nil, NewSecretError(opts.SecretName, opts.SecretNamespace,
+				fmt.Sprintf("secret key '%s' is empty", SecretClientSecretKey), nil)
+		}
 	}
 
 	// Extract API URL from secret (optional, use default if not provided)
@@ -229,23 +344,43 @@ func NewClient(ctx context.Context, clientset kubernetes.Interface, opts *Client
 	}
 
 	// Create circuit breaker for fault tolerance
-	circuitBreaker := NewCircuitBreaker(DefaultCircuitBreakerConfig(), logger.Named("circuit-breaker"))
+	cbConfig := DefaultCircuitBreakerConfig()
+	if opts.CircuitBreakerConfig != nil {
+		cbConfig = *opts.CircuitBreakerConfig
+	}
+	circuitBreaker := NewCircuitBreaker(cbConfig, logger.Named("circuit-breaker"))
+
+	// Create retry config
+	retryConfig := DefaultRetryConfig()
+	if opts.RetryConfig != nil {
+		retryConfig = *opts.RetryConfig
+	}
 
 	// Create client instance
 	client := &Client{
 		httpClient:     httpClient,
 		rateLimiter:    rateLimiter,
 		circuitBreaker: circuitBreaker,
+		retryConfig:    retryConfig,
 		baseURL:        baseURL,
 		clientID:       clientID,
 		clientSecret:   clientSecret,
 		userAgent:      opts.UserAgent,
 		logger:         logger.Named("vpsie-client"),
+		useSimpleToken: useSimpleToken,
 	}
 
-	// Obtain initial access token
-	if err := client.refreshToken(ctx); err != nil {
-		return nil, fmt.Errorf("failed to obtain initial access token: %w", err)
+	// Set up authentication
+	if useSimpleToken {
+		// Simple token auth - use token directly, no expiration
+		client.accessToken = simpleToken
+		client.tokenExpiresAt = time.Now().Add(365 * 24 * time.Hour) // Far future
+		client.logger.Info("Using simple token authentication")
+	} else {
+		// OAuth - obtain initial access token
+		if err := client.refreshToken(ctx); err != nil {
+			return nil, fmt.Errorf("failed to obtain initial access token: %w", err)
+		}
 	}
 
 	return client, nil
@@ -330,13 +465,24 @@ func NewClientWithCredentialsAndContext(ctx context.Context, baseURL, clientID, 
 	}
 
 	// Create circuit breaker for fault tolerance
-	circuitBreaker := NewCircuitBreaker(DefaultCircuitBreakerConfig(), logger.Named("circuit-breaker"))
+	cbConfig := DefaultCircuitBreakerConfig()
+	if opts.CircuitBreakerConfig != nil {
+		cbConfig = *opts.CircuitBreakerConfig
+	}
+	circuitBreaker := NewCircuitBreaker(cbConfig, logger.Named("circuit-breaker"))
+
+	// Create retry config
+	retryConfig := DefaultRetryConfig()
+	if opts.RetryConfig != nil {
+		retryConfig = *opts.RetryConfig
+	}
 
 	// Create client instance
 	client := &Client{
 		httpClient:     httpClient,
 		rateLimiter:    rateLimiter,
 		circuitBreaker: circuitBreaker,
+		retryConfig:    retryConfig,
 		baseURL:        baseURL,
 		clientID:       clientID,
 		clientSecret:   clientSecret,
@@ -444,8 +590,14 @@ func (c *Client) refreshToken(ctx context.Context) error {
 // ensureValidToken checks if the token is still valid and refreshes if needed
 func (c *Client) ensureValidToken(ctx context.Context) error {
 	c.mu.RLock()
+	useSimpleToken := c.useSimpleToken
 	needsRefresh := time.Now().Add(DefaultTokenRefreshBuffer).After(c.tokenExpiresAt)
 	c.mu.RUnlock()
+
+	// Simple token auth doesn't need refresh
+	if useSimpleToken {
+		return nil
+	}
 
 	if needsRefresh {
 		return c.refreshToken(ctx)
@@ -740,6 +892,160 @@ func (c *Client) SetUserAgent(userAgent string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.userAgent = userAgent
+}
+
+// UpdateCredentials updates the OAuth credentials for the client.
+// This method is thread-safe and can be used for credential rotation.
+// It validates the new credentials by attempting to obtain an access token
+// before committing the change. If validation fails, the old credentials are retained.
+//
+// This method is typically called when:
+//   - The vpsie-secret Kubernetes Secret is updated
+//   - Credentials need to be rotated for security compliance
+//   - An external credential management system pushes new credentials
+//
+// Example usage:
+//
+//	// Watch for secret changes
+//	if secretChanged {
+//	    newClientID := string(secret.Data["clientId"])
+//	    newClientSecret := string(secret.Data["clientSecret"])
+//	    if err := client.UpdateCredentials(ctx, newClientID, newClientSecret); err != nil {
+//	        log.Error("credential rotation failed", "error", err)
+//	    } else {
+//	        log.Info("credentials rotated successfully")
+//	    }
+//	}
+//
+// Returns:
+//   - error: An error if the new credentials are invalid or token refresh fails
+func (c *Client) UpdateCredentials(ctx context.Context, clientID, clientSecret string) error {
+	if clientID == "" {
+		return NewConfigError("client_id", "Client ID cannot be empty")
+	}
+	if clientSecret == "" {
+		return NewConfigError("client_secret", "Client secret cannot be empty")
+	}
+
+	c.mu.Lock()
+	// Store old credentials in case we need to rollback
+	oldClientID := c.clientID
+	oldClientSecret := c.clientSecret
+	oldAccessToken := c.accessToken
+	oldTokenExpiresAt := c.tokenExpiresAt
+
+	// Update to new credentials
+	c.clientID = clientID
+	c.clientSecret = clientSecret
+	// Clear token to force refresh
+	c.accessToken = ""
+	c.tokenExpiresAt = time.Time{}
+	c.mu.Unlock()
+
+	c.logger.Info("attempting credential rotation",
+		zap.Bool("credentials_changed", oldClientID != clientID),
+	)
+
+	// Attempt to get a new token with the new credentials
+	if err := c.refreshToken(ctx); err != nil {
+		// Rollback to old credentials
+		c.mu.Lock()
+		c.clientID = oldClientID
+		c.clientSecret = oldClientSecret
+		c.accessToken = oldAccessToken
+		c.tokenExpiresAt = oldTokenExpiresAt
+		c.mu.Unlock()
+
+		c.logger.Error("credential rotation failed, rolled back to previous credentials",
+			zap.Error(err),
+		)
+
+		return fmt.Errorf("failed to validate new credentials: %w", err)
+	}
+
+	c.logger.Info("credential rotation successful")
+
+	return nil
+}
+
+// UpdateToken updates the simple API token for the client.
+// This method is thread-safe and can be used for token rotation with simple token auth.
+// Unlike UpdateCredentials, this doesn't validate the token immediately.
+func (c *Client) UpdateToken(token string) error {
+	if token == "" {
+		return NewConfigError("token", "Token cannot be empty")
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.accessToken = token
+	c.tokenExpiresAt = time.Now().Add(365 * 24 * time.Hour) // Far future for simple tokens
+	c.useSimpleToken = true
+
+	c.logger.Info("simple token updated")
+
+	return nil
+}
+
+// IsSimpleTokenAuth returns whether the client is using simple token authentication
+func (c *Client) IsSimpleTokenAuth() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.useSimpleToken
+}
+
+// CalculateCredentialsHash calculates a hash of the given credentials for change detection.
+// This is useful for comparing credentials without storing them in plain text.
+// The hash does not expose the actual credentials.
+// This function is exported to allow credential change detection before updating the client.
+func CalculateCredentialsHash(clientID, clientSecret string) string {
+	// Use a simple hash of clientID + secret for change detection
+	// We don't need cryptographic security here, just change detection
+	combined := clientID + ":" + clientSecret
+	var hash uint64
+	for i := 0; i < len(combined); i++ {
+		hash = hash*31 + uint64(combined[i])
+	}
+	return fmt.Sprintf("%016x", hash)
+}
+
+// GetCredentialsHash returns a hash of the current credentials for change detection.
+// This is useful for comparing against a stored hash to detect when credentials have changed.
+// The hash does not expose the actual credentials.
+func (c *Client) GetCredentialsHash() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.useSimpleToken {
+		// For simple token auth, hash the token itself
+		return CalculateCredentialsHash(c.accessToken, "")
+	}
+	return CalculateCredentialsHash(c.clientID, c.clientSecret)
+}
+
+// IsTokenValid returns whether the current access token is valid.
+// This is useful for health checks and monitoring.
+func (c *Client) IsTokenValid() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.accessToken == "" {
+		return false
+	}
+	// Simple token auth is always valid (doesn't expire)
+	if c.useSimpleToken {
+		return true
+	}
+	return time.Now().Add(DefaultTokenRefreshBuffer).Before(c.tokenExpiresAt)
+}
+
+// GetTokenExpiresAt returns when the current access token expires.
+// This is useful for monitoring and alerting on token expiration.
+func (c *Client) GetTokenExpiresAt() time.Time {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.tokenExpiresAt
 }
 
 // ============================================================================
@@ -1078,4 +1384,220 @@ func (c *Client) ListOSImages(ctx context.Context, opts *ListOptions) ([]OSImage
 	}
 
 	return response.Data, nil
+}
+
+// ============================================================================
+// Kubernetes Node Operations (VPSie Kubernetes Apps API)
+// ============================================================================
+
+// AddK8sNode adds a new worker node to a VPSie managed Kubernetes cluster.
+// This uses the /apps/v2 API which has a different schema than the regular /vm API.
+//
+// The request requires:
+//   - ResourceIdentifier: The VPSie Kubernetes cluster identifier
+//   - ProjectID: The VPSie project ID
+//   - DatacenterID: The datacenter where the node will be created
+//   - BoxsizeID: The instance type/offering ID for the node
+//
+// Returns a VPS struct with the created node information.
+func (c *Client) AddK8sNode(ctx context.Context, req AddK8sNodeRequest) (*VPS, error) {
+	// Validate required fields
+	if req.ResourceIdentifier == "" {
+		return nil, NewConfigError("resource_identifier", "Resource identifier is required")
+	}
+	if req.ProjectID == "" {
+		return nil, NewConfigError("project_id", "Project ID is required")
+	}
+	if req.DatacenterID == "" {
+		return nil, NewConfigError("datacenter_id", "Datacenter ID is required")
+	}
+	if req.Hostname == "" {
+		return nil, NewConfigError("hostname", "Hostname is required")
+	}
+
+	var response AddK8sNodeResponse
+
+	// The /apps/v2 API uses /vm endpoint but with different fields than regular VM API
+	if err := c.post(ctx, "/vm", req, &response); err != nil {
+		return nil, fmt.Errorf("failed to add K8s node: %w", err)
+	}
+
+	// Check for API error in response
+	if response.Error {
+		return nil, NewAPIError(response.Code, "AddK8sNodeFailed", response.Message)
+	}
+
+	// Convert response to VPS struct
+	vps := &VPS{
+		ID:       response.Data.ID,
+		Status:   response.Data.Status,
+		Hostname: response.Data.Hostname,
+	}
+
+	return vps, nil
+}
+
+// CreateK8sNodeGroup creates a new node group in a VPSie managed Kubernetes cluster.
+// This must be called before adding nodes to a new node group.
+//
+// Required fields:
+//   - ClusterIdentifier: The VPSie Kubernetes cluster ID
+//   - GroupName: Name for the node group
+//   - KubeSizeID: The Kubernetes size/package ID (get from ListK8sOffers)
+func (c *Client) CreateK8sNodeGroup(ctx context.Context, req CreateK8sNodeGroupRequest) (string, error) {
+	// Validate required fields
+	if req.ClusterIdentifier == "" {
+		return "", NewConfigError("cluster_identifier", "Cluster identifier is required")
+	}
+	if req.GroupName == "" {
+		return "", NewConfigError("group_name", "Group name is required")
+	}
+	if req.KubeSizeID == 0 {
+		return "", NewConfigError("kube_size_id", "Kube size ID is required")
+	}
+
+	var response CreateK8sNodeGroupResponse
+
+	// The API docs show GET but with a request body - using POST as that's more RESTful
+	// Endpoint: /k8s/cluster/add/group (per curl example in API docs)
+	if err := c.post(ctx, "/k8s/cluster/add/group", req, &response); err != nil {
+		return "", fmt.Errorf("failed to create K8s node group: %w", err)
+	}
+
+	// Check for API error in response
+	if response.Error {
+		return "", NewAPIError(response.Code, "CreateK8sNodeGroupFailed", response.Message)
+	}
+
+	return response.Data.GroupID, nil
+}
+
+// ListK8sOffers lists available Kubernetes node size/package offerings.
+// Use this to get valid KubeSizeID values for CreateK8sNodeGroup.
+func (c *Client) ListK8sOffers(ctx context.Context, dcIdentifier string) ([]K8sOffer, error) {
+	if dcIdentifier == "" {
+		return nil, NewConfigError("dc_identifier", "Datacenter identifier is required")
+	}
+
+	var response ListK8sOffersResponse
+
+	// POST /k8s/offers with dcIdentifier
+	reqBody := map[string]string{"dcIdentifier": dcIdentifier}
+	if err := c.post(ctx, "/k8s/offers", reqBody, &response); err != nil {
+		return nil, fmt.Errorf("failed to list K8s offers: %w", err)
+	}
+
+	if response.Error {
+		return nil, NewAPIError(response.Code, "ListK8sOffersFailed", response.Message)
+	}
+
+	return response.Data, nil
+}
+
+// ListK8sNodeGroups lists all node groups for a VPSie managed Kubernetes cluster.
+// Returns the node groups with their numeric IDs needed for adding nodes.
+func (c *Client) ListK8sNodeGroups(ctx context.Context, clusterIdentifier string) ([]K8sNodeGroup, error) {
+	if clusterIdentifier == "" {
+		return nil, NewConfigError("cluster_identifier", "Cluster identifier is required")
+	}
+
+	var response ListK8sNodeGroupsResponse
+
+	// GET /k8s/node/groups/byClusterId/{clusterIdentifier}
+	endpoint := fmt.Sprintf("/k8s/node/groups/byClusterId/%s", clusterIdentifier)
+	if err := c.get(ctx, endpoint, &response); err != nil {
+		return nil, fmt.Errorf("failed to list K8s node groups: %w", err)
+	}
+
+	if response.Error {
+		return nil, NewAPIError(response.Code, "ListK8sNodeGroupsFailed", response.Message)
+	}
+
+	return response.Data, nil
+}
+
+// AddK8sSlaveToGroup adds a slave/worker node to a specific node group in a VPSie managed Kubernetes cluster.
+// The groupID must be the numeric ID from ListK8sNodeGroups, not the UUID identifier.
+// Note: The API may return data as a boolean (true) on success, in which case we return a VPS
+// with Status="provisioning" and ID=0, indicating the node creation was initiated but ID is not yet known.
+func (c *Client) AddK8sSlaveToGroup(ctx context.Context, clusterIdentifier string, groupID int) (*VPS, error) {
+	if clusterIdentifier == "" {
+		return nil, NewConfigError("cluster_identifier", "Cluster identifier is required")
+	}
+	if groupID == 0 {
+		return nil, NewConfigError("group_id", "Numeric group ID is required")
+	}
+
+	// Use a flexible response structure that can handle data as bool or object
+	var response struct {
+		Error   bool            `json:"error"`
+		Code    int             `json:"code"`
+		Message string          `json:"message"`
+		Data    json.RawMessage `json:"data,omitempty"`
+	}
+
+	// POST /k8s/cluster/byId/{clusterIdentifier}/add/slave/group/{groupID}
+	endpoint := fmt.Sprintf("/k8s/cluster/byId/%s/add/slave/group/%d", clusterIdentifier, groupID)
+
+	if err := c.post(ctx, endpoint, nil, &response); err != nil {
+		return nil, fmt.Errorf("failed to add K8s slave node: %w", err)
+	}
+
+	if response.Error {
+		return nil, NewAPIError(response.Code, "AddK8sSlaveToGroupFailed", response.Message)
+	}
+
+	// Try to unmarshal data as an object first
+	var nodeData struct {
+		ID       int    `json:"id"`
+		Status   string `json:"status"`
+		Hostname string `json:"hostname"`
+	}
+	if err := json.Unmarshal(response.Data, &nodeData); err == nil && nodeData.ID != 0 {
+		return &VPS{
+			ID:       nodeData.ID,
+			Hostname: nodeData.Hostname,
+			Status:   nodeData.Status,
+		}, nil
+	}
+
+	// If data is not an object (likely boolean true), return a placeholder VPS
+	// indicating the request was accepted but node creation is in progress
+	return &VPS{
+		ID:     0, // Will be populated later by polling
+		Status: "provisioning",
+	}, nil
+}
+
+// AddK8sSlave adds a slave/worker node to a VPSie managed Kubernetes cluster.
+// This is a simpler API than AddK8sNode - it adds a node using the cluster's default configuration.
+// Deprecated: Use AddK8sSlaveToGroup instead with a specific numeric group ID.
+func (c *Client) AddK8sSlave(ctx context.Context, clusterIdentifier string, groupID string) error {
+	if clusterIdentifier == "" {
+		return NewConfigError("cluster_identifier", "Cluster identifier is required")
+	}
+
+	var response struct {
+		Error   bool   `json:"error"`
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+
+	// POST /k8s/cluster/byId/{identifier}/add/slave
+	endpoint := fmt.Sprintf("/k8s/cluster/byId/%s/add/slave", clusterIdentifier)
+
+	var reqBody interface{}
+	if groupID != "" {
+		reqBody = map[string]string{"groupId": groupID}
+	}
+
+	if err := c.post(ctx, endpoint, reqBody, &response); err != nil {
+		return fmt.Errorf("failed to add K8s slave node: %w", err)
+	}
+
+	if response.Error {
+		return NewAPIError(response.Code, "AddK8sSlaveFailed", response.Message)
+	}
+
+	return nil
 }

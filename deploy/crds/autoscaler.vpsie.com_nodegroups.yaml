@@ -114,6 +114,12 @@ spec:
                 description: DatacenterID is the VPSie datacenter ID where nodes will
                   be created
                 type: string
+              kubeSizeID:
+                description: |-
+                  KubeSizeID is the VPSie Kubernetes size/package ID for nodes in this group
+                  Get available values from VPSie API /k8s/offers endpoint
+                minimum: 1
+                type: integer
               kubernetesVersion:
                 description: |-
                   KubernetesVersion is the Kubernetes version to install on new nodes (e.g., "v1.28.0", "v1.29.1")
@@ -196,6 +202,16 @@ spec:
               preferredInstanceType:
                 description: PreferredInstanceType is the preferred offering ID to
                   use when multiple options are available
+                type: string
+              project:
+                description: |-
+                  Project is the VPSie project ID
+                  Required for the VPSie Kubernetes apps API
+                type: string
+              resourceIdentifier:
+                description: |-
+                  ResourceIdentifier is the VPSie Kubernetes cluster identifier
+                  Required for the VPSie Kubernetes apps API to know which cluster to add nodes to
                 type: string
               scaleDownPolicy:
                 description: ScaleDownPolicy defines when and how to scale down the
@@ -363,6 +379,8 @@ spec:
             - minNodes
             - offeringIDs
             - osImageID
+            - project
+            - resourceIdentifier
             type: object
           status:
             description: NodeGroupStatus defines the observed state of NodeGroup
@@ -472,6 +490,11 @@ spec:
                 description: ReadyNodes is the number of nodes that are ready to accept
                   workloads
                 format: int32
+                type: integer
+              vpsieGroupID:
+                description: |-
+                  VPSieGroupID is the numeric VPSie node group ID created on VPSie platform
+                  This is the numeric ID returned by ListK8sNodeGroups, used for adding nodes
                 type: integer
             required:
             - currentNodes

@@ -22,6 +22,14 @@ type VPSieNodeSpec struct {
 	// +kubebuilder:validation:Required
 	DatacenterID string `json:"datacenterID"`
 
+	// ResourceIdentifier is the VPSie Kubernetes cluster identifier
+	// +kubebuilder:validation:Required
+	ResourceIdentifier string `json:"resourceIdentifier"`
+
+	// Project is the VPSie project ID
+	// +kubebuilder:validation:Required
+	Project string `json:"project"`
+
 	// OSImageID is the VPSie OS image ID to use for this node
 	// +kubebuilder:validation:Required
 	OSImageID string `json:"osImageID"`
@@ -47,6 +55,11 @@ type VPSieNodeSpec struct {
 	// IPv6Address is the IPv6 address of the VPS
 	// +optional
 	IPv6Address string `json:"ipv6Address,omitempty"`
+
+	// VPSieGroupID is the numeric VPSie node group ID this node belongs to
+	// This is the numeric ID from ListK8sNodeGroups, used for adding nodes via API
+	// +optional
+	VPSieGroupID int `json:"vpsieGroupID,omitempty"`
 }
 
 // VPSieNodeStatus defines the observed state of VPSieNode

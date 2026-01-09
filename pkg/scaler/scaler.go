@@ -11,6 +11,7 @@ import (
 	autoscalerv1alpha1 "github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 
+	"github.com/vpsie/vpsie-k8s-autoscaler/internal/logging"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -152,6 +153,14 @@ func (s *ScaleDownManager) IdentifyUnderutilizedNodes(
 	ctx context.Context,
 	nodeGroup *autoscalerv1alpha1.NodeGroup,
 ) ([]*ScaleDownCandidate, error) {
+	// Log with correlation ID if available
+	requestID := logging.GetRequestID(ctx)
+	if requestID != "" {
+		s.logger.Infow("identifying underutilized nodes",
+			"nodeGroup", nodeGroup.Name,
+			"requestID", requestID)
+	}
+
 	// Get all nodes in this NodeGroup
 	nodes, err := s.getNodeGroupNodes(ctx, nodeGroup)
 	if err != nil {
@@ -344,9 +353,12 @@ func (s *ScaleDownManager) ScaleDown(
 		candidates = candidates[:maxNodes]
 	}
 
-	s.logger.Info("initiating scale-down",
+	// Log with correlation ID for tracing
+	requestID := logging.GetRequestID(ctx)
+	s.logger.Infow("initiating scale-down",
 		"nodeGroup", nodeGroup.Name,
-		"candidates", len(candidates))
+		"candidates", len(candidates),
+		"requestID", requestID)
 
 	var errors []error
 	successCount := 0

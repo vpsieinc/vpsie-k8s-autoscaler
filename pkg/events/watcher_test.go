@@ -24,6 +24,7 @@ func TestParseConstraint(t *testing.T) {
 		message    string
 		constraint ResourceConstraint
 	}{
+		// Resource constraints
 		{
 			name:       "Insufficient CPU",
 			message:    "0/3 nodes are available: 3 Insufficient cpu.",
@@ -54,14 +55,54 @@ func TestParseConstraint(t *testing.T) {
 			message:    "INSUFFICIENT MEMORY",
 			constraint: ConstraintMemory,
 		},
+		// Taint constraints
 		{
-			name:       "Unknown constraint",
+			name:       "Taint constraint - didn't tolerate",
 			message:    "0/3 nodes are available: 3 node(s) had taints that the pod didn't tolerate.",
-			constraint: ConstraintUnknown,
+			constraint: ConstraintTaint,
 		},
+		{
+			name:       "Taint constraint - untolerated",
+			message:    "0/5 nodes are available: 1 node(s) had untolerated taint {node-role.kubernetes.io/control-plane: }",
+			constraint: ConstraintTaint,
+		},
+		// Anti-affinity constraints
+		{
+			name:       "Anti-affinity constraint",
+			message:    "0/5 nodes are available: 4 node(s) didn't match pod anti-affinity rules.",
+			constraint: ConstraintAntiAffinity,
+		},
+		{
+			name:       "Anti-affinity mixed message",
+			message:    "0/5 nodes are available: 1 node(s) had untolerated taint(s), 4 node(s) didn't match pod anti-affinity rules.",
+			constraint: ConstraintTaint, // Taint is checked before anti-affinity
+		},
+		// Affinity constraints
+		{
+			name:       "Affinity constraint",
+			message:    "0/3 nodes are available: 3 node(s) didn't match pod affinity rules.",
+			constraint: ConstraintAffinity,
+		},
+		// Node selector constraints
+		{
+			name:       "Node selector constraint",
+			message:    "0/3 nodes are available: 3 node(s) didn't match Pod's node selector.",
+			constraint: ConstraintNodeSelector,
+		},
+		{
+			name:       "No nodes available",
+			message:    "0/5 nodes are available: preemption: 0/5 nodes are available",
+			constraint: ConstraintNodeSelector,
+		},
+		// Unknown constraints
 		{
 			name:       "Empty message",
 			message:    "",
+			constraint: ConstraintUnknown,
+		},
+		{
+			name:       "Completely unknown message",
+			message:    "Some random scheduling error that we don't recognize",
 			constraint: ConstraintUnknown,
 		},
 	}

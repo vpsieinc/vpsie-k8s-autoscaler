@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	metricsv1beta1 "k8s.io/metrics/pkg/client/clientset/versioned"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -20,22 +21,25 @@ import (
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/nodegroup"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/vpsienode"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/events"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/scaler"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/client"
 )
 
 // ControllerManager manages the lifecycle of all controllers
 type ControllerManager struct {
-	config           *rest.Config
-	options          *Options
-	mgr              ctrl.Manager
-	vpsieClient      *client.Client
-	k8sClient        kubernetes.Interface
-	metricsClient    metricsv1beta1.Interface
-	scaleDownManager *scaler.ScaleDownManager
-	healthChecker    *HealthChecker
-	logger           *zap.Logger
-	scheme           *runtime.Scheme
+	config            *rest.Config
+	options           *Options
+	mgr               ctrl.Manager
+	vpsieClient       *client.Client
+	k8sClient         kubernetes.Interface
+	metricsClient     metricsv1beta1.Interface
+	scaleDownManager  *scaler.ScaleDownManager
+	healthChecker     *HealthChecker
+	logger            *zap.Logger
+	scheme            *runtime.Scheme
+	eventWatcher      *events.EventWatcher
+	scaleUpController *events.ScaleUpController
 }
 
 // NewManager creates a new ControllerManager
@@ -59,8 +63,13 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 		return nil, fmt.Errorf("failed to create logger: %w", err)
 	}
 
-	// Create scheme and register our CRDs
+	// Create scheme and register types
 	scheme := runtime.NewScheme()
+	// Register core Kubernetes types (Node, Secret, Pod, etc.)
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("failed to add core types to scheme: %w", err)
+	}
+	// Register our custom CRDs
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		return nil, fmt.Errorf("failed to add CRDs to scheme: %w", err)
 	}
@@ -107,6 +116,9 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 	scaleDownConfig := scaler.DefaultConfig()
 	scaleDownManager := scaler.NewScaleDownManager(k8sClient, metricsClient, logger, scaleDownConfig)
 
+	// Create ResourceAnalyzer for scale-up decisions
+	resourceAnalyzer := events.NewResourceAnalyzer(logger)
+
 	// Create health checker
 	healthChecker := NewHealthChecker(vpsieClient)
 
@@ -122,6 +134,28 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 		logger:           logger,
 		scheme:           scheme,
 	}
+
+	// Create EventWatcher and ScaleUpController for pending pod detection
+	// ScaleUpController is created first with nil watcher, then wired up after EventWatcher is created
+	scaleUpController := events.NewScaleUpController(
+		mgr.GetClient(),
+		resourceAnalyzer,
+		nil, // Will set EventWatcher after creation via SetWatcher
+		logger,
+	)
+
+	eventWatcher := events.NewEventWatcher(
+		mgr.GetClient(),
+		k8sClient,
+		logger,
+		scaleUpController.HandleScaleUp,
+	)
+
+	// Wire up the ScaleUpController with the EventWatcher
+	scaleUpController.SetWatcher(eventWatcher)
+
+	cm.eventWatcher = eventWatcher
+	cm.scaleUpController = scaleUpController
 
 	// Add health checks to manager
 	if err := cm.setupHealthChecks(); err != nil {
@@ -249,6 +283,14 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 	}
 
 	cm.logger.Info("Health checks initialized successfully")
+
+	// Start event watcher for pending pod detection
+	if cm.eventWatcher != nil {
+		if err := cm.eventWatcher.Start(ctx); err != nil {
+			return fmt.Errorf("failed to start event watcher: %w", err)
+		}
+		cm.logger.Info("Event watcher started for pending pod detection")
+	}
 
 	// Log VPSie client info
 	cm.logger.Info("VPSie API client initialized",

@@ -3,16 +3,23 @@ package nodegroup
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	"github.com/vpsie/vpsie-k8s-autoscaler/internal/logging"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/scaler"
 	vpsieclient "github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/client"
 )
@@ -43,6 +50,14 @@ type NodeGroupReconciler struct {
 	ScaleDownManager ScaleDownManagerInterface
 	Logger           *zap.Logger
 	Recorder         record.EventRecorder
+
+	// Secret watching for credential rotation
+	SecretName         string // Name of the secret containing VPSie credentials
+	SecretNamespace    string // Namespace of the secret
+	credentialsHash    string // Hash of current credentials for change detection
+	credentialsHashMu  sync.RWMutex
+	lastSecretCheck    time.Time
+	secretCheckMu      sync.RWMutex
 }
 
 // SetupWithManager sets up the controller with the Manager
@@ -52,13 +67,191 @@ func (r *NodeGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		r.Recorder = mgr.GetEventRecorderFor(ControllerName)
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
+	// Initialize credentials hash from current VPSie client
+	if r.VPSieClient != nil {
+		r.credentialsHash = r.VPSieClient.GetCredentialsHash()
+	}
+
+	// Build the controller
+	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.NodeGroup{}).
 		Owns(&v1alpha1.VPSieNode{}).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: DefaultMaxConcurrentReconciles,
-		}).
-		Complete(r)
+		})
+
+	// Add secret watcher for credential rotation if configured
+	if r.SecretName != "" && r.SecretNamespace != "" {
+		r.Logger.Info("Setting up secret watcher for credential rotation",
+			zap.String("secretName", r.SecretName),
+			zap.String("secretNamespace", r.SecretNamespace),
+		)
+
+		// Watch for changes to the VPSie credentials secret
+		builder = builder.Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(r.secretToNodeGroups),
+		)
+	}
+
+	return builder.Complete(r)
+}
+
+// secretToNodeGroups maps secret events to NodeGroup reconcile requests
+// This enables credential rotation when the vpsie-secret is updated
+func (r *NodeGroupReconciler) secretToNodeGroups(ctx context.Context, obj client.Object) []reconcile.Request {
+	secret, ok := obj.(*corev1.Secret)
+	if !ok {
+		return nil
+	}
+
+	// Only watch the specific VPSie credentials secret
+	if secret.Name != r.SecretName || secret.Namespace != r.SecretNamespace {
+		return nil
+	}
+
+	r.Logger.Info("VPSie credentials secret changed, triggering credential rotation check",
+		zap.String("secretName", secret.Name),
+		zap.String("secretNamespace", secret.Namespace),
+	)
+
+	// Trigger credential rotation check with its own timeout context
+	// Use context.Background() as parent since the operation should complete
+	// regardless of the parent context's lifecycle, with a 30-second timeout
+	// to prevent indefinite hangs
+	go func() {
+		rotationCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		r.checkAndRotateCredentials(rotationCtx, secret)
+	}()
+
+	// Get all NodeGroups to trigger reconciliation
+	var nodeGroupList v1alpha1.NodeGroupList
+	if err := r.List(ctx, &nodeGroupList); err != nil {
+		r.Logger.Error("Failed to list NodeGroups for secret change", zap.Error(err))
+		return nil
+	}
+
+	// Queue all NodeGroups for reconciliation
+	requests := make([]reconcile.Request, 0, len(nodeGroupList.Items))
+	for _, ng := range nodeGroupList.Items {
+		requests = append(requests, reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      ng.Name,
+				Namespace: ng.Namespace,
+			},
+		})
+	}
+
+	return requests
+}
+
+// checkAndRotateCredentials checks if credentials have changed and rotates them
+func (r *NodeGroupReconciler) checkAndRotateCredentials(ctx context.Context, secret *corev1.Secret) {
+	if r.VPSieClient == nil {
+		return
+	}
+
+	// Check for simple token authentication first
+	if tokenBytes, ok := secret.Data[vpsieclient.SecretTokenKey]; ok && len(tokenBytes) > 0 {
+		r.checkAndRotateToken(ctx, string(tokenBytes))
+		return
+	}
+
+	// Fall back to OAuth credentials
+	clientID, ok := secret.Data[vpsieclient.SecretClientIDKey]
+	if !ok || len(clientID) == 0 {
+		r.Logger.Error("Secret missing credentials (need 'token' or 'clientId'/'clientSecret')")
+		return
+	}
+
+	clientSecret, ok := secret.Data[vpsieclient.SecretClientSecretKey]
+	if !ok || len(clientSecret) == 0 {
+		r.Logger.Error("Secret missing clientSecret key")
+		return
+	}
+
+	// Check if credentials have actually changed
+	r.credentialsHashMu.RLock()
+	currentHash := r.credentialsHash
+	r.credentialsHashMu.RUnlock()
+
+	// Calculate new hash (simple change detection)
+	newHash := vpsieclient.CalculateCredentialsHash(string(clientID), string(clientSecret))
+	if newHash == currentHash {
+		r.Logger.Debug("Credentials unchanged, skipping rotation")
+		return
+	}
+
+	r.Logger.Info("Credentials changed, attempting rotation")
+	metrics.CredentialRotationAttempts.Inc()
+
+	// Attempt to rotate credentials
+	startTime := time.Now()
+	if err := r.VPSieClient.UpdateCredentials(ctx, string(clientID), string(clientSecret)); err != nil {
+		r.Logger.Error("Credential rotation failed", zap.Error(err))
+		metrics.CredentialRotationFailures.Inc()
+		return
+	}
+
+	// Update stored hash on success
+	r.credentialsHashMu.Lock()
+	r.credentialsHash = newHash
+	r.credentialsHashMu.Unlock()
+
+	duration := time.Since(startTime)
+	r.Logger.Info("Credential rotation successful",
+		zap.Duration("duration", duration),
+	)
+	metrics.CredentialRotationSuccesses.Inc()
+	metrics.CredentialRotationDuration.Observe(duration.Seconds())
+}
+
+// checkAndRotateToken checks if the simple API token has changed and updates it
+func (r *NodeGroupReconciler) checkAndRotateToken(ctx context.Context, newToken string) {
+	// Check if token has actually changed
+	r.credentialsHashMu.RLock()
+	currentHash := r.credentialsHash
+	r.credentialsHashMu.RUnlock()
+
+	// Calculate new hash for token
+	newHash := vpsieclient.CalculateCredentialsHash(newToken, "")
+	if newHash == currentHash {
+		r.Logger.Debug("Token unchanged, skipping rotation")
+		return
+	}
+
+	r.Logger.Info("Token changed, updating")
+	metrics.CredentialRotationAttempts.Inc()
+
+	startTime := time.Now()
+	if err := r.VPSieClient.UpdateToken(newToken); err != nil {
+		r.Logger.Error("Token update failed", zap.Error(err))
+		metrics.CredentialRotationFailures.Inc()
+		return
+	}
+
+	// Update stored hash on success
+	r.credentialsHashMu.Lock()
+	r.credentialsHash = newHash
+	r.credentialsHashMu.Unlock()
+
+	duration := time.Since(startTime)
+	r.Logger.Info("Token update successful",
+		zap.Duration("duration", duration),
+	)
+	metrics.CredentialRotationSuccesses.Inc()
+	metrics.CredentialRotationDuration.Observe(duration.Seconds())
+}
+
+// NodeGroupReconcilerOptions contains optional configuration for the NodeGroupReconciler
+type NodeGroupReconcilerOptions struct {
+	// SecretName is the name of the Kubernetes secret containing VPSie credentials
+	// If set, the controller will watch for changes and rotate credentials automatically
+	SecretName string
+
+	// SecretNamespace is the namespace of the Kubernetes secret
+	SecretNamespace string
 }
 
 // NewNodeGroupReconciler creates a new NodeGroupReconciler
@@ -69,13 +262,40 @@ func NewNodeGroupReconciler(
 	logger *zap.Logger,
 	scaleDownManager ScaleDownManagerInterface,
 ) *NodeGroupReconciler {
-	return &NodeGroupReconciler{
+	return NewNodeGroupReconcilerWithOptions(client, scheme, vpsieClient, logger, scaleDownManager, nil)
+}
+
+// NewNodeGroupReconcilerWithOptions creates a new NodeGroupReconciler with additional options
+func NewNodeGroupReconcilerWithOptions(
+	client client.Client,
+	scheme *runtime.Scheme,
+	vpsieClient *vpsieclient.Client,
+	logger *zap.Logger,
+	scaleDownManager ScaleDownManagerInterface,
+	opts *NodeGroupReconcilerOptions,
+) *NodeGroupReconciler {
+	r := &NodeGroupReconciler{
 		Client:           client,
 		Scheme:           scheme,
 		VPSieClient:      vpsieClient,
 		ScaleDownManager: scaleDownManager,
 		Logger:           logger.Named(ControllerName),
 	}
+
+	if opts != nil {
+		r.SecretName = opts.SecretName
+		r.SecretNamespace = opts.SecretNamespace
+	}
+
+	// Set default secret location if not specified
+	if r.SecretName == "" {
+		r.SecretName = vpsieclient.DefaultSecretName
+	}
+	if r.SecretNamespace == "" {
+		r.SecretNamespace = vpsieclient.DefaultSecretNamespace
+	}
+
+	return r
 }
 
 // +kubebuilder:rbac:groups=autoscaler.vpsie.com,resources=nodegroups,verbs=get;list;watch;create;update;patch;delete
@@ -86,12 +306,15 @@ func NewNodeGroupReconciler(
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *NodeGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := r.Logger.With(
+	// Add correlation ID for request tracing
+	ctx = logging.WithRequestID(ctx)
+
+	logger := logging.WithRequestIDField(ctx, r.Logger.With(
 		zap.String("namespace", req.Namespace),
 		zap.String("name", req.Name),
-	)
+	))
 
-	logger.Info("Reconciling NodeGroup")
+	logger.Info("Reconciling NodeGroup", zap.String("requestID", logging.GetRequestID(ctx)))
 
 	// Fetch the NodeGroup instance
 	ng := &v1alpha1.NodeGroup{}

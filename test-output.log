@@ -1,0 +1,1055 @@
+	github.com/vpsie/vpsie-k8s-autoscaler		coverage: 0.0% of statements
+=== RUN   TestConfigureLogLevel
+=== RUN   TestConfigureLogLevel/debug_level_logs_everything
+failed to IncreaseLevel: invalid increase level, as level "debug" is allowed by increased level, but not by existing core
+{"level":"info","ts":1764710122.655295,"caller":"controller/main_test.go:90","msg":"info message"}
+{"level":"warn","ts":1764710122.655413,"caller":"controller/main_test.go:91","msg":"warn message"}
+{"level":"error","ts":1764710122.655434,"caller":"controller/main_test.go:92","msg":"error message","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/cmd/controller.TestConfigureLogLevel.func1\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/cmd/controller/main_test.go:92\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+=== RUN   TestConfigureLogLevel/info_level_logs_info_and_above
+{"level":"info","ts":1764710122.655835,"caller":"controller/main_test.go:90","msg":"info message"}
+{"level":"warn","ts":1764710122.655863,"caller":"controller/main_test.go:91","msg":"warn message"}
+{"level":"error","ts":1764710122.6558871,"caller":"controller/main_test.go:92","msg":"error message","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/cmd/controller.TestConfigureLogLevel.func1\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/cmd/controller/main_test.go:92\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+=== RUN   TestConfigureLogLevel/warn_level_logs_warn_and_error
+{"level":"warn","ts":1764710122.6561952,"caller":"controller/main_test.go:91","msg":"warn message"}
+{"level":"error","ts":1764710122.656217,"caller":"controller/main_test.go:92","msg":"error message","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/cmd/controller.TestConfigureLogLevel.func1\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/cmd/controller/main_test.go:92\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+=== RUN   TestConfigureLogLevel/error_level_logs_only_error
+{"level":"error","ts":1764710122.6565309,"caller":"controller/main_test.go:92","msg":"error message","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/cmd/controller.TestConfigureLogLevel.func1\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/cmd/controller/main_test.go:92\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+=== RUN   TestConfigureLogLevel/invalid_level_defaults_to_info
+{"level":"info","ts":1764710122.656884,"caller":"controller/main_test.go:90","msg":"info message"}
+{"level":"warn","ts":1764710122.6569111,"caller":"controller/main_test.go:91","msg":"warn message"}
+{"level":"error","ts":1764710122.65693,"caller":"controller/main_test.go:92","msg":"error message","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/cmd/controller.TestConfigureLogLevel.func1\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/cmd/controller/main_test.go:92\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+--- PASS: TestConfigureLogLevel (0.00s)
+    --- PASS: TestConfigureLogLevel/debug_level_logs_everything (0.00s)
+    --- PASS: TestConfigureLogLevel/info_level_logs_info_and_above (0.00s)
+    --- PASS: TestConfigureLogLevel/warn_level_logs_warn_and_error (0.00s)
+    --- PASS: TestConfigureLogLevel/error_level_logs_only_error (0.00s)
+    --- PASS: TestConfigureLogLevel/invalid_level_defaults_to_info (0.00s)
+=== RUN   TestGetKubeconfigPath
+=== RUN   TestGetKubeconfigPath/empty_kubeconfig_returns_in-cluster
+=== RUN   TestGetKubeconfigPath/file_path_returns_path
+=== RUN   TestGetKubeconfigPath/home_dir_kubeconfig
+=== RUN   TestGetKubeconfigPath/relative_path
+--- PASS: TestGetKubeconfigPath (0.00s)
+    --- PASS: TestGetKubeconfigPath/empty_kubeconfig_returns_in-cluster (0.00s)
+    --- PASS: TestGetKubeconfigPath/file_path_returns_path (0.00s)
+    --- PASS: TestGetKubeconfigPath/home_dir_kubeconfig (0.00s)
+    --- PASS: TestGetKubeconfigPath/relative_path (0.00s)
+=== RUN   TestBuildKubeConfig
+=== RUN   TestBuildKubeConfig/with_kubeconfig_file
+=== RUN   TestBuildKubeConfig/with_invalid_kubeconfig_file
+=== RUN   TestBuildKubeConfig/in-cluster_config_fails_outside_cluster
+--- PASS: TestBuildKubeConfig (0.00s)
+    --- PASS: TestBuildKubeConfig/with_kubeconfig_file (0.00s)
+    --- PASS: TestBuildKubeConfig/with_invalid_kubeconfig_file (0.00s)
+    --- PASS: TestBuildKubeConfig/in-cluster_config_fails_outside_cluster (0.00s)
+=== RUN   TestNewRootCommand
+--- PASS: TestNewRootCommand (0.00s)
+=== RUN   TestAddFlags
+--- PASS: TestAddFlags (0.00s)
+=== RUN   TestVersionInfo
+--- PASS: TestVersionInfo (0.00s)
+=== RUN   TestMain_EnvironmentSetup
+--- PASS: TestMain_EnvironmentSetup (0.00s)
+=== RUN   TestSchemeInitialization
+--- PASS: TestSchemeInitialization (0.00s)
+=== RUN   TestConfigureLogLevel_AllLevels
+=== RUN   TestConfigureLogLevel_AllLevels/level_debug
+failed to IncreaseLevel: invalid increase level, as level "debug" is allowed by increased level, but not by existing core
+{"level":"info","ts":1764710122.660589,"caller":"controller/main_test.go:390","msg":"info"}
+{"level":"warn","ts":1764710122.660716,"caller":"controller/main_test.go:391","msg":"warn"}
+{"level":"error","ts":1764710122.660737,"caller":"controller/main_test.go:392","msg":"error","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/cmd/controller.TestConfigureLogLevel_AllLevels.func1\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/cmd/controller/main_test.go:392\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+=== RUN   TestConfigureLogLevel_AllLevels/level_info
+{"level":"info","ts":1764710122.660824,"caller":"controller/main_test.go:390","msg":"info"}
+{"level":"warn","ts":1764710122.660851,"caller":"controller/main_test.go:391","msg":"warn"}
+{"level":"error","ts":1764710122.6608682,"caller":"controller/main_test.go:392","msg":"error","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/cmd/controller.TestConfigureLogLevel_AllLevels.func1\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/cmd/controller/main_test.go:392\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+=== RUN   TestConfigureLogLevel_AllLevels/level_warn
+{"level":"warn","ts":1764710122.660942,"caller":"controller/main_test.go:391","msg":"warn"}
+{"level":"error","ts":1764710122.660963,"caller":"controller/main_test.go:392","msg":"error","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/cmd/controller.TestConfigureLogLevel_AllLevels.func1\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/cmd/controller/main_test.go:392\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+=== RUN   TestConfigureLogLevel_AllLevels/level_error
+{"level":"error","ts":1764710122.661033,"caller":"controller/main_test.go:392","msg":"error","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/cmd/controller.TestConfigureLogLevel_AllLevels.func1\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/cmd/controller/main_test.go:392\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+=== RUN   TestConfigureLogLevel_AllLevels/level_invalid
+{"level":"info","ts":1764710122.661097,"caller":"controller/main_test.go:390","msg":"info"}
+{"level":"warn","ts":1764710122.6611142,"caller":"controller/main_test.go:391","msg":"warn"}
+{"level":"error","ts":1764710122.661129,"caller":"controller/main_test.go:392","msg":"error","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/cmd/controller.TestConfigureLogLevel_AllLevels.func1\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/cmd/controller/main_test.go:392\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+=== RUN   TestConfigureLogLevel_AllLevels/level_
+{"level":"info","ts":1764710122.661192,"caller":"controller/main_test.go:390","msg":"info"}
+{"level":"warn","ts":1764710122.6612082,"caller":"controller/main_test.go:391","msg":"warn"}
+{"level":"error","ts":1764710122.6612248,"caller":"controller/main_test.go:392","msg":"error","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/cmd/controller.TestConfigureLogLevel_AllLevels.func1\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/cmd/controller/main_test.go:392\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+--- PASS: TestConfigureLogLevel_AllLevels (0.00s)
+    --- PASS: TestConfigureLogLevel_AllLevels/level_debug (0.00s)
+    --- PASS: TestConfigureLogLevel_AllLevels/level_info (0.00s)
+    --- PASS: TestConfigureLogLevel_AllLevels/level_warn (0.00s)
+    --- PASS: TestConfigureLogLevel_AllLevels/level_error (0.00s)
+    --- PASS: TestConfigureLogLevel_AllLevels/level_invalid (0.00s)
+    --- PASS: TestConfigureLogLevel_AllLevels/level_ (0.00s)
+=== RUN   TestRun_OptionValidation
+=== RUN   TestRun_OptionValidation/invalid_options_fail_validation_without_completion
+=== RUN   TestRun_OptionValidation/valid_options_pass_validation
+=== RUN   TestRun_OptionValidation/options_completion_fills_defaults
+--- PASS: TestRun_OptionValidation (0.00s)
+    --- PASS: TestRun_OptionValidation/invalid_options_fail_validation_without_completion (0.00s)
+    --- PASS: TestRun_OptionValidation/valid_options_pass_validation (0.00s)
+    --- PASS: TestRun_OptionValidation/options_completion_fills_defaults (0.00s)
+=== RUN   TestCLIFlags_DefaultValues
+--- PASS: TestCLIFlags_DefaultValues (0.00s)
+=== RUN   TestCLIFlags_CustomValues
+--- PASS: TestCLIFlags_CustomValues (0.00s)
+PASS
+coverage: 34.9% of statements
+ok  	github.com/vpsie/vpsie-k8s-autoscaler/cmd/controller	(cached)	coverage: 34.9% of statements
+=== RUN   TestNewLogger
+=== RUN   TestNewLogger/production_logger
+{"level":"info","ts":"2025-12-02T23:11:57.187+0200","caller":"logging/logger_test.go:41","msg":"test info message"}
+{"level":"warn","ts":"2025-12-02T23:11:57.187+0200","caller":"logging/logger_test.go:43","msg":"test warn message","key":"value"}
+{"level":"error","ts":"2025-12-02T23:11:57.187+0200","caller":"logging/logger_test.go:44","msg":"test error message","count":42,"stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/internal/logging.TestNewLogger.func1\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/internal/logging/logger_test.go:44\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+=== RUN   TestNewLogger/development_logger
+2025-12-02T23:11:57.187+0200	[34mINFO[0m	logging/logger_test.go:41	test info message
+2025-12-02T23:11:57.187+0200	[35mDEBUG[0m	logging/logger_test.go:42	test debug message
+2025-12-02T23:11:57.187+0200	[33mWARN[0m	logging/logger_test.go:43	test warn message	{"key": "value"}
+2025-12-02T23:11:57.187+0200	[31mERROR[0m	logging/logger_test.go:44	test error message	{"count": 42}
+github.com/vpsie/vpsie-k8s-autoscaler/internal/logging.TestNewLogger.func1
+	/Users/zozo/projects/vpsie-k8s-autoscaler/internal/logging/logger_test.go:44
+testing.tRunner
+	/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934
+--- PASS: TestNewLogger (0.00s)
+    --- PASS: TestNewLogger/production_logger (0.00s)
+    --- PASS: TestNewLogger/development_logger (0.00s)
+=== RUN   TestNewLogger_ProductionMode
+{"level":"info","ts":"2025-12-02T23:11:57.188+0200","caller":"logging/logger_test.go:56","msg":"production log","environment":"production","port":8080}
+--- PASS: TestNewLogger_ProductionMode (0.00s)
+=== RUN   TestNewLogger_DevelopmentMode
+2025-12-02T23:11:57.188+0200	[34mINFO[0m	logging/logger_test.go:68	development log	{"environment": "development", "debug": true}
+--- PASS: TestNewLogger_DevelopmentMode (0.00s)
+=== RUN   TestNewZapLogger
+=== RUN   TestNewZapLogger/production_mode
+{"level":"info","ts":"2025-12-02T23:11:57.188+0200","caller":"logging/logger_test.go:101","msg":"test message","key":"value","number":42}
+{"level":"error","ts":"2025-12-02T23:11:57.188+0200","caller":"logging/logger_test.go:102","msg":"test error","reason":"testing","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/internal/logging.TestNewZapLogger.func1\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/internal/logging/logger_test.go:102\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+{"level":"info","ts":"2025-12-02T23:11:57.188+0200","logger":"test-component","caller":"logging/logger_test.go:105","msg":"named logger"}
+{"level":"info","ts":"2025-12-02T23:11:57.188+0200","caller":"logging/logger_test.go:106","msg":"logger with values","component":"test"}
+=== RUN   TestNewZapLogger/development_mode
+2025-12-02T23:11:57.188+0200	[34mINFO[0m	logging/logger_test.go:101	test message	{"key": "value", "number": 42}
+2025-12-02T23:11:57.188+0200	[31mERROR[0m	logging/logger_test.go:102	test error	{"reason": "testing"}
+github.com/vpsie/vpsie-k8s-autoscaler/internal/logging.TestNewZapLogger.func1
+	/Users/zozo/projects/vpsie-k8s-autoscaler/internal/logging/logger_test.go:102
+testing.tRunner
+	/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934
+2025-12-02T23:11:57.188+0200	[34mINFO[0m	test-component	logging/logger_test.go:105	named logger
+2025-12-02T23:11:57.188+0200	[34mINFO[0m	logging/logger_test.go:106	logger with values	{"component": "test"}
+--- PASS: TestNewZapLogger (0.00s)
+    --- PASS: TestNewZapLogger/production_mode (0.00s)
+    --- PASS: TestNewZapLogger/development_mode (0.00s)
+=== RUN   TestWithRequestID
+--- PASS: TestWithRequestID (0.00s)
+=== RUN   TestGetRequestID
+=== RUN   TestGetRequestID/context_without_request_ID_returns_empty_string
+=== RUN   TestGetRequestID/context_with_request_ID_returns_ID
+--- PASS: TestGetRequestID (0.00s)
+    --- PASS: TestGetRequestID/context_without_request_ID_returns_empty_string (0.00s)
+    --- PASS: TestGetRequestID/context_with_request_ID_returns_ID (0.00s)
+=== RUN   TestWithRequestIDField
+=== RUN   TestWithRequestIDField/context_with_request_ID_adds_field
+{"level":"info","ts":"2025-12-02T23:11:57.189+0200","caller":"logging/logger_test.go:167","msg":"test message","requestID":"54dadd51-d40d-4cc0-88cb-642087d3873c"}
+=== RUN   TestWithRequestIDField/context_without_request_ID_returns_original_logger
+{"level":"info","ts":"2025-12-02T23:11:57.189+0200","caller":"logging/logger_test.go:175","msg":"test message without request ID"}
+--- PASS: TestWithRequestIDField (0.00s)
+    --- PASS: TestWithRequestIDField/context_with_request_ID_adds_field (0.00s)
+    --- PASS: TestWithRequestIDField/context_without_request_ID_returns_original_logger (0.00s)
+=== RUN   TestLogScaleUpDecision
+{"level":"info","ts":"2025-12-02T23:11:57.189+0200","caller":"logging/logger.go:74","msg":"Scale-up decision made","action":"scale-up","nodeGroup":"test-nodegroup","namespace":"default","currentNodes":2,"desiredNodes":5,"nodesAdded":3,"reason":"insufficient capacity"}
+--- PASS: TestLogScaleUpDecision (0.00s)
+=== RUN   TestLogScaleDownDecision
+{"level":"info","ts":"2025-12-02T23:11:57.190+0200","caller":"logging/logger.go:87","msg":"Scale-down decision made","action":"scale-down","nodeGroup":"test-nodegroup","namespace":"default","currentNodes":5,"desiredNodes":2,"nodesRemoved":3,"reason":"low utilization"}
+--- PASS: TestLogScaleDownDecision (0.00s)
+=== RUN   TestLogAPICall
+--- PASS: TestLogAPICall (0.00s)
+=== RUN   TestLogAPIResponse
+--- PASS: TestLogAPIResponse (0.00s)
+=== RUN   TestLogAPIError
+{"level":"error","ts":"2025-12-02T23:11:57.192+0200","caller":"logging/logger.go:120","msg":"VPSie API error","method":"POST","endpoint":"/api/v2/vms","statusCode":500,"error":"assert.AnError general error for testing","requestID":"request-123","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/internal/logging.LogAPIError\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/internal/logging/logger.go:120\ngithub.com/vpsie/vpsie-k8s-autoscaler/internal/logging.TestLogAPIError\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/internal/logging/logger_test.go:216\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+--- PASS: TestLogAPIError (0.00s)
+=== RUN   TestLogNodeProvisioningStart
+{"level":"info","ts":"2025-12-02T23:11:57.193+0200","caller":"logging/logger.go:131","msg":"Starting node provisioning","node":"node-1","nodeGroup":"nodegroup-1","namespace":"default","instanceType":"small-2cpu-4gb"}
+--- PASS: TestLogNodeProvisioningStart (0.00s)
+=== RUN   TestLogNodeProvisioningComplete
+{"level":"info","ts":"2025-12-02T23:11:57.193+0200","caller":"logging/logger.go:141","msg":"Node provisioning completed","node":"node-1","nodeGroup":"nodegroup-1","namespace":"default","duration":"5m30s"}
+--- PASS: TestLogNodeProvisioningComplete (0.00s)
+=== RUN   TestLogNodeProvisioningFailed
+{"level":"error","ts":"2025-12-02T23:11:57.193+0200","caller":"logging/logger.go:151","msg":"Node provisioning failed","node":"node-1","nodeGroup":"nodegroup-1","namespace":"default","error":"assert.AnError general error for testing","reason":"API timeout","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/internal/logging.LogNodeProvisioningFailed\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/internal/logging/logger.go:151\ngithub.com/vpsie/vpsie-k8s-autoscaler/internal/logging.TestLogNodeProvisioningFailed\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/internal/logging/logger_test.go:240\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+--- PASS: TestLogNodeProvisioningFailed (0.00s)
+=== RUN   TestLogNodeTerminationStart
+{"level":"info","ts":"2025-12-02T23:11:57.194+0200","caller":"logging/logger.go:162","msg":"Starting node termination","node":"node-1","nodeGroup":"nodegroup-1","namespace":"default"}
+--- PASS: TestLogNodeTerminationStart (0.00s)
+=== RUN   TestLogNodeTerminationComplete
+{"level":"info","ts":"2025-12-02T23:11:57.194+0200","caller":"logging/logger.go:171","msg":"Node termination completed","node":"node-1","nodeGroup":"nodegroup-1","namespace":"default","duration":"2m15s"}
+--- PASS: TestLogNodeTerminationComplete (0.00s)
+=== RUN   TestLogNodeTerminationFailed
+{"level":"error","ts":"2025-12-02T23:11:57.195+0200","caller":"logging/logger.go:181","msg":"Node termination failed","node":"node-1","nodeGroup":"nodegroup-1","namespace":"default","error":"assert.AnError general error for testing","reason":"API error","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/internal/logging.LogNodeTerminationFailed\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/internal/logging/logger.go:181\ngithub.com/vpsie/vpsie-k8s-autoscaler/internal/logging.TestLogNodeTerminationFailed\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/internal/logging/logger_test.go:264\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+--- PASS: TestLogNodeTerminationFailed (0.00s)
+=== RUN   TestLogPhaseTransition
+{"level":"info","ts":"2025-12-02T23:11:57.195+0200","caller":"logging/logger.go:192","msg":"Node phase transition","node":"node-1","nodeGroup":"nodegroup-1","namespace":"default","fromPhase":"Pending","toPhase":"Provisioning","reason":"VM creation started"}
+--- PASS: TestLogPhaseTransition (0.00s)
+=== RUN   TestLogUnschedulablePods
+{"level":"info","ts":"2025-12-02T23:11:57.195+0200","caller":"logging/logger.go:204","msg":"Unschedulable pods detected","count":5,"constraint":"InsufficientCPU","namespace":"default"}
+--- PASS: TestLogUnschedulablePods (0.00s)
+=== RUN   TestLogReconciliationStart
+--- PASS: TestLogReconciliationStart (0.00s)
+=== RUN   TestLogReconciliationComplete
+--- PASS: TestLogReconciliationComplete (0.00s)
+=== RUN   TestLogReconciliationError
+{"level":"error","ts":"2025-12-02T23:11:57.196+0200","caller":"logging/logger.go:233","msg":"Reconciliation error","controller":"NodeGroupController","object":"my-nodegroup","namespace":"default","error":"assert.AnError general error for testing","errorType":"ValidationError","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/internal/logging.LogReconciliationError\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/internal/logging/logger.go:233\ngithub.com/vpsie/vpsie-k8s-autoscaler/internal/logging.TestLogReconciliationError\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/internal/logging/logger_test.go:304\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+--- PASS: TestLogReconciliationError (0.00s)
+=== RUN   TestRequestIDUniqueness
+--- PASS: TestRequestIDUniqueness (0.00s)
+=== RUN   TestLoggerIntegration
+{"level":"info","ts":"2025-12-02T23:11:57.197+0200","caller":"logging/logger.go:74","msg":"Scale-up decision made","requestID":"e2529d2e-a7c4-49dc-a527-38d56b253df9","action":"scale-up","nodeGroup":"test-ng","namespace":"default","currentNodes":3,"desiredNodes":5,"nodesAdded":2,"reason":"scale up needed"}
+{"level":"info","ts":"2025-12-02T23:11:57.197+0200","caller":"logging/logger.go:131","msg":"Starting node provisioning","requestID":"e2529d2e-a7c4-49dc-a527-38d56b253df9","node":"node-1","nodeGroup":"test-ng","namespace":"default","instanceType":"small"}
+{"level":"info","ts":"2025-12-02T23:11:57.197+0200","caller":"logging/logger.go:192","msg":"Node phase transition","requestID":"e2529d2e-a7c4-49dc-a527-38d56b253df9","node":"node-1","nodeGroup":"test-ng","namespace":"default","fromPhase":"Pending","toPhase":"Provisioning","reason":"started"}
+--- PASS: TestLoggerIntegration (0.00s)
+=== RUN   TestNewZapLogger_Integration
+{"level":"info","ts":"2025-12-02T23:11:57.197+0200","caller":"logging/logger_test.go:360","msg":"controller started","version":"v1.0.0"}
+{"level":"info","ts":"2025-12-02T23:11:57.197+0200","logger":"reconciler","caller":"logging/logger_test.go:361","msg":"reconciling","name":"test-ng"}
+{"level":"info","ts":"2025-12-02T23:11:57.197+0200","caller":"logging/logger_test.go:362","msg":"scaling decision","component":"scaler","nodes":5}
+{"level":"error","ts":"2025-12-02T23:11:57.197+0200","caller":"logging/logger_test.go:365","msg":"reconciliation failed","retry":true,"error":"assert.AnError general error for testing","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/internal/logging.TestNewZapLogger_Integration\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/internal/logging/logger_test.go:365\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+--- PASS: TestNewZapLogger_Integration (0.00s)
+PASS
+coverage: 97.1% of statements
+ok  	github.com/vpsie/vpsie-k8s-autoscaler/internal/logging	(cached)	coverage: 97.1% of statements
+=== RUN   TestNodeGroup_DeepCopy
+--- PASS: TestNodeGroup_DeepCopy (0.00s)
+=== RUN   TestNodeGroup_DeepCopyInto
+--- PASS: TestNodeGroup_DeepCopyInto (0.00s)
+=== RUN   TestNodeGroup_DeepCopyObject
+--- PASS: TestNodeGroup_DeepCopyObject (0.00s)
+=== RUN   TestNodeGroupList_DeepCopy
+--- PASS: TestNodeGroupList_DeepCopy (0.00s)
+=== RUN   TestVPSieNode_DeepCopy
+--- PASS: TestVPSieNode_DeepCopy (0.00s)
+=== RUN   TestVPSieNode_DeepCopyInto
+--- PASS: TestVPSieNode_DeepCopyInto (0.00s)
+=== RUN   TestVPSieNode_DeepCopyObject
+--- PASS: TestVPSieNode_DeepCopyObject (0.00s)
+=== RUN   TestVPSieNodeList_DeepCopy
+--- PASS: TestVPSieNodeList_DeepCopy (0.00s)
+=== RUN   TestNodeGroup_NilDeepCopy
+--- PASS: TestNodeGroup_NilDeepCopy (0.00s)
+=== RUN   TestVPSieNode_NilDeepCopy
+--- PASS: TestVPSieNode_NilDeepCopy (0.00s)
+=== RUN   TestScaleUpPolicy_DeepCopy
+--- PASS: TestScaleUpPolicy_DeepCopy (0.00s)
+=== RUN   TestNodeResources_DeepCopy
+--- PASS: TestNodeResources_DeepCopy (0.00s)
+=== RUN   TestNodeGroup_Creation
+--- PASS: TestNodeGroup_Creation (0.00s)
+=== RUN   TestNodeGroup_WithLabelsAndTaints
+--- PASS: TestNodeGroup_WithLabelsAndTaints (0.00s)
+=== RUN   TestNodeGroup_WithScalingPolicies
+--- PASS: TestNodeGroup_WithScalingPolicies (0.00s)
+=== RUN   TestNodeGroup_WithUserData
+--- PASS: TestNodeGroup_WithUserData (0.00s)
+=== RUN   TestNodeGroup_Status
+--- PASS: TestNodeGroup_Status (0.00s)
+=== RUN   TestNodeGroup_Conditions
+=== RUN   TestNodeGroup_Conditions/Ready_condition
+=== RUN   TestNodeGroup_Conditions/Scaling_condition
+=== RUN   TestNodeGroup_Conditions/Error_condition
+=== RUN   TestNodeGroup_Conditions/AtMinCapacity_condition
+=== RUN   TestNodeGroup_Conditions/AtMaxCapacity_condition
+--- PASS: TestNodeGroup_Conditions (0.00s)
+    --- PASS: TestNodeGroup_Conditions/Ready_condition (0.00s)
+    --- PASS: TestNodeGroup_Conditions/Scaling_condition (0.00s)
+    --- PASS: TestNodeGroup_Conditions/Error_condition (0.00s)
+    --- PASS: TestNodeGroup_Conditions/AtMinCapacity_condition (0.00s)
+    --- PASS: TestNodeGroup_Conditions/AtMaxCapacity_condition (0.00s)
+=== RUN   TestNodeGroup_MixedInstances
+--- PASS: TestNodeGroup_MixedInstances (0.00s)
+=== RUN   TestNodeGroup_ScaleDownDisabled
+--- PASS: TestNodeGroup_ScaleDownDisabled (0.00s)
+=== RUN   TestNodeInfo_Fields
+--- PASS: TestNodeInfo_Fields (0.00s)
+=== RUN   TestNodeGroupList_Creation
+--- PASS: TestNodeGroupList_Creation (0.00s)
+=== RUN   TestGroupVersion
+--- PASS: TestGroupVersion (0.00s)
+=== RUN   TestSchemeBuilder_AddToScheme
+--- PASS: TestSchemeBuilder_AddToScheme (0.00s)
+=== RUN   TestSchemeBuilder_KnownTypes
+--- PASS: TestSchemeBuilder_KnownTypes (0.00s)
+=== RUN   TestSchemeBuilder_MultipleAddToScheme
+--- PASS: TestSchemeBuilder_MultipleAddToScheme (0.00s)
+=== RUN   TestVPSieNode_Creation
+--- PASS: TestVPSieNode_Creation (0.00s)
+=== RUN   TestVPSieNode_Phases
+=== RUN   TestVPSieNode_Phases/Pending_phase
+=== RUN   TestVPSieNode_Phases/Provisioning_phase
+=== RUN   TestVPSieNode_Phases/Provisioned_phase
+=== RUN   TestVPSieNode_Phases/Joining_phase
+=== RUN   TestVPSieNode_Phases/Ready_phase
+=== RUN   TestVPSieNode_Phases/Terminating_phase
+=== RUN   TestVPSieNode_Phases/Deleting_phase
+=== RUN   TestVPSieNode_Phases/Failed_phase
+--- PASS: TestVPSieNode_Phases (0.00s)
+    --- PASS: TestVPSieNode_Phases/Pending_phase (0.00s)
+    --- PASS: TestVPSieNode_Phases/Provisioning_phase (0.00s)
+    --- PASS: TestVPSieNode_Phases/Provisioned_phase (0.00s)
+    --- PASS: TestVPSieNode_Phases/Joining_phase (0.00s)
+    --- PASS: TestVPSieNode_Phases/Ready_phase (0.00s)
+    --- PASS: TestVPSieNode_Phases/Terminating_phase (0.00s)
+    --- PASS: TestVPSieNode_Phases/Deleting_phase (0.00s)
+    --- PASS: TestVPSieNode_Phases/Failed_phase (0.00s)
+=== RUN   TestVPSieNode_StatusWithResources
+--- PASS: TestVPSieNode_StatusWithResources (0.00s)
+=== RUN   TestVPSieNode_Conditions
+=== RUN   TestVPSieNode_Conditions/VPSReady_condition
+=== RUN   TestVPSieNode_Conditions/NodeJoined_condition
+=== RUN   TestVPSieNode_Conditions/NodeReady_condition
+=== RUN   TestVPSieNode_Conditions/Error_condition
+--- PASS: TestVPSieNode_Conditions (0.00s)
+    --- PASS: TestVPSieNode_Conditions/VPSReady_condition (0.00s)
+    --- PASS: TestVPSieNode_Conditions/NodeJoined_condition (0.00s)
+    --- PASS: TestVPSieNode_Conditions/NodeReady_condition (0.00s)
+    --- PASS: TestVPSieNode_Conditions/Error_condition (0.00s)
+=== RUN   TestVPSieNode_WithMultipleConditions
+--- PASS: TestVPSieNode_WithMultipleConditions (0.00s)
+=== RUN   TestVPSieNode_LifecycleTimestamps
+--- PASS: TestVPSieNode_LifecycleTimestamps (0.00s)
+=== RUN   TestVPSieNode_TerminatingState
+--- PASS: TestVPSieNode_TerminatingState (0.00s)
+=== RUN   TestVPSieNode_FailedState
+--- PASS: TestVPSieNode_FailedState (0.00s)
+=== RUN   TestNodeResources_Fields
+--- PASS: TestNodeResources_Fields (0.00s)
+=== RUN   TestVPSieNode_WithoutOptionalFields
+--- PASS: TestVPSieNode_WithoutOptionalFields (0.00s)
+=== RUN   TestVPSieNodeList_Creation
+--- PASS: TestVPSieNodeList_Creation (0.00s)
+=== RUN   TestVPSieNode_ObservedGeneration
+--- PASS: TestVPSieNode_ObservedGeneration (0.00s)
+PASS
+coverage: 57.6% of statements
+ok  	github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1	(cached)	coverage: 57.6% of statements
+=== RUN   TestNewHealthChecker
+--- PASS: TestNewHealthChecker (0.00s)
+=== RUN   TestHealthChecker_SetHealthy
+--- PASS: TestHealthChecker_SetHealthy (0.00s)
+=== RUN   TestHealthChecker_SetReady
+--- PASS: TestHealthChecker_SetReady (0.00s)
+=== RUN   TestHealthChecker_HealthzHandler
+=== RUN   TestHealthChecker_HealthzHandler/healthy
+=== RUN   TestHealthChecker_HealthzHandler/unhealthy_without_error
+=== RUN   TestHealthChecker_HealthzHandler/unhealthy_with_error
+=== RUN   TestHealthChecker_HealthzHandler/shutdown_initiated
+--- PASS: TestHealthChecker_HealthzHandler (0.00s)
+    --- PASS: TestHealthChecker_HealthzHandler/healthy (0.00s)
+    --- PASS: TestHealthChecker_HealthzHandler/unhealthy_without_error (0.00s)
+    --- PASS: TestHealthChecker_HealthzHandler/unhealthy_with_error (0.00s)
+    --- PASS: TestHealthChecker_HealthzHandler/shutdown_initiated (0.00s)
+=== RUN   TestHealthChecker_ReadyzHandler
+=== RUN   TestHealthChecker_ReadyzHandler/ready
+=== RUN   TestHealthChecker_ReadyzHandler/not_ready_without_error
+=== RUN   TestHealthChecker_ReadyzHandler/not_ready_with_error
+=== RUN   TestHealthChecker_ReadyzHandler/shutdown_initiated
+--- PASS: TestHealthChecker_ReadyzHandler (0.00s)
+    --- PASS: TestHealthChecker_ReadyzHandler/ready (0.00s)
+    --- PASS: TestHealthChecker_ReadyzHandler/not_ready_without_error (0.00s)
+    --- PASS: TestHealthChecker_ReadyzHandler/not_ready_with_error (0.00s)
+    --- PASS: TestHealthChecker_ReadyzHandler/shutdown_initiated (0.00s)
+=== RUN   TestHealthChecker_LastError
+--- PASS: TestHealthChecker_LastError (0.00s)
+=== RUN   TestHealthChecker_LastCheckTime
+--- PASS: TestHealthChecker_LastCheckTime (0.00s)
+=== RUN   TestHealthChecker_ConcurrentAccess
+--- PASS: TestHealthChecker_ConcurrentAccess (0.00s)
+=== RUN   TestHealthChecker_PerformCheck_Timeout
+    health_test.go:245: Skipping test that requires real VPSie client
+--- SKIP: TestHealthChecker_PerformCheck_Timeout (0.00s)
+=== RUN   TestHealthChecker_StatusTransitions
+--- PASS: TestHealthChecker_StatusTransitions (0.00s)
+=== RUN   TestNewLogger
+=== RUN   TestNewLogger/production_logger_with_info_level
+{"level":"info","ts":1764709988.671368,"caller":"controller/manager_test.go:77","msg":"test message"}
+{"level":"warn","ts":1764709988.671456,"caller":"controller/manager_test.go:79","msg":"warn message"}
+{"level":"error","ts":1764709988.6714802,"caller":"controller/manager_test.go:80","msg":"error message","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller.TestNewLogger.func1\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/manager_test.go:80\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+=== RUN   TestNewLogger/development_logger_with_debug_level
+2025-12-02T23:13:08.671+0200	INFO	controller/manager_test.go:77	test message
+2025-12-02T23:13:08.671+0200	DEBUG	controller/manager_test.go:78	debug message
+2025-12-02T23:13:08.671+0200	WARN	controller/manager_test.go:79	warn message
+github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller.TestNewLogger.func1
+	/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/manager_test.go:79
+testing.tRunner
+	/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934
+2025-12-02T23:13:08.671+0200	ERROR	controller/manager_test.go:80	error message
+github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller.TestNewLogger.func1
+	/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/manager_test.go:80
+testing.tRunner
+	/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934
+=== RUN   TestNewLogger/production_logger_with_warn_level
+{"level":"warn","ts":1764709988.6720462,"caller":"controller/manager_test.go:79","msg":"warn message"}
+{"level":"error","ts":1764709988.6720698,"caller":"controller/manager_test.go:80","msg":"error message","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller.TestNewLogger.func1\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/manager_test.go:80\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+=== RUN   TestNewLogger/production_logger_with_error_level
+{"level":"error","ts":1764709988.672359,"caller":"controller/manager_test.go:80","msg":"error message","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller.TestNewLogger.func1\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/manager_test.go:80\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+=== RUN   TestNewLogger/console_format
+1.764709988672653e+09	info	controller/manager_test.go:77	test message
+1.764709988672678e+09	warn	controller/manager_test.go:79	warn message
+1.7647099886727018e+09	error	controller/manager_test.go:80	error message
+github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller.TestNewLogger.func1
+	/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/manager_test.go:80
+testing.tRunner
+	/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934
+--- PASS: TestNewLogger (0.00s)
+    --- PASS: TestNewLogger/production_logger_with_info_level (0.00s)
+    --- PASS: TestNewLogger/development_logger_with_debug_level (0.00s)
+    --- PASS: TestNewLogger/production_logger_with_warn_level (0.00s)
+    --- PASS: TestNewLogger/production_logger_with_error_level (0.00s)
+    --- PASS: TestNewLogger/console_format (0.00s)
+=== RUN   TestNewLogger_LogLevels
+=== RUN   TestNewLogger_LogLevels/debug
+{"level":"info","ts":1764709988.673034,"caller":"controller/manager_test.go:111","msg":"test"}
+=== RUN   TestNewLogger_LogLevels/info
+{"level":"info","ts":1764709988.673301,"caller":"controller/manager_test.go:111","msg":"test"}
+=== RUN   TestNewLogger_LogLevels/warn
+=== RUN   TestNewLogger_LogLevels/error
+--- PASS: TestNewLogger_LogLevels (0.00s)
+    --- PASS: TestNewLogger_LogLevels/debug (0.00s)
+    --- PASS: TestNewLogger_LogLevels/info (0.00s)
+    --- PASS: TestNewLogger_LogLevels/warn (0.00s)
+    --- PASS: TestNewLogger_LogLevels/error (0.00s)
+=== RUN   TestNewManager_NilConfig
+--- PASS: TestNewManager_NilConfig (0.00s)
+=== RUN   TestNewManager_NilOptions
+--- PASS: TestNewManager_NilOptions (0.00s)
+=== RUN   TestControllerManager_Getters
+--- PASS: TestControllerManager_Getters (0.00s)
+=== RUN   TestOptions_Integration
+=== RUN   TestOptions_Integration/valid_default_options
+=== RUN   TestOptions_Integration/invalid_options_-_empty_metrics_addr
+--- PASS: TestOptions_Integration (0.00s)
+    --- PASS: TestOptions_Integration/valid_default_options (0.00s)
+    --- PASS: TestOptions_Integration/invalid_options_-_empty_metrics_addr (0.00s)
+=== RUN   TestDefaultOptions_AreValid
+--- PASS: TestDefaultOptions_AreValid (0.00s)
+=== RUN   TestLoggerFormats
+=== RUN   TestLoggerFormats/json
+{"level":"info","ts":1764709988.674764,"caller":"controller/manager_test.go:221","msg":"test message"}
+=== RUN   TestLoggerFormats/console
+1.764709988675114e+09	info	controller/manager_test.go:221	test message
+--- PASS: TestLoggerFormats (0.00s)
+    --- PASS: TestLoggerFormats/json (0.00s)
+    --- PASS: TestLoggerFormats/console (0.00s)
+=== RUN   TestLogger_DevelopmentMode
+=== RUN   TestLogger_DevelopmentMode/production_mode
+{"level":"info","ts":1764709988.6754718,"caller":"controller/manager_test.go:264","msg":"info message"}
+{"level":"warn","ts":1764709988.675499,"caller":"controller/manager_test.go:265","msg":"warn message"}
+{"level":"error","ts":1764709988.6755168,"caller":"controller/manager_test.go:266","msg":"error message","stacktrace":"github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller.TestLogger_DevelopmentMode.func1\n\t/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/manager_test.go:266\ntesting.tRunner\n\t/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934"}
+=== RUN   TestLogger_DevelopmentMode/development_mode
+2025-12-02T23:13:08.675+0200	DEBUG	controller/manager_test.go:263	debug message
+2025-12-02T23:13:08.675+0200	INFO	controller/manager_test.go:264	info message
+2025-12-02T23:13:08.675+0200	WARN	controller/manager_test.go:265	warn message
+github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller.TestLogger_DevelopmentMode.func1
+	/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/manager_test.go:265
+testing.tRunner
+	/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934
+2025-12-02T23:13:08.675+0200	ERROR	controller/manager_test.go:266	error message
+github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller.TestLogger_DevelopmentMode.func1
+	/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/manager_test.go:266
+testing.tRunner
+	/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934
+--- PASS: TestLogger_DevelopmentMode (0.00s)
+    --- PASS: TestLogger_DevelopmentMode/production_mode (0.00s)
+    --- PASS: TestLogger_DevelopmentMode/development_mode (0.00s)
+=== RUN   TestNewLogger_InvalidLogLevel
+{"level":"info","ts":1764709988.676019,"caller":"controller/manager_test.go:284","msg":"test message"}
+--- PASS: TestNewLogger_InvalidLogLevel (0.00s)
+=== RUN   TestNewDefaultOptions
+--- PASS: TestNewDefaultOptions (0.00s)
+=== RUN   TestOptions_Validate
+=== RUN   TestOptions_Validate/valid_default_options
+=== RUN   TestOptions_Validate/empty_metrics_address
+=== RUN   TestOptions_Validate/empty_health_probe_address
+=== RUN   TestOptions_Validate/same_metrics_and_health_probe_address
+=== RUN   TestOptions_Validate/empty_leader_election_ID_when_enabled
+=== RUN   TestOptions_Validate/empty_leader_election_namespace_when_enabled
+=== RUN   TestOptions_Validate/zero_sync_period
+=== RUN   TestOptions_Validate/negative_sync_period
+=== RUN   TestOptions_Validate/empty_VPSie_secret_name
+=== RUN   TestOptions_Validate/empty_VPSie_secret_namespace
+=== RUN   TestOptions_Validate/invalid_log_level
+=== RUN   TestOptions_Validate/invalid_log_format
+=== RUN   TestOptions_Validate/leader_election_disabled_with_empty_ID
+=== RUN   TestOptions_Validate/valid_with_debug_log_level
+=== RUN   TestOptions_Validate/valid_with_console_log_format
+--- PASS: TestOptions_Validate (0.00s)
+    --- PASS: TestOptions_Validate/valid_default_options (0.00s)
+    --- PASS: TestOptions_Validate/empty_metrics_address (0.00s)
+    --- PASS: TestOptions_Validate/empty_health_probe_address (0.00s)
+    --- PASS: TestOptions_Validate/same_metrics_and_health_probe_address (0.00s)
+    --- PASS: TestOptions_Validate/empty_leader_election_ID_when_enabled (0.00s)
+    --- PASS: TestOptions_Validate/empty_leader_election_namespace_when_enabled (0.00s)
+    --- PASS: TestOptions_Validate/zero_sync_period (0.00s)
+    --- PASS: TestOptions_Validate/negative_sync_period (0.00s)
+    --- PASS: TestOptions_Validate/empty_VPSie_secret_name (0.00s)
+    --- PASS: TestOptions_Validate/empty_VPSie_secret_namespace (0.00s)
+    --- PASS: TestOptions_Validate/invalid_log_level (0.00s)
+    --- PASS: TestOptions_Validate/invalid_log_format (0.00s)
+    --- PASS: TestOptions_Validate/leader_election_disabled_with_empty_ID (0.00s)
+    --- PASS: TestOptions_Validate/valid_with_debug_log_level (0.00s)
+    --- PASS: TestOptions_Validate/valid_with_console_log_format (0.00s)
+=== RUN   TestOptions_Complete
+=== RUN   TestOptions_Complete/empty_options_get_defaults
+=== RUN   TestOptions_Complete/partial_options_get_missing_defaults
+=== RUN   TestOptions_Complete/fully_specified_options_unchanged
+--- PASS: TestOptions_Complete (0.00s)
+    --- PASS: TestOptions_Complete/empty_options_get_defaults (0.00s)
+    --- PASS: TestOptions_Complete/partial_options_get_missing_defaults (0.00s)
+    --- PASS: TestOptions_Complete/fully_specified_options_unchanged (0.00s)
+PASS
+coverage: 45.1% of statements
+ok  	github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller	(cached)	coverage: 45.1% of statements
+=== RUN   TestSetCondition
+--- PASS: TestSetCondition (0.00s)
+=== RUN   TestRemoveCondition
+--- PASS: TestRemoveCondition (0.00s)
+=== RUN   TestGetCondition
+--- PASS: TestGetCondition (0.00s)
+=== RUN   TestIsConditionTrue
+--- PASS: TestIsConditionTrue (0.00s)
+=== RUN   TestIsConditionFalse
+--- PASS: TestIsConditionFalse (0.00s)
+=== RUN   TestSetReadyCondition
+--- PASS: TestSetReadyCondition (0.00s)
+=== RUN   TestSetScalingCondition
+--- PASS: TestSetScalingCondition (0.00s)
+=== RUN   TestSetErrorCondition
+--- PASS: TestSetErrorCondition (0.00s)
+=== RUN   TestUpdateConditionsForReconcile
+--- PASS: TestUpdateConditionsForReconcile (0.00s)
+=== RUN   TestUpdateConditionsAfterScale
+=== RUN   TestUpdateConditionsAfterScale/scaling_up_in_progress
+=== RUN   TestUpdateConditionsAfterScale/scaling_complete_and_ready
+=== RUN   TestUpdateConditionsAfterScale/scaling_complete_but_not_all_ready
+--- PASS: TestUpdateConditionsAfterScale (0.00s)
+    --- PASS: TestUpdateConditionsAfterScale/scaling_up_in_progress (0.00s)
+    --- PASS: TestUpdateConditionsAfterScale/scaling_complete_and_ready (0.00s)
+    --- PASS: TestUpdateConditionsAfterScale/scaling_complete_but_not_all_ready (0.00s)
+=== RUN   TestReconcileIntelligentScaleDown_Success
+2025-12-02T22:38:18.854+0200	INFO	nodegroup/reconciler.go:223	Using intelligent scale-down based on node utilization
+2025-12-02T22:38:18.854+0200	INFO	nodegroup/reconciler.go:238	Found scale-down candidates	{"candidateCount": 2}
+2025-12-02T22:38:18.855+0200	INFO	nodegroup/reconciler.go:249	Intelligent scale-down completed successfully	{"nodesRemoved": 2}
+    reconciler_integration_test.go:154: PASS:	IdentifyUnderutilizedNodes(string,*v1alpha1.NodeGroup)
+    reconciler_integration_test.go:154: PASS:	ScaleDown(string,*v1alpha1.NodeGroup,[]*scaler.ScaleDownCandidate)
+    reconciler_integration_test.go:156: ✓ Intelligent scale-down succeeded with 2 candidates
+    reconciler_integration_test.go:157: ✓ IdentifyUnderutilizedNodes was called
+    reconciler_integration_test.go:158: ✓ ScaleDown was called with correct candidates
+--- PASS: TestReconcileIntelligentScaleDown_Success (0.00s)
+=== RUN   TestReconcileIntelligentScaleDown_NoCandidates
+2025-12-02T22:38:18.855+0200	INFO	nodegroup/reconciler.go:223	Using intelligent scale-down based on node utilization
+2025-12-02T22:38:18.856+0200	INFO	nodegroup/reconciler.go:234	No underutilized nodes found for scale-down
+    reconciler_integration_test.go:208: PASS:	IdentifyUnderutilizedNodes(string,*v1alpha1.NodeGroup)
+    reconciler_integration_test.go:210: ✓ No candidates found, requeued with default interval
+    reconciler_integration_test.go:211: ✓ ScaleDown was not called (as expected)
+--- PASS: TestReconcileIntelligentScaleDown_NoCandidates (0.00s)
+=== RUN   TestReconcileIntelligentScaleDown_IdentifyError
+2025-12-02T22:38:18.857+0200	INFO	nodegroup/reconciler.go:223	Using intelligent scale-down based on node utilization
+2025-12-02T22:38:18.857+0200	ERROR	nodegroup/reconciler.go:228	Failed to identify underutilized nodes	{"error": "metrics unavailable"}
+github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/nodegroup.(*NodeGroupReconciler).reconcileIntelligentScaleDown
+	/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/nodegroup/reconciler.go:228
+github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/nodegroup.TestReconcileIntelligentScaleDown_IdentifyError
+	/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/nodegroup/reconciler_integration_test.go:262
+testing.tRunner
+	/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934
+    reconciler_integration_test.go:266: PASS:	IdentifyUnderutilizedNodes(string,*v1alpha1.NodeGroup)
+    reconciler_integration_test.go:268: ✓ Error during identification was properly handled
+    reconciler_integration_test.go:269: ✓ Error condition was set in NodeGroup status
+--- PASS: TestReconcileIntelligentScaleDown_IdentifyError (0.00s)
+=== RUN   TestReconcileIntelligentScaleDown_ScaleDownError
+2025-12-02T22:38:18.858+0200	INFO	nodegroup/reconciler.go:223	Using intelligent scale-down based on node utilization
+2025-12-02T22:38:18.858+0200	INFO	nodegroup/reconciler.go:238	Found scale-down candidates	{"candidateCount": 1}
+2025-12-02T22:38:18.858+0200	ERROR	nodegroup/reconciler.go:244	Intelligent scale-down failed	{"error": "pod eviction failed"}
+github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/nodegroup.(*NodeGroupReconciler).reconcileIntelligentScaleDown
+	/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/nodegroup/reconciler.go:244
+github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/nodegroup.TestReconcileIntelligentScaleDown_ScaleDownError
+	/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/nodegroup/reconciler_integration_test.go:330
+testing.tRunner
+	/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934
+    reconciler_integration_test.go:334: PASS:	IdentifyUnderutilizedNodes(string,*v1alpha1.NodeGroup)
+    reconciler_integration_test.go:334: PASS:	ScaleDown(string,*v1alpha1.NodeGroup,[]*scaler.ScaleDownCandidate)
+    reconciler_integration_test.go:336: ✓ Scale-down error was properly propagated
+    reconciler_integration_test.go:337: ✓ Error condition was set with ReasonScaleDownFailed
+--- PASS: TestReconcileIntelligentScaleDown_ScaleDownError (0.00s)
+=== RUN   TestReconcileScaleDown_FallbackToSimple
+2025-12-02T22:38:18.859+0200	WARN	nodegroup/reconciler.go:264	Using simple scale-down (ScaleDownManager not available)
+github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/nodegroup.(*NodeGroupReconciler).reconcileSimpleScaleDown
+	/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/nodegroup/reconciler.go:264
+github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/nodegroup.(*NodeGroupReconciler).reconcileScaleDown
+	/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/nodegroup/reconciler.go:213
+github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/nodegroup.TestReconcileScaleDown_FallbackToSimple
+	/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/nodegroup/reconciler_integration_test.go:402
+testing.tRunner
+	/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934
+2025-12-02T22:38:18.859+0200	INFO	nodegroup/reconciler.go:273	Removing VPSieNodes	{"count": 2}
+2025-12-02T22:38:18.859+0200	INFO	nodegroup/reconciler.go:282	Deleting VPSieNode	{"vpsienode": "node-1", "phase": "Ready"}
+2025-12-02T22:38:18.859+0200	INFO	nodegroup/reconciler.go:282	Deleting VPSieNode	{"vpsienode": "node-2", "phase": "Provisioning"}
+    reconciler_integration_test.go:407: ✓ Fallback to simple scale-down when ScaleDownManager is nil
+    reconciler_integration_test.go:408: ✓ Simple scale-down selected not-ready node for removal
+--- PASS: TestReconcileScaleDown_FallbackToSimple (0.00s)
+=== RUN   TestReconcileScaleDown_WithScaleDownManager
+2025-12-02T22:38:18.860+0200	INFO	nodegroup/reconciler.go:223	Using intelligent scale-down based on node utilization
+2025-12-02T22:38:18.860+0200	INFO	nodegroup/reconciler.go:234	No underutilized nodes found for scale-down
+    reconciler_integration_test.go:456: PASS:	IdentifyUnderutilizedNodes(string,*v1alpha1.NodeGroup)
+    reconciler_integration_test.go:458: ✓ Intelligent scale-down path was taken (not simple)
+    reconciler_integration_test.go:459: ✓ ScaleDownManager.IdentifyUnderutilizedNodes was called
+--- PASS: TestReconcileScaleDown_WithScaleDownManager (0.00s)
+=== RUN   TestScaleDownIntegration_WithRealScaler
+2025-12-02T22:38:18.860+0200	WARN	scaler/utilization.go:73	no metrics found for nodenodetest-node-1
+github.com/vpsie/vpsie-k8s-autoscaler/pkg/scaler.(*ScaleDownManager).UpdateNodeUtilization
+	/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/scaler/utilization.go:73
+github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/nodegroup.TestScaleDownIntegration_WithRealScaler
+	/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/nodegroup/reconciler_integration_test.go:515
+testing.tRunner
+	/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934
+2025-12-02T22:38:18.961+0200	WARN	scaler/utilization.go:73	no metrics found for nodenodetest-node-1
+github.com/vpsie/vpsie-k8s-autoscaler/pkg/scaler.(*ScaleDownManager).UpdateNodeUtilization
+	/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/scaler/utilization.go:73
+github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/nodegroup.TestScaleDownIntegration_WithRealScaler
+	/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/nodegroup/reconciler_integration_test.go:540
+testing.tRunner
+	/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934
+    reconciler_integration_test.go:549: ✓ Real ScaleDownManager integration test completed
+    reconciler_integration_test.go:550: ✓ Found 0 candidates (may be 0 due to short observation window)
+    reconciler_integration_test.go:551: ✓ No errors during metrics collection and candidate identification
+--- PASS: TestScaleDownIntegration_WithRealScaler (0.10s)
+=== RUN   TestScaleDownManager_MetricsClientIntegration
+2025-12-02T22:38:18.962+0200	WARN	scaler/utilization.go:73	no metrics found for nodenodetest-node
+github.com/vpsie/vpsie-k8s-autoscaler/pkg/scaler.(*ScaleDownManager).UpdateNodeUtilization
+	/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/scaler/utilization.go:73
+github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/nodegroup.TestScaleDownManager_MetricsClientIntegration
+	/Users/zozo/projects/vpsie-k8s-autoscaler/pkg/controller/nodegroup/reconciler_integration_test.go:595
+testing.tRunner
+	/opt/homebrew/Cellar/go/1.25.2/libexec/src/testing/testing.go:1934
+    reconciler_integration_test.go:598: ✓ ScaleDownManager successfully integrated with metrics client
+    reconciler_integration_test.go:599: ✓ Node utilization data collected without errors
+--- PASS: TestScaleDownManager_MetricsClientIntegration (0.00s)
+=== RUN   TestBuildVPSieNode
+--- PASS: TestBuildVPSieNode (0.00s)
+=== RUN   TestBuildVPSieNodeWithPreferredType
+--- PASS: TestBuildVPSieNodeWithPreferredType (0.00s)
+=== RUN   TestSelectNodesToDelete
+=== RUN   TestSelectNodesToDelete/select_fewer_than_available
+=== RUN   TestSelectNodesToDelete/select_all_nodes
+=== RUN   TestSelectNodesToDelete/prioritize_not-ready_nodes
+=== RUN   TestSelectNodesToDelete/request_more_than_available
+--- PASS: TestSelectNodesToDelete (0.00s)
+    --- PASS: TestSelectNodesToDelete/select_fewer_than_available (0.00s)
+    --- PASS: TestSelectNodesToDelete/select_all_nodes (0.00s)
+    --- PASS: TestSelectNodesToDelete/prioritize_not-ready_nodes (0.00s)
+    --- PASS: TestSelectNodesToDelete/request_more_than_available (0.00s)
+=== RUN   TestGenerateRandomSuffix
+--- PASS: TestGenerateRandomSuffix (0.00s)
+=== RUN   TestContainsString
+--- PASS: TestContainsString (0.00s)
+=== RUN   TestRemoveString
+=== RUN   TestRemoveString/remove_existing_string
+=== RUN   TestRemoveString/remove_non-existing_string
+=== RUN   TestRemoveString/remove_from_empty_slice
+=== RUN   TestRemoveString/remove_only_element
+--- PASS: TestRemoveString (0.00s)
+    --- PASS: TestRemoveString/remove_existing_string (0.00s)
+    --- PASS: TestRemoveString/remove_non-existing_string (0.00s)
+    --- PASS: TestRemoveString/remove_from_empty_slice (0.00s)
+    --- PASS: TestRemoveString/remove_only_element (0.00s)
+=== RUN   TestScalingScenarios
+=== RUN   TestScalingScenarios/at_desired_capacity
+=== RUN   TestScalingScenarios/needs_scale_up
+=== RUN   TestScalingScenarios/needs_scale_down
+=== RUN   TestScalingScenarios/at_min_capacity
+=== RUN   TestScalingScenarios/at_max_capacity
+--- PASS: TestScalingScenarios (0.00s)
+    --- PASS: TestScalingScenarios/at_desired_capacity (0.00s)
+    --- PASS: TestScalingScenarios/needs_scale_up (0.00s)
+    --- PASS: TestScalingScenarios/needs_scale_down (0.00s)
+    --- PASS: TestScalingScenarios/at_min_capacity (0.00s)
+    --- PASS: TestScalingScenarios/at_max_capacity (0.00s)
+=== RUN   TestValidateNodeGroupSpec
+=== RUN   TestValidateNodeGroupSpec/valid_spec
+=== RUN   TestValidateNodeGroupSpec/negative_minNodes
+=== RUN   TestValidateNodeGroupSpec/zero_maxNodes
+=== RUN   TestValidateNodeGroupSpec/minNodes_>_maxNodes
+=== RUN   TestValidateNodeGroupSpec/empty_datacenterID
+=== RUN   TestValidateNodeGroupSpec/empty_offeringIDs
+=== RUN   TestValidateNodeGroupSpec/empty_osImageID
+--- PASS: TestValidateNodeGroupSpec (0.00s)
+    --- PASS: TestValidateNodeGroupSpec/valid_spec (0.00s)
+    --- PASS: TestValidateNodeGroupSpec/negative_minNodes (0.00s)
+    --- PASS: TestValidateNodeGroupSpec/zero_maxNodes (0.00s)
+    --- PASS: TestValidateNodeGroupSpec/minNodes_>_maxNodes (0.00s)
+    --- PASS: TestValidateNodeGroupSpec/empty_datacenterID (0.00s)
+    --- PASS: TestValidateNodeGroupSpec/empty_offeringIDs (0.00s)
+    --- PASS: TestValidateNodeGroupSpec/empty_osImageID (0.00s)
+=== RUN   TestCalculateDesiredNodes
+=== RUN   TestCalculateDesiredNodes/unset_desired_defaults_to_min
+=== RUN   TestCalculateDesiredNodes/desired_within_bounds
+=== RUN   TestCalculateDesiredNodes/desired_below_min_gets_clamped
+=== RUN   TestCalculateDesiredNodes/desired_above_max_gets_clamped
+--- PASS: TestCalculateDesiredNodes (0.00s)
+    --- PASS: TestCalculateDesiredNodes/unset_desired_defaults_to_min (0.00s)
+    --- PASS: TestCalculateDesiredNodes/desired_within_bounds (0.00s)
+    --- PASS: TestCalculateDesiredNodes/desired_below_min_gets_clamped (0.00s)
+    --- PASS: TestCalculateDesiredNodes/desired_above_max_gets_clamped (0.00s)
+=== RUN   TestNeedsScaleUp
+=== RUN   TestNeedsScaleUp/current_<_desired_and_current_<_max
+=== RUN   TestNeedsScaleUp/current_==_desired
+=== RUN   TestNeedsScaleUp/current_at_max
+--- PASS: TestNeedsScaleUp (0.00s)
+    --- PASS: TestNeedsScaleUp/current_<_desired_and_current_<_max (0.00s)
+    --- PASS: TestNeedsScaleUp/current_==_desired (0.00s)
+    --- PASS: TestNeedsScaleUp/current_at_max (0.00s)
+=== RUN   TestNeedsScaleDown
+=== RUN   TestNeedsScaleDown/current_>_desired_and_current_>_min
+=== RUN   TestNeedsScaleDown/current_==_desired
+=== RUN   TestNeedsScaleDown/current_at_min
+--- PASS: TestNeedsScaleDown (0.00s)
+    --- PASS: TestNeedsScaleDown/current_>_desired_and_current_>_min (0.00s)
+    --- PASS: TestNeedsScaleDown/current_==_desired (0.00s)
+    --- PASS: TestNeedsScaleDown/current_at_min (0.00s)
+=== RUN   TestCalculateNodesToAdd
+=== RUN   TestCalculateNodesToAdd/can_add_all_needed_nodes
+=== RUN   TestCalculateNodesToAdd/limited_by_max_capacity
+=== RUN   TestCalculateNodesToAdd/no_nodes_needed
+--- PASS: TestCalculateNodesToAdd (0.00s)
+    --- PASS: TestCalculateNodesToAdd/can_add_all_needed_nodes (0.00s)
+    --- PASS: TestCalculateNodesToAdd/limited_by_max_capacity (0.00s)
+    --- PASS: TestCalculateNodesToAdd/no_nodes_needed (0.00s)
+=== RUN   TestCalculateNodesToRemove
+=== RUN   TestCalculateNodesToRemove/can_remove_all_excess_nodes
+=== RUN   TestCalculateNodesToRemove/limited_by_min_capacity
+=== RUN   TestCalculateNodesToRemove/no_nodes_to_remove
+--- PASS: TestCalculateNodesToRemove (0.00s)
+    --- PASS: TestCalculateNodesToRemove/can_remove_all_excess_nodes (0.00s)
+    --- PASS: TestCalculateNodesToRemove/limited_by_min_capacity (0.00s)
+    --- PASS: TestCalculateNodesToRemove/no_nodes_to_remove (0.00s)
+=== RUN   TestIsScaling
+=== RUN   TestIsScaling/is_scaling
+=== RUN   TestIsScaling/not_scaling
+--- PASS: TestIsScaling (0.00s)
+    --- PASS: TestIsScaling/is_scaling (0.00s)
+    --- PASS: TestIsScaling/not_scaling (0.00s)
+=== RUN   TestIsReady
+=== RUN   TestIsReady/all_ready
+=== RUN   TestIsReady/not_all_ready
+=== RUN   TestIsReady/scaling_in_progress
+--- PASS: TestIsReady (0.00s)
+    --- PASS: TestIsReady/all_ready (0.00s)
+    --- PASS: TestIsReady/not_all_ready (0.00s)
+    --- PASS: TestIsReady/scaling_in_progress (0.00s)
+=== RUN   TestGetNodeGroupLabels
+--- PASS: TestGetNodeGroupLabels (0.00s)
+=== RUN   TestSetDesiredNodes
+--- PASS: TestSetDesiredNodes (0.00s)
+PASS
+coverage: 52.2% of statements
+ok  	github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/nodegroup	(cached)	coverage: 52.2% of statements
+=== RUN   TestSetCondition
+--- PASS: TestSetCondition (0.00s)
+=== RUN   TestGetCondition
+--- PASS: TestGetCondition (0.00s)
+=== RUN   TestIsConditionTrue
+--- PASS: TestIsConditionTrue (0.00s)
+=== RUN   TestIsConditionFalse
+--- PASS: TestIsConditionFalse (0.00s)
+=== RUN   TestRemoveCondition
+--- PASS: TestRemoveCondition (0.00s)
+=== RUN   TestSetVPSReadyCondition
+--- PASS: TestSetVPSReadyCondition (0.00s)
+=== RUN   TestSetNodeJoinedCondition
+--- PASS: TestSetNodeJoinedCondition (0.00s)
+=== RUN   TestSetNodeReadyCondition
+--- PASS: TestSetNodeReadyCondition (0.00s)
+=== RUN   TestSetErrorCondition
+--- PASS: TestSetErrorCondition (0.00s)
+=== RUN   TestClearError
+--- PASS: TestClearError (0.00s)
+=== RUN   TestRecordError
+--- PASS: TestRecordError (0.00s)
+=== RUN   TestPendingPhaseTransition
+--- PASS: TestPendingPhaseTransition (0.00s)
+=== RUN   TestProvisioningPhaseTransition
+--- PASS: TestProvisioningPhaseTransition (0.00s)
+=== RUN   TestProvisioningPhaseWithExistingVPS
+--- PASS: TestProvisioningPhaseWithExistingVPS (0.00s)
+=== RUN   TestProvisionedPhaseTransition
+--- PASS: TestProvisionedPhaseTransition (0.00s)
+=== RUN   TestJoiningPhaseTransitionWithNode
+--- PASS: TestJoiningPhaseTransitionWithNode (0.00s)
+=== RUN   TestJoiningPhaseWaitingForNode
+--- PASS: TestJoiningPhaseWaitingForNode (0.00s)
+=== RUN   TestProvisioningTimeout
+--- PASS: TestProvisioningTimeout (0.00s)
+=== RUN   TestJoiningTimeout
+--- PASS: TestJoiningTimeout (0.00s)
+=== RUN   TestVPSNotFoundError
+--- PASS: TestVPSNotFoundError (0.00s)
+=== RUN   TestDrainNode_Success
+--- PASS: TestDrainNode_Success (0.01s)
+=== RUN   TestCordonNode
+--- PASS: TestCordonNode (0.00s)
+=== RUN   TestCordonNode_AlreadyCordoned
+--- PASS: TestCordonNode_AlreadyCordoned (0.00s)
+=== RUN   TestCordonNode_NotFound
+--- PASS: TestCordonNode_NotFound (0.00s)
+=== RUN   TestUncordonNode
+--- PASS: TestUncordonNode (0.00s)
+=== RUN   TestGetPodsOnNode
+--- PASS: TestGetPodsOnNode (0.00s)
+=== RUN   TestFilterPodsToEvict
+=== RUN   TestFilterPodsToEvict/regular_pod_should_be_evicted
+=== RUN   TestFilterPodsToEvict/DaemonSet_pod_should_not_be_evicted
+=== RUN   TestFilterPodsToEvict/static_pod_should_not_be_evicted
+=== RUN   TestFilterPodsToEvict/succeeded_pod_should_not_be_evicted
+=== RUN   TestFilterPodsToEvict/failed_pod_should_not_be_evicted
+=== RUN   TestFilterPodsToEvict/terminating_pod_should_not_be_evicted
+--- PASS: TestFilterPodsToEvict (0.00s)
+    --- PASS: TestFilterPodsToEvict/regular_pod_should_be_evicted (0.00s)
+    --- PASS: TestFilterPodsToEvict/DaemonSet_pod_should_not_be_evicted (0.00s)
+    --- PASS: TestFilterPodsToEvict/static_pod_should_not_be_evicted (0.00s)
+    --- PASS: TestFilterPodsToEvict/succeeded_pod_should_not_be_evicted (0.00s)
+    --- PASS: TestFilterPodsToEvict/failed_pod_should_not_be_evicted (0.00s)
+    --- PASS: TestFilterPodsToEvict/terminating_pod_should_not_be_evicted (0.00s)
+=== RUN   TestIsDaemonSetPod
+=== RUN   TestIsDaemonSetPod/pod_with_DaemonSet_owner
+=== RUN   TestIsDaemonSetPod/pod_with_ReplicaSet_owner
+=== RUN   TestIsDaemonSetPod/pod_with_no_owner
+--- PASS: TestIsDaemonSetPod (0.00s)
+    --- PASS: TestIsDaemonSetPod/pod_with_DaemonSet_owner (0.00s)
+    --- PASS: TestIsDaemonSetPod/pod_with_ReplicaSet_owner (0.00s)
+    --- PASS: TestIsDaemonSetPod/pod_with_no_owner (0.00s)
+=== RUN   TestIsStaticPod
+=== RUN   TestIsStaticPod/pod_with_mirror_annotation
+=== RUN   TestIsStaticPod/kube-system_pod_with_no_owner
+=== RUN   TestIsStaticPod/kube-system_pod_with_owner
+=== RUN   TestIsStaticPod/default_namespace_pod
+--- PASS: TestIsStaticPod (0.00s)
+    --- PASS: TestIsStaticPod/pod_with_mirror_annotation (0.00s)
+    --- PASS: TestIsStaticPod/kube-system_pod_with_no_owner (0.00s)
+    --- PASS: TestIsStaticPod/kube-system_pod_with_owner (0.00s)
+    --- PASS: TestIsStaticPod/default_namespace_pod (0.00s)
+=== RUN   TestDeleteNode
+--- PASS: TestDeleteNode (0.00s)
+=== RUN   TestDeleteNode_NotFound
+--- PASS: TestDeleteNode_NotFound (0.00s)
+=== RUN   TestDeleteNode_NoNodeName
+--- PASS: TestDeleteNode_NoNodeName (0.00s)
+=== RUN   TestNewJoiner
+--- PASS: TestNewJoiner (0.00s)
+=== RUN   TestJoiner_IsNodeReady
+=== RUN   TestJoiner_IsNodeReady/node_is_ready
+=== RUN   TestJoiner_IsNodeReady/node_is_not_ready
+=== RUN   TestJoiner_IsNodeReady/node_has_no_ready_condition
+=== RUN   TestJoiner_IsNodeReady/node_has_no_conditions
+--- PASS: TestJoiner_IsNodeReady (0.00s)
+    --- PASS: TestJoiner_IsNodeReady/node_is_ready (0.00s)
+    --- PASS: TestJoiner_IsNodeReady/node_is_not_ready (0.00s)
+    --- PASS: TestJoiner_IsNodeReady/node_has_no_ready_condition (0.00s)
+    --- PASS: TestJoiner_IsNodeReady/node_has_no_conditions (0.00s)
+=== RUN   TestContainsString
+--- PASS: TestContainsString (0.00s)
+=== RUN   TestRemoveString
+=== RUN   TestRemoveString/remove_existing_string
+=== RUN   TestRemoveString/remove_non-existing_string
+=== RUN   TestRemoveString/remove_from_empty_slice
+=== RUN   TestRemoveString/remove_only_element
+--- PASS: TestRemoveString (0.00s)
+    --- PASS: TestRemoveString/remove_existing_string (0.00s)
+    --- PASS: TestRemoveString/remove_non-existing_string (0.00s)
+    --- PASS: TestRemoveString/remove_from_empty_slice (0.00s)
+    --- PASS: TestRemoveString/remove_only_element (0.00s)
+=== RUN   TestSetPhase
+=== RUN   TestSetPhase/Provisioning_phase_sets_CreatedAt
+=== RUN   TestSetPhase/Provisioned_phase_sets_ProvisionedAt
+=== RUN   TestSetPhase/Ready_phase_sets_JoinedAt_and_ReadyAt
+=== RUN   TestSetPhase/Terminating_phase_sets_TerminatingAt
+--- PASS: TestSetPhase (0.00s)
+    --- PASS: TestSetPhase/Provisioning_phase_sets_CreatedAt (0.00s)
+    --- PASS: TestSetPhase/Provisioned_phase_sets_ProvisionedAt (0.00s)
+    --- PASS: TestSetPhase/Ready_phase_sets_JoinedAt_and_ReadyAt (0.00s)
+    --- PASS: TestSetPhase/Terminating_phase_sets_TerminatingAt (0.00s)
+=== RUN   TestSetPhase_DoesNotOverwriteExistingTimestamps
+--- PASS: TestSetPhase_DoesNotOverwriteExistingTimestamps (0.00s)
+=== RUN   TestNewStateMachine
+--- PASS: TestNewStateMachine (0.00s)
+=== RUN   TestMetav1Now
+--- PASS: TestMetav1Now (0.00s)
+=== RUN   TestNewProvisioner
+--- PASS: TestNewProvisioner (0.00s)
+=== RUN   TestProvisioner_GenerateHostname
+=== RUN   TestProvisioner_GenerateHostname/uses_NodeName_if_set
+=== RUN   TestProvisioner_GenerateHostname/uses_VPSieNode_name_if_NodeName_not_set
+--- PASS: TestProvisioner_GenerateHostname (0.00s)
+    --- PASS: TestProvisioner_GenerateHostname/uses_NodeName_if_set (0.00s)
+    --- PASS: TestProvisioner_GenerateHostname/uses_VPSieNode_name_if_NodeName_not_set (0.00s)
+=== RUN   TestProvisioner_GenerateCloudInit
+=== RUN   TestProvisioner_GenerateCloudInit/uses_template_if_provided
+=== RUN   TestProvisioner_GenerateCloudInit/generates_default_cloud-init
+--- PASS: TestProvisioner_GenerateCloudInit (0.00s)
+    --- PASS: TestProvisioner_GenerateCloudInit/uses_template_if_provided (0.00s)
+    --- PASS: TestProvisioner_GenerateCloudInit/generates_default_cloud-init (0.00s)
+=== RUN   TestParseVPSIDFromString
+=== RUN   TestParseVPSIDFromString/valid_numeric_ID
+=== RUN   TestParseVPSIDFromString/zero_ID
+=== RUN   TestParseVPSIDFromString/invalid_non-numeric_ID
+=== RUN   TestParseVPSIDFromString/empty_string
+--- PASS: TestParseVPSIDFromString (0.00s)
+    --- PASS: TestParseVPSIDFromString/valid_numeric_ID (0.00s)
+    --- PASS: TestParseVPSIDFromString/zero_ID (0.00s)
+    --- PASS: TestParseVPSIDFromString/invalid_non-numeric_ID (0.00s)
+    --- PASS: TestParseVPSIDFromString/empty_string (0.00s)
+=== RUN   TestTerminationFlow
+    terminator_test.go:115: Reconcile 2 starting...
+    terminator_test.go:118: Reconcile 2: result.Requeue=true, result.RequeueAfter=0s
+    terminator_test.go:128: Reconcile 2: phase=Deleting, DeletedAt=<nil>, finalizers=[vpsienode.autoscaler.vpsie.com/finalizer], VPSieInstanceID=1000
+    terminator_test.go:115: Reconcile 3 starting...
+    terminator_test.go:118: Reconcile 3: result.Requeue=false, result.RequeueAfter=0s
+    terminator_test.go:124: Object deleted after reconcile 3
+    terminator_test.go:139: DeleteVM call count: 1
+--- PASS: TestTerminationFlow (0.00s)
+=== RUN   TestTerminationWithPods
+--- PASS: TestTerminationWithPods (0.00s)
+=== RUN   TestTerminationWithNonExistentNode
+--- PASS: TestTerminationWithNonExistentNode (0.00s)
+=== RUN   TestVPSDeletionFailure
+--- PASS: TestVPSDeletionFailure (10.00s)
+=== RUN   TestVPSAlreadyDeleted
+--- PASS: TestVPSAlreadyDeleted (0.00s)
+=== RUN   TestTerminationWithNoVPSID
+--- PASS: TestTerminationWithNoVPSID (0.00s)
+PASS
+coverage: 66.2% of statements
+ok  	github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/vpsienode	(cached)	coverage: 66.2% of statements
+=== RUN   TestCalculatePodResources
+=== RUN   TestCalculatePodResources/Single_container
+=== RUN   TestCalculatePodResources/Multiple_containers
+=== RUN   TestCalculatePodResources/Init_container_with_higher_requirements
+=== RUN   TestCalculatePodResources/Init_container_with_lower_requirements
+=== RUN   TestCalculatePodResources/No_resource_requests
+--- PASS: TestCalculatePodResources (0.00s)
+    --- PASS: TestCalculatePodResources/Single_container (0.00s)
+    --- PASS: TestCalculatePodResources/Multiple_containers (0.00s)
+    --- PASS: TestCalculatePodResources/Init_container_with_higher_requirements (0.00s)
+    --- PASS: TestCalculatePodResources/Init_container_with_lower_requirements (0.00s)
+    --- PASS: TestCalculatePodResources/No_resource_requests (0.00s)
+=== RUN   TestCalculateDeficit
+=== RUN   TestCalculateDeficit/Single_event
+=== RUN   TestCalculateDeficit/Multiple_events_from_different_pods
+=== RUN   TestCalculateDeficit/Duplicate_events_from_same_pod
+=== RUN   TestCalculateDeficit/Empty_events
+--- PASS: TestCalculateDeficit (0.00s)
+    --- PASS: TestCalculateDeficit/Single_event (0.00s)
+    --- PASS: TestCalculateDeficit/Multiple_events_from_different_pods (0.00s)
+    --- PASS: TestCalculateDeficit/Duplicate_events_from_same_pod (0.00s)
+    --- PASS: TestCalculateDeficit/Empty_events (0.00s)
+=== RUN   TestPodMatchesNodeGroup
+=== RUN   TestPodMatchesNodeGroup/Pod_matches_NodeGroup_labels
+=== RUN   TestPodMatchesNodeGroup/Pod_does_not_match_NodeGroup_labels
+=== RUN   TestPodMatchesNodeGroup/Pod_has_no_node_selector,_NodeGroup_has_labels
+=== RUN   TestPodMatchesNodeGroup/Pod_has_node_selector,_NodeGroup_has_no_labels
+=== RUN   TestPodMatchesNodeGroup/Pod_tolerates_NodeGroup_taints
+=== RUN   TestPodMatchesNodeGroup/Pod_does_not_tolerate_NodeGroup_taints
+--- PASS: TestPodMatchesNodeGroup (0.00s)
+    --- PASS: TestPodMatchesNodeGroup/Pod_matches_NodeGroup_labels (0.00s)
+    --- PASS: TestPodMatchesNodeGroup/Pod_does_not_match_NodeGroup_labels (0.00s)
+    --- PASS: TestPodMatchesNodeGroup/Pod_has_no_node_selector,_NodeGroup_has_labels (0.00s)
+    --- PASS: TestPodMatchesNodeGroup/Pod_has_node_selector,_NodeGroup_has_no_labels (0.00s)
+    --- PASS: TestPodMatchesNodeGroup/Pod_tolerates_NodeGroup_taints (0.00s)
+    --- PASS: TestPodMatchesNodeGroup/Pod_does_not_tolerate_NodeGroup_taints (0.00s)
+=== RUN   TestFindMatchingNodeGroups
+=== RUN   TestFindMatchingNodeGroups/Single_pod_matches_single_NodeGroup
+=== RUN   TestFindMatchingNodeGroups/Multiple_pods_match_multiple_NodeGroups
+=== RUN   TestFindMatchingNodeGroups/Pod_does_not_match_any_NodeGroup
+=== RUN   TestFindMatchingNodeGroups/NodeGroup_with_no_labels_matches_no_pods
+--- PASS: TestFindMatchingNodeGroups (0.00s)
+    --- PASS: TestFindMatchingNodeGroups/Single_pod_matches_single_NodeGroup (0.00s)
+    --- PASS: TestFindMatchingNodeGroups/Multiple_pods_match_multiple_NodeGroups (0.00s)
+    --- PASS: TestFindMatchingNodeGroups/Pod_does_not_match_any_NodeGroup (0.00s)
+    --- PASS: TestFindMatchingNodeGroups/NodeGroup_with_no_labels_matches_no_pods (0.00s)
+=== RUN   TestCalculateMatchScore
+=== RUN   TestCalculateMatchScore/NodeGroup_with_capacity_and_preferred_instance_type
+=== RUN   TestCalculateMatchScore/NodeGroup_at_max_capacity
+=== RUN   TestCalculateMatchScore/NodeGroup_with_no_preferred_instance_type
+--- PASS: TestCalculateMatchScore (0.00s)
+    --- PASS: TestCalculateMatchScore/NodeGroup_with_capacity_and_preferred_instance_type (0.00s)
+    --- PASS: TestCalculateMatchScore/NodeGroup_at_max_capacity (0.00s)
+    --- PASS: TestCalculateMatchScore/NodeGroup_with_no_preferred_instance_type (0.00s)
+=== RUN   TestEstimateNodesNeeded
+=== RUN   TestEstimateNodesNeeded/CPU-bound
+=== RUN   TestEstimateNodesNeeded/Memory-bound
+=== RUN   TestEstimateNodesNeeded/Pod-count-bound
+=== RUN   TestEstimateNodesNeeded/Small_deficit
+=== RUN   TestEstimateNodesNeeded/Zero_deficit
+--- PASS: TestEstimateNodesNeeded (0.00s)
+    --- PASS: TestEstimateNodesNeeded/CPU-bound (0.00s)
+    --- PASS: TestEstimateNodesNeeded/Memory-bound (0.00s)
+    --- PASS: TestEstimateNodesNeeded/Pod-count-bound (0.00s)
+    --- PASS: TestEstimateNodesNeeded/Small_deficit (0.00s)
+    --- PASS: TestEstimateNodesNeeded/Zero_deficit (0.00s)
+=== RUN   TestSelectInstanceType
+=== RUN   TestSelectInstanceType/Use_preferred_instance_type
+=== RUN   TestSelectInstanceType/Preferred_type_not_in_offerings,_use_first
+=== RUN   TestSelectInstanceType/No_preferred_type,_use_first_offering
+=== RUN   TestSelectInstanceType/No_offerings_available
+--- PASS: TestSelectInstanceType (0.00s)
+    --- PASS: TestSelectInstanceType/Use_preferred_instance_type (0.00s)
+    --- PASS: TestSelectInstanceType/Preferred_type_not_in_offerings,_use_first (0.00s)
+    --- PASS: TestSelectInstanceType/No_preferred_type,_use_first_offering (0.00s)
+    --- PASS: TestSelectInstanceType/No_offerings_available (0.00s)
+=== RUN   TestMakeScaleUpDecision
+=== RUN   TestMakeScaleUpDecision/Scale_up_from_2_to_3_nodes
+=== RUN   TestMakeScaleUpDecision/At_max_capacity,_no_scale-up
+=== RUN   TestMakeScaleUpDecision/In_cooldown_period,_no_scale-up
+=== RUN   TestMakeScaleUpDecision/Respect_max_capacity_limit
+--- PASS: TestMakeScaleUpDecision (0.00s)
+    --- PASS: TestMakeScaleUpDecision/Scale_up_from_2_to_3_nodes (0.00s)
+    --- PASS: TestMakeScaleUpDecision/At_max_capacity,_no_scale-up (0.00s)
+    --- PASS: TestMakeScaleUpDecision/In_cooldown_period,_no_scale-up (0.00s)
+    --- PASS: TestMakeScaleUpDecision/Respect_max_capacity_limit (0.00s)
+=== RUN   TestExecuteScaleUp
+--- PASS: TestExecuteScaleUp (0.00s)
+=== RUN   TestHandleScaleUp
+--- PASS: TestHandleScaleUp (0.01s)
+=== RUN   TestHandleScaleUpNoPendingPods
+--- PASS: TestHandleScaleUpNoPendingPods (0.00s)
+=== RUN   TestHandleScaleUpNoMatchingNodeGroups
+--- PASS: TestHandleScaleUpNoMatchingNodeGroups (0.00s)
+=== RUN   TestGetScaleUpDecisions
+--- PASS: TestGetScaleUpDecisions (0.00s)
+=== RUN   TestParseConstraint
+=== RUN   TestParseConstraint/Insufficient_CPU
+=== RUN   TestParseConstraint/Insufficient_memory
+=== RUN   TestParseConstraint/Too_many_pods
+=== RUN   TestParseConstraint/Mixed_message_with_CPU
+=== RUN   TestParseConstraint/Case_insensitive_CPU
+=== RUN   TestParseConstraint/Case_insensitive_memory
+=== RUN   TestParseConstraint/Unknown_constraint
+=== RUN   TestParseConstraint/Empty_message
+--- PASS: TestParseConstraint (0.00s)
+    --- PASS: TestParseConstraint/Insufficient_CPU (0.00s)
+    --- PASS: TestParseConstraint/Insufficient_memory (0.00s)
+    --- PASS: TestParseConstraint/Too_many_pods (0.00s)
+    --- PASS: TestParseConstraint/Mixed_message_with_CPU (0.00s)
+    --- PASS: TestParseConstraint/Case_insensitive_CPU (0.00s)
+    --- PASS: TestParseConstraint/Case_insensitive_memory (0.00s)
+    --- PASS: TestParseConstraint/Unknown_constraint (0.00s)
+    --- PASS: TestParseConstraint/Empty_message (0.00s)
+=== RUN   TestFilterRecentEvents
+--- PASS: TestFilterRecentEvents (0.00s)
+=== RUN   TestCanScale
+--- PASS: TestCanScale (0.00s)
+=== RUN   TestRecordScaleEvent
+--- PASS: TestRecordScaleEvent (0.00s)
+=== RUN   TestGetPendingPods
+--- PASS: TestGetPendingPods (0.00s)
+=== RUN   TestGetNodeGroups
+--- PASS: TestGetNodeGroups (0.00s)
+=== RUN   TestEventWatcherScaleUpHandler
+--- PASS: TestEventWatcherScaleUpHandler (0.00s)
+PASS
+coverage: 64.1% of statements
+ok  	github.com/vpsie/vpsie-k8s-autoscaler/pkg/events	(cached)	coverage: 64.1% of statements
+	github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics		coverage: 0.0% of statements

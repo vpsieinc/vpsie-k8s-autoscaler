@@ -184,6 +184,42 @@ var (
 		[]string{"from_state", "to_state"},
 	)
 
+	// VPSieAPICircuitBreakerHalfOpenAttempts tracks half-open test request attempts
+	VPSieAPICircuitBreakerHalfOpenAttempts = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "vpsie_api_circuit_breaker_half_open_attempts_total",
+			Help:      "Total number of test requests attempted in half-open state",
+		},
+	)
+
+	// VPSieAPICircuitBreakerHalfOpenSuccesses tracks successful half-open test requests
+	VPSieAPICircuitBreakerHalfOpenSuccesses = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "vpsie_api_circuit_breaker_half_open_successes_total",
+			Help:      "Total number of successful test requests in half-open state",
+		},
+	)
+
+	// VPSieAPICircuitBreakerHalfOpenFailures tracks failed half-open test requests
+	VPSieAPICircuitBreakerHalfOpenFailures = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "vpsie_api_circuit_breaker_half_open_failures_total",
+			Help:      "Total number of failed test requests in half-open state",
+		},
+	)
+
+	// VPSieAPICircuitBreakerHalfOpenRejected tracks requests rejected in half-open due to max concurrent limit
+	VPSieAPICircuitBreakerHalfOpenRejected = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "vpsie_api_circuit_breaker_half_open_rejected_total",
+			Help:      "Total number of requests rejected in half-open state due to concurrent limit",
+		},
+	)
+
 	// ScaleUpTotal tracks the number of scale-up operations
 	ScaleUpTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -339,6 +375,185 @@ var (
 		},
 		[]string{"nodegroup", "namespace"},
 	)
+
+	// Phase 2 Enhanced Metrics
+
+	// ReconciliationQueueDepth tracks the current depth of the reconciliation queue
+	ReconciliationQueueDepth = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Name:      "reconciliation_queue_depth",
+			Help:      "Current depth of the reconciliation queue per controller",
+		},
+		[]string{"controller"},
+	)
+
+	// ScalingDecisionsTotal tracks scaling decisions made by the autoscaler
+	ScalingDecisionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "scaling_decisions_total",
+			Help:      "Total number of scaling decisions made",
+		},
+		[]string{"nodegroup", "namespace", "decision", "reason"},
+		// decision: scale_up, scale_down, no_action
+		// reason: underutilized, pending_pods, manual, cooldown, min_nodes, max_nodes
+	)
+
+	// WebhookValidationDuration tracks the duration of webhook validation requests
+	WebhookValidationDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Name:      "webhook_validation_duration_seconds",
+			Help:      "Duration of webhook validation requests",
+			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 12), // 0.1ms to ~400ms
+		},
+		[]string{"resource", "operation", "result"},
+		// resource: nodegroup, vpsienode
+		// operation: create, update, delete
+		// result: allowed, denied, error
+	)
+
+	// CostSavingsEstimatedMonthly tracks estimated monthly cost savings
+	CostSavingsEstimatedMonthly = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Name:      "cost_savings_estimated_monthly",
+			Help:      "Estimated monthly cost savings in USD from autoscaling optimizations",
+		},
+		[]string{"nodegroup", "namespace", "source"},
+		// source: scale_down, right_sizing, rebalancing
+	)
+
+	// RebalancerOperationsTotal tracks rebalancer operations
+	RebalancerOperationsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "rebalancer_operations_total",
+			Help:      "Total number of rebalancer operations",
+		},
+		[]string{"nodegroup", "namespace", "operation", "result"},
+		// operation: analyze, plan, execute, rollback
+		// result: success, failure, skipped
+	)
+
+	// RebalancerNodesReplacedTotal tracks nodes replaced by the rebalancer
+	RebalancerNodesReplacedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "rebalancer_nodes_replaced_total",
+			Help:      "Total number of nodes replaced by the rebalancer",
+		},
+		[]string{"nodegroup", "namespace", "strategy"},
+		// strategy: rolling, surge, blue_green
+	)
+
+	// RebalancerCostSavingsTotal tracks cumulative cost savings from rebalancing
+	RebalancerCostSavingsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "rebalancer_cost_savings_total",
+			Help:      "Cumulative cost savings in USD from rebalancing operations",
+		},
+		[]string{"nodegroup", "namespace"},
+	)
+
+	// NodeUtilizationCPU tracks current CPU utilization per node
+	NodeUtilizationCPU = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Name:      "node_utilization_cpu_percent",
+			Help:      "Current CPU utilization percentage per node",
+		},
+		[]string{"node", "nodegroup", "namespace"},
+	)
+
+	// NodeUtilizationMemory tracks current memory utilization per node
+	NodeUtilizationMemory = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Name:      "node_utilization_memory_percent",
+			Help:      "Current memory utilization percentage per node",
+		},
+		[]string{"node", "nodegroup", "namespace"},
+	)
+
+	// NodeGroupCostCurrent tracks the current hourly cost of a node group
+	NodeGroupCostCurrent = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Name:      "nodegroup_cost_hourly",
+			Help:      "Current hourly cost of a NodeGroup in USD",
+		},
+		[]string{"nodegroup", "namespace"},
+	)
+
+	// Phase 5 Security Metrics - Credential Rotation
+
+	// CredentialRotationAttempts tracks the total number of credential rotation attempts
+	CredentialRotationAttempts = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "credential_rotation_attempts_total",
+			Help:      "Total number of credential rotation attempts",
+		},
+	)
+
+	// CredentialRotationSuccesses tracks successful credential rotations
+	CredentialRotationSuccesses = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "credential_rotation_successes_total",
+			Help:      "Total number of successful credential rotations",
+		},
+	)
+
+	// CredentialRotationFailures tracks failed credential rotations
+	CredentialRotationFailures = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "credential_rotation_failures_total",
+			Help:      "Total number of failed credential rotations",
+		},
+	)
+
+	// CredentialRotationDuration tracks the duration of credential rotation operations
+	CredentialRotationDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Name:      "credential_rotation_duration_seconds",
+			Help:      "Duration of credential rotation operations",
+			Buckets:   prometheus.ExponentialBuckets(0.1, 2, 10), // 100ms to ~51s
+		},
+	)
+
+	// CredentialExpiresAt tracks when the current access token expires (Unix timestamp)
+	CredentialExpiresAt = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Name:      "credential_expires_at_timestamp",
+			Help:      "Unix timestamp of when the current access token expires",
+		},
+	)
+
+	// CredentialValid tracks whether the current credentials are valid (1=valid, 0=invalid)
+	CredentialValid = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Name:      "credential_valid",
+			Help:      "Whether the current credentials are valid (1=valid, 0=invalid)",
+		},
+	)
+
+	// AuditEventsTotal tracks the total number of audit events by type
+	AuditEventsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "audit_events_total",
+			Help:      "Total number of audit events by type, category, and severity",
+		},
+		[]string{"event_type", "category", "severity"},
+	)
 )
 
 // RegisterMetrics registers all metrics with the controller-runtime metrics registry
@@ -361,6 +576,10 @@ func RegisterMetrics() {
 		VPSieAPICircuitBreakerState,
 		VPSieAPICircuitBreakerOpened,
 		VPSieAPICircuitBreakerStateChanges,
+		VPSieAPICircuitBreakerHalfOpenAttempts,
+		VPSieAPICircuitBreakerHalfOpenSuccesses,
+		VPSieAPICircuitBreakerHalfOpenFailures,
+		VPSieAPICircuitBreakerHalfOpenRejected,
 		ScaleUpTotal,
 		ScaleDownTotal,
 		ScaleUpNodesAdded,
@@ -376,6 +595,26 @@ func RegisterMetrics() {
 		SafetyCheckFailuresTotal,
 		NodeDrainDuration,
 		NodeDrainPodsEvicted,
+		// Phase 2 Enhanced Metrics
+		ReconciliationQueueDepth,
+		ScalingDecisionsTotal,
+		WebhookValidationDuration,
+		CostSavingsEstimatedMonthly,
+		RebalancerOperationsTotal,
+		RebalancerNodesReplacedTotal,
+		RebalancerCostSavingsTotal,
+		NodeUtilizationCPU,
+		NodeUtilizationMemory,
+		NodeGroupCostCurrent,
+		// Phase 5 Security Metrics - Credential Rotation
+		CredentialRotationAttempts,
+		CredentialRotationSuccesses,
+		CredentialRotationFailures,
+		CredentialRotationDuration,
+		CredentialExpiresAt,
+		CredentialValid,
+		// Phase 5 Security Metrics - Audit Logging
+		AuditEventsTotal,
 	)
 }
 
@@ -398,6 +637,8 @@ func ResetMetrics() {
 	VPSieAPICircuitBreakerState.Reset()
 	VPSieAPICircuitBreakerOpened.Reset()
 	VPSieAPICircuitBreakerStateChanges.Reset()
+	// Note: Counter metrics don't have Reset() - they use Add() and are reset by recreating
+	// VPSieAPICircuitBreakerHalfOpenAttempts, etc. are Counters, not CounterVecs
 	ScaleUpTotal.Reset()
 	ScaleDownTotal.Reset()
 	ScaleUpNodesAdded.Reset()
@@ -413,4 +654,15 @@ func ResetMetrics() {
 	SafetyCheckFailuresTotal.Reset()
 	NodeDrainDuration.Reset()
 	NodeDrainPodsEvicted.Reset()
+	// Phase 2 Enhanced Metrics
+	ReconciliationQueueDepth.Reset()
+	ScalingDecisionsTotal.Reset()
+	WebhookValidationDuration.Reset()
+	CostSavingsEstimatedMonthly.Reset()
+	RebalancerOperationsTotal.Reset()
+	RebalancerNodesReplacedTotal.Reset()
+	RebalancerCostSavingsTotal.Reset()
+	NodeUtilizationCPU.Reset()
+	NodeUtilizationMemory.Reset()
+	NodeGroupCostCurrent.Reset()
 }

@@ -182,6 +182,72 @@ func (m *MockVPSieClient) GetBaseURL() string {
 	return "https://mock.vpsie.com/v2"
 }
 
+// AddK8sNode adds a mock K8s node (delegates to CreateVM-like behavior)
+func (m *MockVPSieClient) AddK8sNode(ctx context.Context, req vpsieclient.AddK8sNodeRequest) (*vpsieclient.VPS, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.CallCounts["AddK8sNode"]++
+
+	// Create a new VPS representing the K8s node
+	vps := &vpsieclient.VPS{
+		ID:           m.NextID,
+		Name:         req.Hostname,
+		Hostname:     req.Hostname,
+		Status:       "provisioning", // Start in provisioning state
+		CPU:          4,
+		RAM:          8192,
+		Disk:         80,
+		Bandwidth:    1000,
+		IPAddress:    fmt.Sprintf("10.0.0.%d", m.NextID%256),
+		IPv6Address:  fmt.Sprintf("2001:db8::%d", m.NextID),
+		OfferingID:   1, // Default value
+		DatacenterID: parseDatacenterID(req.DatacenterID),
+		OSName:       "Ubuntu",
+		OSVersion:    "22.04",
+		Tags:         []string{"kubernetes", "autoscaler"},
+		Notes:        fmt.Sprintf("K8s node for cluster %s", req.ResourceIdentifier),
+	}
+
+	m.VMs[m.NextID] = vps
+	m.NextID++
+
+	return vps, nil
+}
+
+// AddK8sSlaveToGroup adds a mock K8s slave node to a specific group
+func (m *MockVPSieClient) AddK8sSlaveToGroup(ctx context.Context, clusterIdentifier string, groupID int) (*vpsieclient.VPS, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.CallCounts["AddK8sSlaveToGroup"]++
+
+	// Create a new VPS representing the K8s slave node
+	vps := &vpsieclient.VPS{
+		ID:           m.NextID,
+		Name:         fmt.Sprintf("k8s-slave-%d", m.NextID),
+		Hostname:     fmt.Sprintf("k8s-slave-%d", m.NextID),
+		Status:       "provisioning", // Start in provisioning state
+		CPU:          4,
+		RAM:          8192,
+		Disk:         80,
+		Bandwidth:    1000,
+		IPAddress:    fmt.Sprintf("10.0.0.%d", m.NextID%256),
+		IPv6Address:  fmt.Sprintf("2001:db8::%d", m.NextID),
+		OfferingID:   groupID, // Use group ID as offering ID for mock
+		DatacenterID: 1,
+		OSName:       "Ubuntu",
+		OSVersion:    "22.04",
+		Tags:         []string{"kubernetes", "autoscaler"},
+		Notes:        fmt.Sprintf("K8s slave node for cluster %s, group %d", clusterIdentifier, groupID),
+	}
+
+	m.VMs[m.NextID] = vps
+	m.NextID++
+
+	return vps, nil
+}
+
 // Helper functions to parse string IDs to int
 func parseOfferingID(id string) int {
 	// In real implementation, this would parse the string ID

@@ -21,6 +21,16 @@ type NodeGroupSpec struct {
 	// +kubebuilder:validation:Required
 	DatacenterID string `json:"datacenterID"`
 
+	// ResourceIdentifier is the VPSie Kubernetes cluster identifier
+	// Required for the VPSie Kubernetes apps API to know which cluster to add nodes to
+	// +kubebuilder:validation:Required
+	ResourceIdentifier string `json:"resourceIdentifier"`
+
+	// Project is the VPSie project ID
+	// Required for the VPSie Kubernetes apps API
+	// +kubebuilder:validation:Required
+	Project string `json:"project"`
+
 	// OfferingIDs is a list of allowed VPSie offering/boxsize IDs for this node group
 	// The autoscaler will choose the most cost-effective offering that satisfies resource requirements
 	// +kubebuilder:validation:MinItems=1
@@ -73,6 +83,12 @@ type NodeGroupSpec struct {
 	// Notes are additional notes to attach to VPSie instances
 	// +optional
 	Notes string `json:"notes,omitempty"`
+
+	// KubeSizeID is the VPSie Kubernetes size/package ID for nodes in this group
+	// Get available values from VPSie API /k8s/offers endpoint
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	KubeSizeID int `json:"kubeSizeID,omitempty"`
 
 	// SpotConfig defines spot instance configuration for cost savings
 	// +optional
@@ -287,6 +303,11 @@ type NodeGroupStatus struct {
 
 	// ReadyNodes is the number of nodes that are ready to accept workloads
 	ReadyNodes int32 `json:"readyNodes"`
+
+	// VPSieGroupID is the numeric VPSie node group ID created on VPSie platform
+	// This is the numeric ID returned by ListK8sNodeGroups, used for adding nodes
+	// +optional
+	VPSieGroupID int `json:"vpsieGroupID,omitempty"`
 
 	// Nodes is a list of nodes in this group with their details
 	// +optional

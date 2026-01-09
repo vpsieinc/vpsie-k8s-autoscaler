@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
+	"github.com/vpsie/vpsie-k8s-autoscaler/internal/logging"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 )
 
@@ -91,12 +92,15 @@ func (r *VPSieNodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *VPSieNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := r.Logger.With(
+	// Add correlation ID for request tracing
+	ctx = logging.WithRequestID(ctx)
+
+	logger := logging.WithRequestIDField(ctx, r.Logger.With(
 		zap.String("namespace", req.Namespace),
 		zap.String("name", req.Name),
-	)
+	))
 
-	logger.Debug("Reconciling VPSieNode")
+	logger.Debug("Reconciling VPSieNode", zap.String("requestID", logging.GetRequestID(ctx)))
 
 	// Fetch the VPSieNode instance
 	vn := &v1alpha1.VPSieNode{}
@@ -144,25 +148,33 @@ func (r *VPSieNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// Track if spec changed (VPS ID is the main indicator)
+	// Capture original state BEFORE reconcile modifies vn
+	// This is critical for the patch to detect status changes
 	originalVPSID := vn.Spec.VPSieInstanceID
+	originalCreationRequested := vn.Annotations != nil && vn.Annotations[AnnotationCreationRequested] == "true"
+	originalState := vn.DeepCopy()
 
 	// Reconcile the VPSieNode through the state machine
 	result, err := r.reconcile(ctx, vn, logger)
 
-	// Update spec only if it was modified (e.g., VPS ID was set)
-	if vn.Spec.VPSieInstanceID != originalVPSID {
+	// Check if object metadata or spec was modified
+	specOrMetadataChanged := vn.Spec.VPSieInstanceID != originalVPSID
+	creationRequestedChanged := (vn.Annotations != nil && vn.Annotations[AnnotationCreationRequested] == "true") != originalCreationRequested
+
+	// Update object if spec or annotations were modified
+	if specOrMetadataChanged || creationRequestedChanged {
 		if updateErr := r.Update(ctx, vn); updateErr != nil {
-			logger.Error("Failed to update spec", zap.Error(updateErr))
+			logger.Error("Failed to update object", zap.Error(updateErr))
 			if err == nil {
 				return ctrl.Result{}, updateErr
 			}
-			return result, fmt.Errorf("reconcile error: %w, spec update error: %v", err, updateErr)
+			return result, fmt.Errorf("reconcile error: %w, object update error: %v", err, updateErr)
 		}
 	}
 
 	// Always update status with optimistic locking
-	patch := client.MergeFrom(vn.DeepCopy())
+	// Use originalState captured BEFORE reconcile to detect all status changes
+	patch := client.MergeFrom(originalState)
 	vn.Status.ObservedGeneration = vn.Generation
 	if statusErr := r.Status().Patch(ctx, vn, patch); statusErr != nil {
 		if apierrors.IsConflict(statusErr) {
@@ -243,6 +255,9 @@ func (r *VPSieNodeReconciler) reconcileDelete(ctx context.Context, vn *v1alpha1.
 	if (vn.Status.Phase == v1alpha1.VPSieNodePhaseTerminating ||
 		vn.Status.Phase == v1alpha1.VPSieNodePhaseDeleting) &&
 		vn.Status.DeletedAt == nil {
+		// Capture original state BEFORE state machine modifies vn
+		originalState := vn.DeepCopy()
+
 		result, err := r.stateMachine.Handle(ctx, vn, logger)
 		if err != nil {
 			logger.Error("Failed to handle deletion phase",
@@ -252,7 +267,8 @@ func (r *VPSieNodeReconciler) reconcileDelete(ctx context.Context, vn *v1alpha1.
 		}
 
 		// Update status after state machine handling
-		patch := client.MergeFrom(vn.DeepCopy())
+		// Use originalState captured BEFORE state machine to detect all status changes
+		patch := client.MergeFrom(originalState)
 		vn.Status.ObservedGeneration = vn.Generation
 		if statusErr := r.Status().Patch(ctx, vn, patch); statusErr != nil {
 			if apierrors.IsConflict(statusErr) {

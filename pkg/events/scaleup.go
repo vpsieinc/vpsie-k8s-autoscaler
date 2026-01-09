@@ -46,6 +46,11 @@ func NewScaleUpController(
 	}
 }
 
+// SetWatcher sets the EventWatcher reference (for deferred initialization)
+func (c *ScaleUpController) SetWatcher(watcher *EventWatcher) {
+	c.watcher = watcher
+}
+
 // HandleScaleUp processes scheduling events and makes scale-up decisions
 func (c *ScaleUpController) HandleScaleUp(ctx context.Context, events []SchedulingEvent) error {
 	c.logger.Info("Handling scale-up request",
