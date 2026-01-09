@@ -56,6 +56,10 @@ func NewVPSieNodeReconciler(
 	terminator := NewTerminator(drainer, provisioner)
 	stateMachine := NewStateMachine(provisioner, joiner, terminator)
 
+	// Create and inject discoverer for async VPS ID discovery
+	discoverer := NewDiscoverer(vpsieClient, client, logger)
+	provisioner.SetDiscoverer(discoverer)
+
 	return &VPSieNodeReconciler{
 		Client:       client,
 		Scheme:       scheme,

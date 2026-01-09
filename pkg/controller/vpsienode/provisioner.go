@@ -18,6 +18,8 @@ type Provisioner struct {
 	vpsieClient VPSieClientInterface
 	// SSH key IDs to inject into VPS
 	sshKeyIDs []string
+	// discoverer handles VPS ID discovery for async provisioning
+	discoverer *Discoverer
 }
 
 // NewProvisioner creates a new Provisioner
@@ -26,6 +28,11 @@ func NewProvisioner(vpsieClient VPSieClientInterface, sshKeyIDs []string) *Provi
 		vpsieClient: vpsieClient,
 		sshKeyIDs:   sshKeyIDs,
 	}
+}
+
+// SetDiscoverer sets the discoverer for async VPS ID discovery
+func (p *Provisioner) SetDiscoverer(d *Discoverer) {
+	p.discoverer = d
 }
 
 // Provision creates a VPS and transitions through provisioning phases
@@ -47,11 +54,51 @@ const AnnotationCreationRequested = "autoscaler.vpsie.com/creation-requested"
 func (p *Provisioner) createVPS(ctx context.Context, vn *v1alpha1.VPSieNode, logger *zap.Logger) (ctrl.Result, error) {
 	// Check if creation was already requested (to avoid duplicate API calls)
 	if vn.Annotations != nil && vn.Annotations[AnnotationCreationRequested] == "true" {
-		logger.Info("Node creation already requested, waiting for node to appear",
+		logger.Info("Node creation already requested, attempting discovery",
 			zap.String("vpsienode", vn.Name),
 		)
-		// TODO: In future, could try to discover node ID by listing nodes in the group
-		// For now, just wait and requeue
+
+		// Attempt to discover the VPS ID
+		if p.discoverer != nil {
+			vps, timedOut, err := p.discoverer.DiscoverVPSID(ctx, vn)
+			if err != nil {
+				logger.Warn("VPS discovery failed", zap.Error(err))
+				// Continue - will retry on next reconcile
+			} else if timedOut {
+				// Discovery timeout - mark as failed
+				logger.Error("VPS discovery timeout exceeded",
+					zap.String("vpsienode", vn.Name),
+				)
+				return ctrl.Result{}, fmt.Errorf("VPS discovery timeout exceeded")
+			} else if vps != nil {
+				// Discovery successful - update VPSieNode
+				logger.Info("VPS discovered successfully",
+					zap.Int("vpsID", vps.ID),
+					zap.String("hostname", vps.Hostname),
+					zap.String("ip", vps.IPAddress),
+				)
+
+				// Update VPSieNode with discovered VPS information
+				vn.Spec.VPSieInstanceID = vps.ID
+				vn.Spec.IPAddress = vps.IPAddress
+				vn.Spec.IPv6Address = vps.IPv6Address
+				if vn.Spec.NodeName == "" && vps.Hostname != "" {
+					vn.Spec.NodeName = vps.Hostname
+				}
+				vn.Status.Hostname = vps.Hostname
+				vn.Status.VPSieStatus = vps.Status
+				vn.Status.Resources = v1alpha1.NodeResources{
+					CPU:      vps.CPU,
+					MemoryMB: vps.RAM,
+					DiskGB:   vps.Disk,
+				}
+
+				// Continue with normal provisioning flow
+				return p.checkVPSStatus(ctx, vn, logger)
+			}
+		}
+
+		// VPS not discovered yet, keep waiting
 		return ctrl.Result{RequeueAfter: FastRequeueAfter}, nil
 	}
 
