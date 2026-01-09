@@ -52,12 +52,10 @@ type NodeGroupReconciler struct {
 	Recorder         record.EventRecorder
 
 	// Secret watching for credential rotation
-	SecretName         string // Name of the secret containing VPSie credentials
-	SecretNamespace    string // Namespace of the secret
-	credentialsHash    string // Hash of current credentials for change detection
-	credentialsHashMu  sync.RWMutex
-	lastSecretCheck    time.Time
-	secretCheckMu      sync.RWMutex
+	SecretName        string // Name of the secret containing VPSie credentials
+	SecretNamespace   string // Namespace of the secret
+	credentialsHash   string // Hash of current credentials for change detection
+	credentialsHashMu sync.RWMutex
 }
 
 // SetupWithManager sets up the controller with the Manager

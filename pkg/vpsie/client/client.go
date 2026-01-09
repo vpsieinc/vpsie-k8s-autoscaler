@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
@@ -116,40 +114,6 @@ func DefaultRetryConfig() RetryConfig {
 			http.StatusGatewayTimeout,
 		},
 	}
-}
-
-// calculateBackoff calculates the backoff duration with jitter for a given attempt
-func (r *RetryConfig) calculateBackoff(attempt int) time.Duration {
-	if attempt <= 0 {
-		return r.InitialBackoff
-	}
-
-	// Calculate exponential backoff: initialBackoff * (multiplier ^ attempt)
-	backoff := float64(r.InitialBackoff) * math.Pow(r.BackoffMultiplier, float64(attempt))
-
-	// Cap at max backoff
-	if backoff > float64(r.MaxBackoff) {
-		backoff = float64(r.MaxBackoff)
-	}
-
-	// Add jitter: backoff * (1 - jitterFactor + random * jitterFactor * 2)
-	// This gives us a range of [backoff * (1 - jitterFactor), backoff * (1 + jitterFactor)]
-	if r.JitterFactor > 0 {
-		jitter := (rand.Float64()*2 - 1) * r.JitterFactor
-		backoff = backoff * (1 + jitter)
-	}
-
-	return time.Duration(backoff)
-}
-
-// isRetryableStatusCode checks if a status code should trigger a retry
-func (r *RetryConfig) isRetryableStatusCode(statusCode int) bool {
-	for _, code := range r.RetryableStatusCodes {
-		if code == statusCode {
-			return true
-		}
-	}
-	return false
 }
 
 // Client represents a VPSie API client

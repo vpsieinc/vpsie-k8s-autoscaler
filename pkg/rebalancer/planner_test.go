@@ -15,9 +15,11 @@ func TestNewPlanner(t *testing.T) {
 		planner := NewPlanner(nil)
 		if planner == nil {
 			t.Fatal("Expected planner to be created")
+			return
 		}
 		if planner.config == nil {
 			t.Fatal("Expected default config to be set")
+			return
 		}
 		if planner.config.BatchSize != 1 {
 			t.Errorf("Expected BatchSize=1, got %d", planner.config.BatchSize)
@@ -80,6 +82,7 @@ func TestCreateRebalancePlan(t *testing.T) {
 		}
 		if plan == nil {
 			t.Fatal("Expected plan to be created")
+			return
 		}
 		if plan.NodeGroupName != "test-ng" {
 			t.Errorf("Expected NodeGroupName='test-ng', got %s", plan.NodeGroupName)
@@ -143,6 +146,7 @@ func TestCreateRebalancePlan(t *testing.T) {
 		}
 		if plan == nil {
 			t.Fatal("Expected plan to be created")
+			return
 		}
 		if len(plan.Batches) != 0 {
 			t.Errorf("Expected 0 batches for no candidates, got %d", len(plan.Batches))

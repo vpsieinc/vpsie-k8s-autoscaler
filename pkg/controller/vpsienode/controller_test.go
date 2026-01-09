@@ -94,9 +94,11 @@ func TestProvisioningPhaseTransition(t *testing.T) {
 			Finalizers: []string{FinalizerName},
 		},
 		Spec: v1alpha1.VPSieNodeSpec{
-			InstanceType:  "offering-1",
-			NodeGroupName: "test-ng",
-			DatacenterID:  "dc-1",
+			InstanceType:       "offering-1",
+			NodeGroupName:      "test-ng",
+			DatacenterID:       "dc-1",
+			VPSieGroupID:       1,
+			ResourceIdentifier: "test-cluster",
 		},
 		Status: v1alpha1.VPSieNodeStatus{
 			Phase: v1alpha1.VPSieNodePhaseProvisioning,
@@ -134,11 +136,11 @@ func TestProvisioningPhaseTransition(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.RequeueAfter > 0)
 
-	// Verify VPS was created
+	// Verify VPS was created via AddK8sSlaveToGroup API
 	_ = client.Get(context.Background(), req.NamespacedName, vn)
 	assert.NotEqual(t, 0, vn.Spec.VPSieInstanceID)
 	assert.NotEmpty(t, vn.Spec.IPAddress)
-	assert.Equal(t, 1, mockVPSie.GetCallCount("CreateVM"))
+	assert.Equal(t, 1, mockVPSie.GetCallCount("AddK8sSlaveToGroup"))
 
 	// Update VPS status to "running"
 	err = mockVPSie.UpdateVMStatus(vn.Spec.VPSieInstanceID, "running")

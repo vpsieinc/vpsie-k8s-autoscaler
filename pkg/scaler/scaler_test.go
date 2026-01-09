@@ -26,10 +26,12 @@ func TestNewScaleDownManager(t *testing.T) {
 
 	if manager == nil {
 		t.Fatal("expected manager to be created")
+		return
 	}
 
 	if manager.config == nil {
 		t.Fatal("expected default config to be set")
+		return
 	}
 
 	if manager.config.CPUThreshold != DefaultCPUThreshold {

@@ -194,14 +194,6 @@ func (v *VPSieNodeValidator) validateSSHKeyIDs(vn *autoscalerv1alpha1.VPSieNode)
 	return nil
 }
 
-// validateInstanceConfiguration validates instance configuration
-// (User data/cloud-init support was removed in v0.6.0)
-func (v *VPSieNodeValidator) validateInstanceConfiguration(vn *autoscalerv1alpha1.VPSieNode) error {
-	// Instance configuration is now handled entirely by VPSie API
-	// No additional validation needed beyond CRD schema validation
-	return nil
-}
-
 // validateImmutableFields validates that immutable fields haven't changed
 func (v *VPSieNodeValidator) validateImmutableFields(vn *autoscalerv1alpha1.VPSieNode) error {
 	// For UPDATE operations, we would need the old object to compare

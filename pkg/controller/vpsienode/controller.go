@@ -135,8 +135,10 @@ func (r *VPSieNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		patch := client.MergeFrom(vn.DeepCopy())
 		vn.Status.Phase = v1alpha1.VPSieNodePhasePending
 		vn.Status.ObservedGeneration = vn.Generation
-		r.Recorder.Event(vn, corev1.EventTypeNormal, "Initializing",
-			"VPSieNode created and entering Pending phase")
+		if r.Recorder != nil {
+			r.Recorder.Event(vn, corev1.EventTypeNormal, "Initializing",
+				"VPSieNode created and entering Pending phase")
+		}
 		if err := r.Status().Patch(ctx, vn, patch); err != nil {
 			if apierrors.IsConflict(err) {
 				logger.Info("Status update conflict, will retry")
@@ -211,8 +213,10 @@ func (r *VPSieNodeReconciler) reconcile(ctx context.Context, vn *v1alpha1.VPSieN
 			zap.String("phase", string(vn.Status.Phase)),
 			zap.Error(err),
 		)
-		r.Recorder.Eventf(vn, corev1.EventTypeWarning, "PhaseFailed",
-			"Failed in %s phase: %v", vn.Status.Phase, err)
+		if r.Recorder != nil {
+			r.Recorder.Eventf(vn, corev1.EventTypeWarning, "PhaseFailed",
+				"Failed in %s phase: %v", vn.Status.Phase, err)
+		}
 		// Don't set phase to Failed here, let the phase handler decide
 		return result, err
 	}

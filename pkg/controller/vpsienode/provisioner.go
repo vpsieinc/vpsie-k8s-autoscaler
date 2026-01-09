@@ -265,17 +265,6 @@ func (p *Provisioner) generateHostname(vn *v1alpha1.VPSieNode) string {
 	return vn.Name
 }
 
-// getSSHKeyIDs returns SSH key IDs to use for VPS provisioning
-// Prefers spec-level SSH keys (per-node override), falls back to provisioner-level (global config)
-func (p *Provisioner) getSSHKeyIDs(vn *v1alpha1.VPSieNode) []string {
-	// If VPSieNode spec has SSH keys defined, use them (per-node override)
-	if len(vn.Spec.SSHKeyIDs) > 0 {
-		return vn.Spec.SSHKeyIDs
-	}
-	// Fall back to provisioner-level SSH keys (global configuration from controller options)
-	return p.sshKeyIDs
-}
-
 // GetVPS gets the VPS for a VPSieNode
 func (p *Provisioner) GetVPS(ctx context.Context, vn *v1alpha1.VPSieNode) (*vpsieclient.VPS, error) {
 	if vn.Spec.VPSieInstanceID == 0 {

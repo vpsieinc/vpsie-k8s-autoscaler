@@ -20,9 +20,11 @@ func TestNewAnalyzer(t *testing.T) {
 		analyzer := NewAnalyzer(kubeClient, nil, nil)
 		if analyzer == nil {
 			t.Fatal("Expected analyzer to be created")
+			return
 		}
 		if analyzer.config == nil {
 			t.Fatal("Expected default config to be set")
+			return
 		}
 		if analyzer.config.MinHealthyPercent != 75 {
 			t.Errorf("Expected MinHealthyPercent=75, got %d", analyzer.config.MinHealthyPercent)

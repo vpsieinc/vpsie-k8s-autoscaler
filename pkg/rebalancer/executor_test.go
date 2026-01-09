@@ -1,6 +1,7 @@
 package rebalancer
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -14,9 +15,11 @@ func TestNewExecutor(t *testing.T) {
 		executor := NewExecutor(kubeClient, nil, nil)
 		if executor == nil {
 			t.Fatal("Expected executor to be created")
+			return
 		}
 		if executor.config == nil {
 			t.Fatal("Expected default config to be set")
+			return
 		}
 		if executor.config.DrainTimeout != 5*time.Minute {
 			t.Errorf("Expected DrainTimeout=5m, got %v", executor.config.DrainTimeout)
@@ -93,11 +96,12 @@ func TestExecutor_ProvisioningErrorHandling(t *testing.T) {
 		}
 
 		// Execute the batch - should fail at provisioning
-		result, err := executor.executeRollingBatch(nil, plan, &plan.Batches[0], state)
+		result, err := executor.executeRollingBatch(context.TODO(), plan, &plan.Batches[0], state)
 
 		// Verify that the batch execution doesn't panic
 		if result == nil {
 			t.Fatal("Expected result to be non-nil even on failure")
+			return
 		}
 
 		// Verify that the error was recorded
@@ -172,11 +176,12 @@ func TestExecutor_ProvisioningErrorHandling(t *testing.T) {
 		}
 
 		// Execute surge batch - should fail at provisioning both nodes
-		result, err := executor.executeSurgeBatch(nil, surgePlan, &surgePlan.Batches[0], state)
+		result, err := executor.executeSurgeBatch(context.TODO(), surgePlan, &surgePlan.Batches[0], state)
 
 		// Verify that the batch execution doesn't panic
 		if result == nil {
 			t.Fatal("Expected result to be non-nil even on failure")
+			return
 		}
 
 		// Both nodes should fail at provisioning
@@ -217,7 +222,7 @@ func TestExecutor_ProvisioningErrorHandling(t *testing.T) {
 			StartedAt:        time.Now(),
 		}
 
-		result, _ := executor.executeRollingBatch(nil, plan, &plan.Batches[0], state)
+		result, _ := executor.executeRollingBatch(context.TODO(), plan, &plan.Batches[0], state)
 
 		if len(result.FailedNodes) > 0 {
 			errMsg := result.FailedNodes[0].Error.Error()
