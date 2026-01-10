@@ -905,8 +905,8 @@ func simulateNodeReady(ctx context.Context, namespace, nodeName string) error {
 	node.Status.Phase = autoscalerv1alpha1.VPSieNodePhaseReady
 	node.Status.Conditions = []autoscalerv1alpha1.VPSieNodeCondition{
 		{
-			Type:               autoscalerv1alpha1.VPSieNodeConditionReady,
-			Status:             corev1.ConditionTrue,
+			Type:               autoscalerv1alpha1.VPSieNodeConditionNodeReady,
+			Status:             "True",
 			LastTransitionTime: metav1.Now(),
 			Reason:             "NodeReady",
 			Message:            "Node is ready and joined to cluster",
@@ -988,10 +988,14 @@ func runScalingTest(ctx context.Context, config ScalingTestConfig) error {
 			Namespace: config.Namespace,
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:     config.InitialMinNodes,
-			MaxNodes:     config.InitialMaxNodes,
-			DatacenterID: "us-west-1",
-			OfferingID:   "standard-4cpu-8gb",
+			MinNodes:           config.InitialMinNodes,
+			MaxNodes:           config.InitialMaxNodes,
+			DatacenterID:       "us-west-1",
+			OfferingIDs:        []string{"standard-4cpu-8gb"},
+			ResourceIdentifier: "test-cluster",
+			Project:            "test-project",
+			OSImageID:          "test-os-image",
+			KubernetesVersion:  "v1.28.0",
 		},
 	}
 

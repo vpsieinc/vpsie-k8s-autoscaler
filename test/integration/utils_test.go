@@ -578,11 +578,14 @@ func CreateTestNodeGroup(ctx context.Context, client client.Client, name, namesp
 			Namespace: namespace,
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:          minNodes,
-			MaxNodes:          maxNodes,
-			TargetUtilization: 70,
-			DatacenterID:      "test-dc",
-			OfferingID:        "test-offering",
+			MinNodes:           minNodes,
+			MaxNodes:           maxNodes,
+			DatacenterID:       "test-dc",
+			OfferingIDs:        []string{"test-offering"},
+			ResourceIdentifier: "test-cluster",
+			Project:            "test-project",
+			OSImageID:          "test-os-image",
+			KubernetesVersion:  "v1.28.0",
 		},
 	}
 
@@ -598,9 +601,14 @@ func CreateTestVPSieNode(ctx context.Context, client client.Client, name, namesp
 			Namespace: namespace,
 		},
 		Spec: autoscalerv1alpha1.VPSieNodeSpec{
-			NodeGroupName: nodeGroupName,
-			OfferingID:    "test-offering",
-			DatacenterID:  "test-dc",
+			NodeGroupName:      nodeGroupName,
+			InstanceType:       "test-offering",
+			DatacenterID:       "test-dc",
+			VPSieInstanceID:    12345,
+			ResourceIdentifier: "test-cluster",
+			Project:            "test-project",
+			OSImageID:          "test-os-image",
+			KubernetesVersion:  "v1.28.0",
 		},
 	}
 
