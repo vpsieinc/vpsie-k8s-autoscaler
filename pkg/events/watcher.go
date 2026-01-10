@@ -424,12 +424,18 @@ func (w *EventWatcher) GetPendingPods(ctx context.Context) ([]corev1.Pod, error)
 	return pending, nil
 }
 
-// GetNodeGroups returns all NodeGroups
+// GetNodeGroups returns all managed NodeGroups.
+// NodeGroup isolation: Only returns NodeGroups with the managed label
+// (autoscaler.vpsie.com/managed=true) to prevent the autoscaler from
+// interfering with externally created or static NodeGroups.
 func (w *EventWatcher) GetNodeGroups(ctx context.Context) ([]v1alpha1.NodeGroup, error) {
 	nodeGroupList := &v1alpha1.NodeGroupList{}
-	err := w.client.List(ctx, nodeGroupList)
+	// Filter to only managed NodeGroups using label selector
+	err := w.client.List(ctx, nodeGroupList, client.MatchingLabels{
+		v1alpha1.ManagedLabelKey: v1alpha1.ManagedLabelValue,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list NodeGroups: %w", err)
+		return nil, fmt.Errorf("failed to list managed NodeGroups: %w", err)
 	}
 
 	return nodeGroupList.Items, nil

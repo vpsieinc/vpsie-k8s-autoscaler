@@ -305,10 +305,10 @@ func (j *Joiner) applyNodeConfiguration(ctx context.Context, vn *v1alpha1.VPSieN
 	}
 
 	requiredLabels := map[string]string{
-		"autoscaler.vpsie.com/managed":    "true",
-		"autoscaler.vpsie.com/nodegroup":  vn.Spec.NodeGroupName,
-		"autoscaler.vpsie.com/vpsienode":  vn.Name,
-		"autoscaler.vpsie.com/datacenter": vn.Spec.DatacenterID,
+		v1alpha1.ManagedLabelKey:    v1alpha1.ManagedLabelValue,
+		v1alpha1.NodeGroupLabelKey:  vn.Spec.NodeGroupName,
+		v1alpha1.VPSieNodeLabelKey:  vn.Name,
+		v1alpha1.DatacenterLabelKey: vn.Spec.DatacenterID,
 	}
 
 	for key, value := range requiredLabels {

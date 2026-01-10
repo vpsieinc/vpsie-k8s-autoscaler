@@ -10,40 +10,29 @@ import (
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 )
 
-// Label constants for NodeGroup management.
-// These labels are used to identify and filter NodeGroups managed by the autoscaler.
+// Re-export label constants from v1alpha1 for backward compatibility and convenience.
+// These are the canonical definitions, re-exported for use within the controller package.
 const (
 	// ManagedLabelKey is the label key used to mark NodeGroups as managed by the autoscaler.
-	// Only NodeGroups with this label set to ManagedLabelValue will be processed.
-	ManagedLabelKey = "autoscaler.vpsie.com/managed"
+	ManagedLabelKey = v1alpha1.ManagedLabelKey
 
 	// ManagedLabelValue is the expected value for the managed label.
-	// NodeGroups must have ManagedLabelKey set to this value to be managed.
-	ManagedLabelValue = "true"
+	ManagedLabelValue = v1alpha1.ManagedLabelValue
 
 	// NodeGroupNameLabelKey is the label key used to identify which NodeGroup a resource belongs to.
-	// This is applied to VPSieNodes and other resources to associate them with their parent NodeGroup.
-	NodeGroupNameLabelKey = "autoscaler.vpsie.com/nodegroup"
+	NodeGroupNameLabelKey = v1alpha1.NodeGroupLabelKey
 )
 
 // IsManagedNodeGroup checks if the NodeGroup has the managed label set to "true".
-// Returns false if the NodeGroup has nil labels, missing managed label, or the label
-// is set to any value other than "true".
+// Delegates to v1alpha1.IsManagedNodeGroup for consistent behavior.
 func IsManagedNodeGroup(ng *v1alpha1.NodeGroup) bool {
-	if ng.Labels == nil {
-		return false
-	}
-	return ng.Labels[ManagedLabelKey] == ManagedLabelValue
+	return v1alpha1.IsManagedNodeGroup(ng)
 }
 
 // SetNodeGroupManaged adds the managed label to a NodeGroup.
-// This function is idempotent - calling it multiple times has the same effect as calling it once.
-// If the NodeGroup has nil labels, a new labels map is created.
+// Delegates to v1alpha1.SetNodeGroupManaged for consistent behavior.
 func SetNodeGroupManaged(ng *v1alpha1.NodeGroup) {
-	if ng.Labels == nil {
-		ng.Labels = make(map[string]string)
-	}
-	ng.Labels[ManagedLabelKey] = ManagedLabelValue
+	v1alpha1.SetNodeGroupManaged(ng)
 }
 
 // ManagedLabelSelector returns a client.MatchingLabels selector that can be used
