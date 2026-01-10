@@ -563,25 +563,6 @@ func startMultipleControllers(count int, baseMetricsPort, baseHealthPort int, se
 	return controllers, nil
 }
 
-// identifyLeader identifies which controller is the current leader
-func identifyLeader(controllers []*ControllerProcess, timeout time.Duration) (*ControllerProcess, error) {
-	deadline := time.Now().Add(timeout)
-
-	for time.Now().Before(deadline) {
-		for _, proc := range controllers {
-			// Leader should have readyz returning 200
-			status, err := getHealthStatus(proc.HealthAddr, "/readyz")
-			if err == nil && status == http.StatusOK {
-				return proc, nil
-			}
-		}
-
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	return nil, fmt.Errorf("no leader identified within %v", timeout)
-}
-
 // waitForLeaderElection waits for exactly one leader to be elected
 func waitForLeaderElection(controllers []*ControllerProcess, timeout time.Duration) (*ControllerProcess, error) {
 	deadline := time.Now().Add(timeout)
