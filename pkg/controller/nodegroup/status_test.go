@@ -549,3 +549,148 @@ func TestSetDesiredNodes(t *testing.T) {
 	assert.Equal(t, int32(3), ng.Status.DesiredNodes)
 	assert.NotNil(t, ng.Status.LastScaleDownTime)
 }
+
+func TestIsManagedNodeGroup(t *testing.T) {
+	tests := []struct {
+		name     string
+		ng       *v1alpha1.NodeGroup
+		expected bool
+	}{
+		{
+			name: "NodeGroup with managed label set to true",
+			ng: &v1alpha1.NodeGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "managed-ng",
+					Labels: map[string]string{
+						ManagedLabelKey: ManagedLabelValue,
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "NodeGroup with managed label set to false",
+			ng: &v1alpha1.NodeGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "unmanaged-ng",
+					Labels: map[string]string{
+						ManagedLabelKey: "false",
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "NodeGroup without managed label",
+			ng: &v1alpha1.NodeGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "no-label-ng",
+					Labels: map[string]string{
+						"other-label": "value",
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "NodeGroup with nil labels map",
+			ng: &v1alpha1.NodeGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "nil-labels-ng",
+					Labels: nil,
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "NodeGroup with empty labels map",
+			ng: &v1alpha1.NodeGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "empty-labels-ng",
+					Labels: map[string]string{},
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsManagedNodeGroup(tt.ng)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestSetNodeGroupManaged(t *testing.T) {
+	tests := []struct {
+		name           string
+		ng             *v1alpha1.NodeGroup
+		expectedLabels map[string]string
+	}{
+		{
+			name: "NodeGroup with nil labels",
+			ng: &v1alpha1.NodeGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "nil-labels-ng",
+					Labels: nil,
+				},
+			},
+			expectedLabels: map[string]string{
+				ManagedLabelKey: ManagedLabelValue,
+			},
+		},
+		{
+			name: "NodeGroup with existing labels",
+			ng: &v1alpha1.NodeGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "existing-labels-ng",
+					Labels: map[string]string{
+						"existing-label": "value",
+					},
+				},
+			},
+			expectedLabels: map[string]string{
+				"existing-label": "value",
+				ManagedLabelKey:  ManagedLabelValue,
+			},
+		},
+		{
+			name: "NodeGroup already managed - idempotent",
+			ng: &v1alpha1.NodeGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "already-managed-ng",
+					Labels: map[string]string{
+						ManagedLabelKey: ManagedLabelValue,
+					},
+				},
+			},
+			expectedLabels: map[string]string{
+				ManagedLabelKey: ManagedLabelValue,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			SetNodeGroupManaged(tt.ng)
+			assert.Equal(t, tt.expectedLabels, tt.ng.Labels)
+			// Verify idempotency by calling again
+			SetNodeGroupManaged(tt.ng)
+			assert.Equal(t, tt.expectedLabels, tt.ng.Labels)
+		})
+	}
+}
+
+func TestManagedLabelSelector(t *testing.T) {
+	selector := ManagedLabelSelector()
+	assert.NotNil(t, selector)
+	assert.Equal(t, ManagedLabelValue, selector[ManagedLabelKey])
+}
+
+func TestLabelConstants(t *testing.T) {
+	// Verify constants are exported and have expected values
+	assert.Equal(t, "autoscaler.vpsie.com/managed", ManagedLabelKey)
+	assert.Equal(t, "true", ManagedLabelValue)
+	assert.Equal(t, "autoscaler.vpsie.com/nodegroup", NodeGroupNameLabelKey)
+}
