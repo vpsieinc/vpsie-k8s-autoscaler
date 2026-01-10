@@ -148,7 +148,8 @@ func DefaultConfig() *Config {
 	}
 }
 
-// IdentifyUnderutilizedNodes finds nodes with low utilization
+// IdentifyUnderutilizedNodes finds nodes with low utilization.
+// Only processes NodeGroups that have the managed label (autoscaler.vpsie.com/managed=true).
 func (s *ScaleDownManager) IdentifyUnderutilizedNodes(
 	ctx context.Context,
 	nodeGroup *autoscalerv1alpha1.NodeGroup,
@@ -159,6 +160,14 @@ func (s *ScaleDownManager) IdentifyUnderutilizedNodes(
 		s.logger.Infow("identifying underutilized nodes",
 			"nodeGroup", nodeGroup.Name,
 			"requestID", requestID)
+	}
+
+	// NodeGroup isolation: Defensive check to ensure only managed NodeGroups are processed
+	if !autoscalerv1alpha1.IsManagedNodeGroup(nodeGroup) {
+		s.logger.Warnw("skipping unmanaged NodeGroup in scale-down",
+			"nodeGroup", nodeGroup.Name,
+			"labels", nodeGroup.Labels)
+		return nil, nil
 	}
 
 	// Get all nodes in this NodeGroup
@@ -459,8 +468,8 @@ func (s *ScaleDownManager) getNodeGroupNodes(
 	ctx context.Context,
 	nodeGroup *autoscalerv1alpha1.NodeGroup,
 ) ([]*corev1.Node, error) {
-	// List all nodes with NodeGroup label
-	labelSelector := fmt.Sprintf("autoscaler.vpsie.com/nodegroup=%s", nodeGroup.Name)
+	// List all nodes with NodeGroup label using centralized constants
+	labelSelector := fmt.Sprintf("%s=%s", autoscalerv1alpha1.NodeGroupLabelKey, nodeGroup.Name)
 	nodeList, err := s.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
 	})

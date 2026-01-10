@@ -411,6 +411,9 @@ func TestIdentifyUnderutilizedNodes(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-group",
 			Namespace: "default",
+			Labels: map[string]string{
+				autoscalerv1alpha1.ManagedLabelKey: autoscalerv1alpha1.ManagedLabelValue,
+			},
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
 			MinNodes: 1,
@@ -813,6 +816,9 @@ func TestScaleDownManager_UtilizationRaceCondition(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-group",
 			Namespace: "default",
+			Labels: map[string]string{
+				autoscalerv1alpha1.ManagedLabelKey: autoscalerv1alpha1.ManagedLabelValue,
+			},
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
 			MinNodes: 1,
