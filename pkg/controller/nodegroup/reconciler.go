@@ -306,29 +306,38 @@ func (r *NodeGroupReconciler) reconcileIntelligentScaleDown(
 
 	// After successful drain, delete the corresponding VPSieNode CRs
 	// The VPSieNode controller will handle VM termination and K8s node deletion
+
+	// Build map for O(1) lookup instead of O(n*m) nested loops
+	vpsieNodeByNodeName := make(map[string]*v1alpha1.VPSieNode)
+	for i := range vpsieNodes {
+		if nodeName := vpsieNodes[i].Status.NodeName; nodeName != "" {
+			vpsieNodeByNodeName[nodeName] = &vpsieNodes[i]
+		}
+	}
+
 	deletedCount := 0
 	for _, candidate := range candidates {
-		// Find the VPSieNode CR for this node
-		for _, vn := range vpsieNodes {
-			if vn.Status.NodeName == candidate.Node.Name {
-				logger.Info("Deleting VPSieNode after successful drain",
-					zap.String("vpsienode", vn.Name),
-					zap.String("nodeName", candidate.Node.Name),
-				)
-
-				if err := r.Delete(ctx, &vn); err != nil {
-					logger.Error("Failed to delete VPSieNode",
-						zap.String("vpsienode", vn.Name),
-						zap.Error(err),
-					)
-					// Continue with other nodes - don't fail entire operation
-					continue
-				}
-
-				deletedCount++
-				break
-			}
+		// Find the VPSieNode CR for this node using map lookup
+		vn, ok := vpsieNodeByNodeName[candidate.Node.Name]
+		if !ok {
+			continue
 		}
+
+		logger.Info("Deleting VPSieNode after successful drain",
+			zap.String("vpsienode", vn.Name),
+			zap.String("nodeName", candidate.Node.Name),
+		)
+
+		if err := r.Delete(ctx, vn); err != nil {
+			logger.Error("Failed to delete VPSieNode",
+				zap.String("vpsienode", vn.Name),
+				zap.Error(err),
+			)
+			// Continue with other nodes - don't fail entire operation
+			continue
+		}
+
+		deletedCount++
 	}
 
 	logger.Info("Intelligent scale-down completed",
