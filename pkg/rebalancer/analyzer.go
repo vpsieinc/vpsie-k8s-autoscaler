@@ -40,9 +40,24 @@ func NewAnalyzer(kubeClient kubernetes.Interface, costOptimizer *cost.Optimizer,
 	}
 }
 
-// AnalyzeRebalanceOpportunities identifies which nodes should be rebalanced
+// AnalyzeRebalanceOpportunities identifies which nodes should be rebalanced.
+// NodeGroup isolation: Only managed NodeGroups (with autoscaler.vpsie.com/managed=true label)
+// are analyzed for rebalancing to prevent the rebalancer from interfering with
+// externally created or static NodeGroups.
 func (a *Analyzer) AnalyzeRebalanceOpportunities(ctx context.Context, nodeGroup *v1alpha1.NodeGroup) (*RebalanceAnalysis, error) {
 	logger := log.FromContext(ctx)
+
+	// NodeGroup isolation: Skip NodeGroups not managed by the autoscaler
+	if !v1alpha1.IsManagedNodeGroup(nodeGroup) {
+		logger.Info("Skipping unmanaged NodeGroup", "nodeGroup", nodeGroup.Name)
+		return &RebalanceAnalysis{
+			NodeGroupName:     nodeGroup.Name,
+			Namespace:         nodeGroup.Namespace,
+			AnalyzedAt:        time.Now(),
+			RecommendedAction: ActionReject,
+		}, nil
+	}
+
 	logger.Info("Analyzing rebalance opportunities", "nodeGroup", nodeGroup.Name)
 
 	analysis := &RebalanceAnalysis{
@@ -419,8 +434,8 @@ func (a *Analyzer) checkTiming(ctx context.Context, nodeGroup *v1alpha1.NodeGrou
 // Helper functions
 
 func (a *Analyzer) getNodeGroupNodes(ctx context.Context, nodeGroup *v1alpha1.NodeGroup) ([]*Node, error) {
-	// List nodes with NodeGroup label
-	labelSelector := fmt.Sprintf("vpsie.io/nodegroup=%s", nodeGroup.Name)
+	// List nodes with NodeGroup label (using centralized label constants)
+	labelSelector := fmt.Sprintf("%s=%s", v1alpha1.NodeGroupLabelKey, nodeGroup.Name)
 	nodeList, err := a.kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
 	})
@@ -432,7 +447,7 @@ func (a *Analyzer) getNodeGroupNodes(ctx context.Context, nodeGroup *v1alpha1.No
 	for _, n := range nodeList.Items {
 		node := &Node{
 			Name:       n.Name,
-			OfferingID: n.Labels["vpsie.io/offering"],
+			OfferingID: n.Labels[v1alpha1.OfferingLabelKey],
 			Age:        time.Since(n.CreationTimestamp.Time),
 			Cordoned:   n.Spec.Unschedulable,
 		}
@@ -445,8 +460,8 @@ func (a *Analyzer) getNodeGroupNodes(ctx context.Context, nodeGroup *v1alpha1.No
 			}
 		}
 
-		// Get VPSID from annotation
-		if vpsID, ok := n.Annotations["vpsie.io/vps-id"]; ok {
+		// Get VPSID from annotation (using centralized annotation constant)
+		if vpsID, ok := n.Annotations[v1alpha1.VPSIDAnnotationKey]; ok {
 			if _, err := fmt.Sscanf(vpsID, "%d", &node.VPSID); err != nil {
 				// Failed to parse VPS ID - continue with VPSID=0
 				// TODO: Add proper logging once logger is available in this context

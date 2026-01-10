@@ -22,15 +22,21 @@ const (
 	// DatacenterLabelKey is the label key for the datacenter ID.
 	DatacenterLabelKey = "autoscaler.vpsie.com/datacenter"
 
+	// OfferingLabelKey is the label key for the VPSie offering/instance type ID.
+	OfferingLabelKey = "autoscaler.vpsie.com/offering"
+
+	// VPSIDAnnotationKey is the annotation key for the VPSie VPS ID.
+	VPSIDAnnotationKey = "autoscaler.vpsie.com/vps-id"
+
 	// CreationRequestedAnnotation is the annotation key to trigger async VPS discovery.
 	CreationRequestedAnnotation = "autoscaler.vpsie.com/creation-requested"
 )
 
 // IsManagedNodeGroup checks if the NodeGroup has the managed label set to "true".
-// Returns false if the NodeGroup has nil labels, missing managed label, or the label
-// is set to any value other than "true".
+// Returns false if the NodeGroup is nil, has nil labels, missing managed label, or
+// the label is set to any value other than "true".
 func IsManagedNodeGroup(ng *NodeGroup) bool {
-	if ng.Labels == nil {
+	if ng == nil || ng.Labels == nil {
 		return false
 	}
 	return ng.Labels[ManagedLabelKey] == ManagedLabelValue
