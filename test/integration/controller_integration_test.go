@@ -21,6 +21,7 @@ import (
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -649,8 +650,8 @@ func TestGracefulShutdown_Integration(t *testing.T) {
 	// Wait for initial reconciliation
 	time.Sleep(5 * time.Second)
 
-	// Get initial metrics
-	initialMetrics := getMetricValue(t, fmt.Sprintf("http://localhost:%d/metrics", 18086),
+	// Get initial metrics (value captured but not compared - test focuses on shutdown behavior)
+	_ = getMetricValue(t, fmt.Sprintf("http://localhost:%d/metrics", 18086),
 		"vpsie_autoscaler_controller_reconcile_total")
 
 	t.Log("Sending SIGTERM signal")
@@ -1184,8 +1185,8 @@ func TestScaleUp_EndToEnd(t *testing.T) {
 						Image: "busybox",
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{
-								corev1.ResourceCPU:    "2",
-								corev1.ResourceMemory: "4Gi",
+								corev1.ResourceCPU:    resource.MustParse("2"),
+								corev1.ResourceMemory: resource.MustParse("4Gi"),
 							},
 						},
 					},
@@ -1461,7 +1462,7 @@ func TestScalingWithFailures(t *testing.T) {
 	// Test rate limiting
 	t.Log("Testing rate limiting scenario")
 
-	mockServer.RateLimitRemaining = 0 // Trigger rate limiting
+	mockServer.SetRateLimit(0) // Trigger rate limiting by setting limit to 0
 
 	// Try to update NodeGroup to trigger more API calls
 	err = k8sClient.Get(ctx, client.ObjectKey{
@@ -1483,7 +1484,7 @@ func TestScalingWithFailures(t *testing.T) {
 	assert.Greater(t, rateLimitErrors, errorCount, "Should have rate limit errors")
 
 	// Reset rate limit
-	mockServer.RateLimitRemaining = 100
+	mockServer.SetRateLimit(100)
 
 	// Verify recovery after rate limit
 	require.Eventually(t, func() bool {
