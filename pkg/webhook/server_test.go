@@ -684,3 +684,185 @@ func getTestDecoder() runtime.Decoder {
 	_ = corev1.AddToScheme(scheme)
 	return serializer.NewCodecFactory(scheme).UniversalDeserializer()
 }
+
+// TestNodeGroupValidator_NamespaceValidation tests namespace validation for NodeGroup
+func TestNodeGroupValidator_NamespaceValidation(t *testing.T) {
+	logger := zap.NewNop()
+	validator := NewNodeGroupValidator(logger)
+
+	tests := []struct {
+		name        string
+		namespace   string
+		operation   admissionv1.Operation
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name:        "CREATE in kube-system allowed",
+			namespace:   "kube-system",
+			operation:   admissionv1.Create,
+			expectError: false,
+		},
+		{
+			name:        "CREATE in default namespace rejected",
+			namespace:   "default",
+			operation:   admissionv1.Create,
+			expectError: true,
+			errorMsg:    "must be created in the \"kube-system\" namespace",
+		},
+		{
+			name:        "CREATE in custom namespace rejected",
+			namespace:   "my-namespace",
+			operation:   admissionv1.Create,
+			expectError: true,
+			errorMsg:    "must be created in the \"kube-system\" namespace",
+		},
+		{
+			name:        "CREATE with empty namespace rejected",
+			namespace:   "",
+			operation:   admissionv1.Create,
+			expectError: true,
+			errorMsg:    "must be created in the \"kube-system\" namespace",
+		},
+		{
+			name:        "UPDATE in kube-system allowed",
+			namespace:   "kube-system",
+			operation:   admissionv1.Update,
+			expectError: false,
+		},
+		{
+			name:        "UPDATE in default namespace rejected",
+			namespace:   "default",
+			operation:   admissionv1.Update,
+			expectError: true,
+			errorMsg:    "must be created in the \"kube-system\" namespace",
+		},
+		{
+			name:        "DELETE in other namespace allowed (no namespace check on delete)",
+			namespace:   "other-namespace",
+			operation:   admissionv1.Delete,
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ng := &autoscalerv1alpha1.NodeGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-nodegroup",
+					Namespace: tt.namespace,
+				},
+				Spec: autoscalerv1alpha1.NodeGroupSpec{
+					MinNodes:          1,
+					MaxNodes:          10,
+					DatacenterID:      "dc-1",
+					OfferingIDs:       []string{"offering-1"},
+					KubernetesVersion: "v1.28.0",
+					OSImageID:         "ubuntu-22.04",
+				},
+			}
+
+			err := validator.Validate(ng, tt.operation)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errorMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestVPSieNodeValidator_NamespaceValidation tests namespace validation for VPSieNode
+func TestVPSieNodeValidator_NamespaceValidation(t *testing.T) {
+	logger := zap.NewNop()
+	validator := NewVPSieNodeValidator(logger)
+
+	tests := []struct {
+		name        string
+		namespace   string
+		operation   admissionv1.Operation
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name:        "CREATE in kube-system allowed",
+			namespace:   "kube-system",
+			operation:   admissionv1.Create,
+			expectError: false,
+		},
+		{
+			name:        "CREATE in default namespace rejected",
+			namespace:   "default",
+			operation:   admissionv1.Create,
+			expectError: true,
+			errorMsg:    "must be created in the \"kube-system\" namespace",
+		},
+		{
+			name:        "CREATE in custom namespace rejected",
+			namespace:   "my-namespace",
+			operation:   admissionv1.Create,
+			expectError: true,
+			errorMsg:    "must be created in the \"kube-system\" namespace",
+		},
+		{
+			name:        "CREATE with empty namespace rejected",
+			namespace:   "",
+			operation:   admissionv1.Create,
+			expectError: true,
+			errorMsg:    "must be created in the \"kube-system\" namespace",
+		},
+		{
+			name:        "UPDATE in kube-system allowed",
+			namespace:   "kube-system",
+			operation:   admissionv1.Update,
+			expectError: false,
+		},
+		{
+			name:        "UPDATE in default namespace rejected",
+			namespace:   "default",
+			operation:   admissionv1.Update,
+			expectError: true,
+			errorMsg:    "must be created in the \"kube-system\" namespace",
+		},
+		{
+			name:        "DELETE in other namespace allowed (no namespace check on delete)",
+			namespace:   "other-namespace",
+			operation:   admissionv1.Delete,
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vn := &autoscalerv1alpha1.VPSieNode{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-vpsienode",
+					Namespace: tt.namespace,
+				},
+				Spec: autoscalerv1alpha1.VPSieNodeSpec{
+					NodeGroupName:     "test-nodegroup",
+					DatacenterID:      "dc-1",
+					InstanceType:      "standard-2",
+					KubernetesVersion: "v1.28.0",
+					OSImageID:         "ubuntu-22.04",
+				},
+			}
+
+			err := validator.Validate(vn, tt.operation)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errorMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestRequiredNamespaceConstant verifies the RequiredNamespace constant
+func TestRequiredNamespaceConstant(t *testing.T) {
+	assert.Equal(t, "kube-system", RequiredNamespace)
+}

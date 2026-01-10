@@ -10,6 +10,11 @@ import (
 	autoscalerv1alpha1 "github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 )
 
+const (
+	// RequiredNamespace is the only namespace where NodeGroup and VPSieNode resources can be created
+	RequiredNamespace = "kube-system"
+)
+
 // NodeGroupValidator validates NodeGroup resources
 type NodeGroupValidator struct {
 	logger *zap.Logger
@@ -34,6 +39,11 @@ func (v *NodeGroupValidator) Validate(ng *autoscalerv1alpha1.NodeGroup, operatio
 
 	// Common validations for CREATE and UPDATE
 	if operation == admissionv1.Create || operation == admissionv1.Update {
+		// Validate namespace (must be kube-system)
+		if err := v.validateNamespace(ng); err != nil {
+			return err
+		}
+
 		// Validate min/max nodes
 		if err := v.validateNodeCount(ng); err != nil {
 			return err
@@ -107,6 +117,15 @@ func (v *NodeGroupValidator) validateNodeCount(ng *autoscalerv1alpha1.NodeGroup)
 			ng.Spec.MaxNodes, maxNodesLimit)
 	}
 
+	return nil
+}
+
+// validateNamespace validates that the NodeGroup is in the kube-system namespace
+func (v *NodeGroupValidator) validateNamespace(ng *autoscalerv1alpha1.NodeGroup) error {
+	if ng.Namespace != RequiredNamespace {
+		return fmt.Errorf("NodeGroup resources must be created in the %q namespace, got %q",
+			RequiredNamespace, ng.Namespace)
+	}
 	return nil
 }
 

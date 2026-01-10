@@ -34,6 +34,11 @@ func (v *VPSieNodeValidator) Validate(vn *autoscalerv1alpha1.VPSieNode, operatio
 
 	// Common validations for CREATE and UPDATE
 	if operation == admissionv1.Create || operation == admissionv1.Update {
+		// Validate namespace (must be kube-system)
+		if err := v.validateNamespace(vn); err != nil {
+			return err
+		}
+
 		// Validate NodeGroup reference
 		if err := v.validateNodeGroupRef(vn); err != nil {
 			return err
@@ -76,6 +81,15 @@ func (v *VPSieNodeValidator) Validate(vn *autoscalerv1alpha1.VPSieNode, operatio
 		}
 	}
 
+	return nil
+}
+
+// validateNamespace validates that the VPSieNode is in the kube-system namespace
+func (v *VPSieNodeValidator) validateNamespace(vn *autoscalerv1alpha1.VPSieNode) error {
+	if vn.Namespace != RequiredNamespace {
+		return fmt.Errorf("VPSieNode resources must be created in the %q namespace, got %q",
+			RequiredNamespace, vn.Namespace)
+	}
 	return nil
 }
 
