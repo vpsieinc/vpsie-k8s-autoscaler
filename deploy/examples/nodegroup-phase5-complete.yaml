@@ -2,7 +2,7 @@ apiVersion: autoscaler.vpsie.io/v1alpha1
 kind: NodeGroup
 metadata:
   name: production-workers-optimized
-  namespace: default
+  namespace: kube-system
   labels:
     environment: production
     tier: workers
@@ -146,7 +146,7 @@ apiVersion: autoscaler.vpsie.io/v1alpha1
 kind: NodeGroup
 metadata:
   name: critical-services
-  namespace: production
+  namespace: kube-system
 spec:
   minNodes: 3
   maxNodes: 10
@@ -175,7 +175,7 @@ apiVersion: autoscaler.vpsie.io/v1alpha1
 kind: NodeGroup
 metadata:
   name: batch-processors
-  namespace: batch
+  namespace: kube-system
 spec:
   minNodes: 0                           # Can scale to zero
   maxNodes: 100
@@ -210,7 +210,7 @@ apiVersion: autoscaler.vpsie.io/v1alpha1
 kind: NodeGroup
 metadata:
   name: global-api-servers
-  namespace: production
+  namespace: kube-system
 spec:
   minNodes: 9                           # 3 per region minimum
   maxNodes: 30
@@ -250,7 +250,7 @@ apiVersion: autoscaler.vpsie.io/v1alpha1
 kind: NodeGroup
 metadata:
   name: database-replicas
-  namespace: databases
+  namespace: kube-system
 spec:
   minNodes: 5
   maxNodes: 15
