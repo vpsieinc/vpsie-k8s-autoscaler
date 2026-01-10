@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"go.uber.org/zap"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -28,6 +29,7 @@ type ScaleUpController struct {
 	client   client.Client
 	analyzer *ResourceAnalyzer
 	watcher  *EventWatcher
+	creator  *DynamicNodeGroupCreator
 	logger   *zap.Logger
 }
 
@@ -36,12 +38,14 @@ func NewScaleUpController(
 	client client.Client,
 	analyzer *ResourceAnalyzer,
 	watcher *EventWatcher,
+	creator *DynamicNodeGroupCreator,
 	logger *zap.Logger,
 ) *ScaleUpController {
 	return &ScaleUpController{
 		client:   client,
 		analyzer: analyzer,
 		watcher:  watcher,
+		creator:  creator,
 		logger:   logger.Named("scale-up-controller"),
 	}
 }
@@ -72,21 +76,45 @@ func (c *ScaleUpController) HandleScaleUp(ctx context.Context, events []Scheduli
 		zap.Int("count", len(pendingPods)),
 	)
 
-	// Get all NodeGroups
+	// Get all managed NodeGroups
 	nodeGroups, err := c.watcher.GetNodeGroups(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get NodeGroups: %w", err)
 	}
 
-	if len(nodeGroups) == 0 {
-		c.logger.Warn("No NodeGroups available for scale-up")
-		return nil
-	}
-
 	// Find matching NodeGroups
 	matches := c.analyzer.FindMatchingNodeGroups(pendingPods, nodeGroups)
+
+	// If no suitable NodeGroup exists, try to create one dynamically
+	if len(matches) == 0 && c.creator != nil {
+		c.logger.Info("No suitable managed NodeGroups found, attempting dynamic creation",
+			zap.Int("pendingPods", len(pendingPods)),
+		)
+
+		// Try to create a NodeGroup for the first pending pod
+		// (additional pods with similar requirements will be handled by the new NodeGroup)
+		ng, err := c.createNodeGroupForPendingPods(ctx, pendingPods)
+		if err != nil {
+			c.logger.Error("Failed to create dynamic NodeGroup",
+				zap.Error(err),
+			)
+			return nil
+		}
+
+		if ng != nil {
+			c.logger.Info("Created dynamic NodeGroup",
+				zap.String("nodeGroup", ng.Name),
+				zap.String("namespace", ng.Namespace),
+			)
+
+			// Add the new NodeGroup to the list and re-find matches
+			nodeGroups = append(nodeGroups, *ng)
+			matches = c.analyzer.FindMatchingNodeGroups(pendingPods, nodeGroups)
+		}
+	}
+
 	if len(matches) == 0 {
-		c.logger.Warn("No NodeGroups match pending pod requirements")
+		c.logger.Warn("No NodeGroups match pending pod requirements (after dynamic creation attempt)")
 		return nil
 	}
 
@@ -306,4 +334,47 @@ func (c *ScaleUpController) GetScaleUpDecisions(
 	}
 
 	return decisions, nil
+}
+
+// SetCreator sets the DynamicNodeGroupCreator reference (for deferred initialization)
+func (c *ScaleUpController) SetCreator(creator *DynamicNodeGroupCreator) {
+	c.creator = creator
+}
+
+// createNodeGroupForPendingPods creates a dynamic NodeGroup for pending pods.
+// It groups pods by their scheduling requirements and creates a NodeGroup for the first group.
+func (c *ScaleUpController) createNodeGroupForPendingPods(
+	ctx context.Context,
+	pendingPods []corev1.Pod,
+) (*v1alpha1.NodeGroup, error) {
+	if c.creator == nil {
+		return nil, fmt.Errorf("dynamic NodeGroup creator not configured")
+	}
+
+	if len(pendingPods) == 0 {
+		return nil, nil
+	}
+
+	// Use the first pending pod as representative for the NodeGroup requirements
+	// Pods with similar requirements will be able to schedule on the same NodeGroup
+	pod := &pendingPods[0]
+
+	c.logger.Info("Creating dynamic NodeGroup for pending pod",
+		zap.String("pod", pod.Name),
+		zap.String("namespace", pod.Namespace),
+	)
+
+	// Create the NodeGroup in the same namespace as the first pending pod
+	// This ensures proper RBAC and resource isolation
+	namespace := pod.Namespace
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	ng, err := c.creator.CreateNodeGroupForPod(ctx, pod, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create NodeGroup for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+
+	return ng, nil
 }

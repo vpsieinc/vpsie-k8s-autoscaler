@@ -213,7 +213,7 @@ func TestMakeScaleUpDecision(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create fresh watcher and controller for each test to avoid cooldown state pollution
 			watcher := NewEventWatcher(k8sClient, clientset, logger, nil)
-			controller := NewScaleUpController(k8sClient, analyzer, watcher, logger)
+			controller := NewScaleUpController(k8sClient, analyzer, watcher, nil, logger)
 
 			// Set up cooldown state
 			if !tt.canScale {
@@ -265,7 +265,7 @@ func TestExecuteScaleUp(t *testing.T) {
 
 	analyzer := NewResourceAnalyzer(logger)
 	watcher := NewEventWatcher(k8sClient, clientset, logger, nil)
-	controller := NewScaleUpController(k8sClient, analyzer, watcher, logger)
+	controller := NewScaleUpController(k8sClient, analyzer, watcher, nil, logger)
 
 	decision := ScaleUpDecision{
 		NodeGroup:    ng,
@@ -404,7 +404,7 @@ func TestHandleScaleUp(t *testing.T) {
 
 	analyzer := NewResourceAnalyzer(logger)
 	watcher := NewEventWatcher(k8sClient, clientset, logger, nil)
-	controller := NewScaleUpController(k8sClient, analyzer, watcher, logger)
+	controller := NewScaleUpController(k8sClient, analyzer, watcher, nil, logger)
 
 	// Create scheduling events
 	events := []SchedulingEvent{
@@ -462,7 +462,7 @@ func TestHandleScaleUpNoPendingPods(t *testing.T) {
 
 	analyzer := NewResourceAnalyzer(logger)
 	watcher := NewEventWatcher(k8sClient, clientset, logger, nil)
-	controller := NewScaleUpController(k8sClient, analyzer, watcher, logger)
+	controller := NewScaleUpController(k8sClient, analyzer, watcher, nil, logger)
 
 	events := []SchedulingEvent{}
 
@@ -532,7 +532,7 @@ func TestHandleScaleUpNoMatchingNodeGroups(t *testing.T) {
 
 	analyzer := NewResourceAnalyzer(logger)
 	watcher := NewEventWatcher(k8sClient, clientset, logger, nil)
-	controller := NewScaleUpController(k8sClient, analyzer, watcher, logger)
+	controller := NewScaleUpController(k8sClient, analyzer, watcher, nil, logger)
 
 	events := []SchedulingEvent{
 		{
@@ -619,7 +619,7 @@ func TestGetScaleUpDecisions(t *testing.T) {
 
 	analyzer := NewResourceAnalyzer(logger)
 	watcher := NewEventWatcher(k8sClient, clientset, logger, nil)
-	controller := NewScaleUpController(k8sClient, analyzer, watcher, logger)
+	controller := NewScaleUpController(k8sClient, analyzer, watcher, nil, logger)
 
 	events := []SchedulingEvent{
 		{
