@@ -45,7 +45,11 @@ func IsManagedNodeGroup(ng *NodeGroup) bool {
 // SetNodeGroupManaged adds the managed label to a NodeGroup.
 // This function is idempotent - calling it multiple times has the same effect as calling it once.
 // If the NodeGroup has nil labels, a new labels map is created.
+// Does nothing if ng is nil.
 func SetNodeGroupManaged(ng *NodeGroup) {
+	if ng == nil {
+		return
+	}
 	if ng.Labels == nil {
 		ng.Labels = make(map[string]string)
 	}

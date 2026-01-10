@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 )
 
 // DynamicNodeGroupCreator creates NodeGroups dynamically when no suitable managed NodeGroup exists.
@@ -160,13 +161,34 @@ func (c *DynamicNodeGroupCreator) podToleratesTaints(pod *corev1.Pod, taints []c
 	return true
 }
 
+// ValidateTemplate checks if the template has all required fields for creating NodeGroups.
+// Returns an error if required fields are missing.
+func (c *DynamicNodeGroupCreator) ValidateTemplate() error {
+	if c.template.DefaultDatacenterID == "" {
+		return fmt.Errorf("template validation failed: DefaultDatacenterID is required")
+	}
+	if len(c.template.DefaultOfferingIDs) == 0 {
+		return fmt.Errorf("template validation failed: at least one DefaultOfferingID is required")
+	}
+	if c.template.ResourceIdentifier == "" {
+		return fmt.Errorf("template validation failed: ResourceIdentifier is required")
+	}
+	return nil
+}
+
 // CreateNodeGroupForPod creates a new NodeGroup to satisfy the pod's requirements.
 // The created NodeGroup is always marked with the managed label.
+// Returns an error if the template is not properly configured.
 func (c *DynamicNodeGroupCreator) CreateNodeGroupForPod(
 	ctx context.Context,
 	pod *corev1.Pod,
 	namespace string,
 ) (*v1alpha1.NodeGroup, error) {
+	// Validate template before creating NodeGroup
+	if err := c.ValidateTemplate(); err != nil {
+		return nil, err
+	}
+
 	if namespace == "" {
 		namespace = c.template.Namespace
 	}
@@ -196,8 +218,11 @@ func (c *DynamicNodeGroupCreator) CreateNodeGroupForPod(
 
 	// Create the NodeGroup
 	if err := c.client.Create(ctx, ng); err != nil {
+		metrics.DynamicNodeGroupCreationsTotal.WithLabelValues("failure", namespace).Inc()
 		return nil, fmt.Errorf("failed to create NodeGroup: %w", err)
 	}
+
+	metrics.DynamicNodeGroupCreationsTotal.WithLabelValues("success", namespace).Inc()
 
 	c.logger.Info("Created dynamic NodeGroup",
 		zap.String("nodeGroup", name),
@@ -209,14 +234,17 @@ func (c *DynamicNodeGroupCreator) CreateNodeGroupForPod(
 	return ng, nil
 }
 
-// generateNodeGroupName generates a unique name for a dynamically created NodeGroup
+// generateNodeGroupName generates a unique name for a dynamically created NodeGroup.
+// Uses UnixNano timestamp to prevent collisions when multiple NodeGroups are created
+// within the same second.
 func (c *DynamicNodeGroupCreator) generateNodeGroupName() string {
-	timestamp := time.Now().Unix()
+	timestamp := time.Now().UnixNano()
 	datacenter := c.template.DefaultDatacenterID
 	if datacenter == "" {
 		datacenter = "default"
 	}
-	return fmt.Sprintf("auto-%s-%d", datacenter, timestamp)
+	// Use last 10 digits of nanoseconds for reasonable uniqueness while keeping name short
+	return fmt.Sprintf("auto-%s-%d", datacenter, timestamp%10000000000)
 }
 
 // buildNodeGroupSpec builds a NodeGroup spec based on pod requirements

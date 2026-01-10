@@ -554,6 +554,59 @@ var (
 		},
 		[]string{"event_type", "category", "severity"},
 	)
+
+	// Dynamic NodeGroup Metrics
+
+	// DynamicNodeGroupCreationsTotal tracks dynamic NodeGroup creation attempts
+	DynamicNodeGroupCreationsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "dynamic_nodegroup_creations_total",
+			Help:      "Total number of dynamic NodeGroup creation attempts",
+		},
+		[]string{"result", "namespace"}, // result: success, failure
+	)
+
+	// EventWatcher Metrics
+
+	// EventBufferSize tracks the current size of the event buffer
+	EventBufferSize = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Name:      "event_buffer_size",
+			Help:      "Current number of scheduling events in the buffer",
+		},
+	)
+
+	// EventBufferDropped tracks the number of events dropped due to buffer overflow
+	EventBufferDropped = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "event_buffer_dropped_total",
+			Help:      "Total number of events dropped due to buffer overflow",
+		},
+	)
+
+	// ScaleUpDecisionsTotal tracks scale-up decisions made
+	ScaleUpDecisionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "scale_up_decisions_total",
+			Help:      "Total number of scale-up decisions made",
+		},
+		[]string{"nodegroup", "namespace", "result"}, // result: executed, skipped_cooldown, skipped_max_capacity
+	)
+
+	// ScaleUpDecisionNodesRequested tracks nodes requested in scale-up decisions
+	ScaleUpDecisionNodesRequested = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Name:      "scale_up_decision_nodes_requested",
+			Help:      "Number of nodes requested in scale-up decisions",
+			Buckets:   prometheus.LinearBuckets(1, 1, 10), // 1 to 10 nodes
+		},
+		[]string{"nodegroup", "namespace"},
+	)
 )
 
 // RegisterMetrics registers all metrics with the controller-runtime metrics registry
@@ -615,6 +668,12 @@ func RegisterMetrics() {
 		CredentialValid,
 		// Phase 5 Security Metrics - Audit Logging
 		AuditEventsTotal,
+		// Dynamic NodeGroup and Event Watcher Metrics
+		DynamicNodeGroupCreationsTotal,
+		EventBufferSize,
+		EventBufferDropped,
+		ScaleUpDecisionsTotal,
+		ScaleUpDecisionNodesRequested,
 	)
 }
 
@@ -665,4 +724,8 @@ func ResetMetrics() {
 	NodeUtilizationCPU.Reset()
 	NodeUtilizationMemory.Reset()
 	NodeGroupCostCurrent.Reset()
+	// Dynamic NodeGroup and Event Watcher Metrics
+	DynamicNodeGroupCreationsTotal.Reset()
+	ScaleUpDecisionsTotal.Reset()
+	ScaleUpDecisionNodesRequested.Reset()
 }

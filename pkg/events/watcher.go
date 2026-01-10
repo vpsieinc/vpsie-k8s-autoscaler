@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 )
 
 const (
@@ -30,8 +31,31 @@ const (
 	// DefaultEventBufferSize is the default size of the event buffer
 	DefaultEventBufferSize = 100
 
+	// MaxEventBufferSize is the maximum size of the event buffer to prevent unbounded growth
+	MaxEventBufferSize = 1000
+
 	// EventProcessInterval is how often to process accumulated events
 	EventProcessInterval = 5 * time.Second
+)
+
+// Pre-compiled regex patterns for parseConstraint to avoid repeated compilation
+var (
+	// Pod count patterns
+	podsPatternRe = regexp.MustCompile(`too many pods|maximum number of pods`)
+
+	// Resource patterns
+	cpuPatternRe    = regexp.MustCompile(`insufficient.*cpu`)
+	memoryPatternRe = regexp.MustCompile(`insufficient.*memory`)
+
+	// Taint patterns
+	taintPatternRe = regexp.MustCompile(`untolerated taint|had taint|taints that the pod didn't tolerate`)
+
+	// Affinity/Anti-affinity patterns
+	antiAffinityPatternRe = regexp.MustCompile(`anti-affinity|didn't match pod anti-affinity|pod anti-affinity`)
+	affinityPatternRe     = regexp.MustCompile(`pod affinity|didn't match pod affinity`)
+
+	// Node selector patterns
+	nodeSelectorPatternRe = regexp.MustCompile(`node selector|didn't match pod's node selector|didn't match pod requirements|no nodes available|nodes are available`)
 )
 
 // ResourceConstraint represents a type of resource constraint
@@ -203,9 +227,19 @@ func (w *EventWatcher) handleEvent(ctx context.Context, event *corev1.Event) {
 		Message:    event.Message,
 	}
 
-	// Add to buffer
+	// Add to buffer with size limit to prevent unbounded growth
 	w.eventBufferMu.Lock()
+	if len(w.eventBuffer) >= MaxEventBufferSize {
+		// Drop oldest event to make room
+		w.logger.Warn("Event buffer full, dropping oldest event",
+			zap.Int("bufferSize", len(w.eventBuffer)),
+			zap.Int("maxSize", MaxEventBufferSize),
+		)
+		w.eventBuffer = w.eventBuffer[1:]
+		metrics.EventBufferDropped.Inc()
+	}
 	w.eventBuffer = append(w.eventBuffer, schedEvent)
+	metrics.EventBufferSize.Set(float64(len(w.eventBuffer)))
 	w.eventBufferMu.Unlock()
 }
 
@@ -213,6 +247,11 @@ func (w *EventWatcher) handleEvent(ctx context.Context, event *corev1.Event) {
 func (w *EventWatcher) processEventsLoop(ctx context.Context) {
 	ticker := time.NewTicker(EventProcessInterval)
 	defer ticker.Stop()
+
+	// Cleanup ticker runs less frequently (2x stabilization window)
+	cleanupInterval := 2 * w.stabilizationWindow
+	cleanupTicker := time.NewTicker(cleanupInterval)
+	defer cleanupTicker.Stop()
 
 	for {
 		select {
@@ -222,7 +261,33 @@ func (w *EventWatcher) processEventsLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			w.processEvents(ctx)
+		case <-cleanupTicker.C:
+			w.cleanupLastScaleTime()
 		}
+	}
+}
+
+// cleanupLastScaleTime removes stale entries from the lastScaleTime map.
+// Entries older than 2x stabilization window are removed to prevent memory leaks.
+func (w *EventWatcher) cleanupLastScaleTime() {
+	w.lastScaleTimeMu.Lock()
+	defer w.lastScaleTimeMu.Unlock()
+
+	cutoff := time.Now().Add(-2 * w.stabilizationWindow)
+	removed := 0
+
+	for name, lastScale := range w.lastScaleTime {
+		if lastScale.Before(cutoff) {
+			delete(w.lastScaleTime, name)
+			removed++
+		}
+	}
+
+	if removed > 0 {
+		w.logger.Debug("Cleaned up stale lastScaleTime entries",
+			zap.Int("removed", removed),
+			zap.Int("remaining", len(w.lastScaleTime)),
+		)
 	}
 }
 
@@ -238,6 +303,7 @@ func (w *EventWatcher) processEvents(ctx context.Context) {
 	events := make([]SchedulingEvent, len(w.eventBuffer))
 	copy(events, w.eventBuffer)
 	w.eventBuffer = w.eventBuffer[:0]
+	metrics.EventBufferSize.Set(0)
 	w.eventBufferMu.Unlock()
 
 	w.logger.Info("Processing scheduling failure events",
@@ -298,105 +364,46 @@ func (w *EventWatcher) CanScale(nodeGroupName string) bool {
 	return cooldown >= w.stabilizationWindow
 }
 
-// parseConstraint extracts the resource constraint type from event message
+// parseConstraint extracts the resource constraint type from event message.
+// Uses pre-compiled regex patterns for efficiency since this is called for every event.
 func parseConstraint(message string) ResourceConstraint {
 	message = strings.ToLower(message)
 
-	// Common patterns in FailedScheduling messages
-	// Check in order of specificity
-
-	// Pod count patterns
-	podsPatterns := []string{
-		"too many pods",
-		"maximum number of pods",
-	}
-
-	// Resource patterns
-	cpuPatterns := []string{
-		"insufficient cpu",
-		"insufficient.*cpu",
-	}
-
-	memoryPatterns := []string{
-		"insufficient memory",
-		"insufficient.*memory",
-	}
-
-	// Affinity/Anti-affinity patterns
-	antiAffinityPatterns := []string{
-		"anti-affinity",
-		"didn't match pod anti-affinity",
-		"pod anti-affinity",
-	}
-
-	affinityPatterns := []string{
-		"pod affinity",
-		"didn't match pod affinity",
-	}
-
-	// Taint patterns
-	taintPatterns := []string{
-		"untolerated taint",
-		"had taint",
-		"taints that the pod didn't tolerate",
-	}
-
-	// Node selector patterns
-	nodeSelectorPatterns := []string{
-		"node selector",
-		"didn't match pod's node selector",
-		"didn't match pod requirements",
-		"no nodes available",
-		"nodes are available",
-	}
+	// Check in order of specificity using pre-compiled patterns
 
 	// Check pods first (most specific resource constraint)
-	for _, pattern := range podsPatterns {
-		if matched, _ := regexp.MatchString(pattern, message); matched {
-			return ConstraintPods
-		}
+	if podsPatternRe.MatchString(message) {
+		return ConstraintPods
 	}
 
 	// Check CPU
-	for _, pattern := range cpuPatterns {
-		if matched, _ := regexp.MatchString(pattern, message); matched {
-			return ConstraintCPU
-		}
+	if cpuPatternRe.MatchString(message) {
+		return ConstraintCPU
 	}
 
 	// Check memory
-	for _, pattern := range memoryPatterns {
-		if matched, _ := regexp.MatchString(pattern, message); matched {
-			return ConstraintMemory
-		}
+	if memoryPatternRe.MatchString(message) {
+		return ConstraintMemory
 	}
 
-	// Check taints first (often combined with affinity in messages)
-	for _, pattern := range taintPatterns {
-		if matched, _ := regexp.MatchString(pattern, message); matched {
-			return ConstraintTaint
-		}
+	// Check taints (often combined with affinity in messages)
+	if taintPatternRe.MatchString(message) {
+		return ConstraintTaint
 	}
 
 	// Check anti-affinity (before affinity since anti-affinity contains "affinity")
-	for _, pattern := range antiAffinityPatterns {
-		if matched, _ := regexp.MatchString(pattern, message); matched {
-			return ConstraintAntiAffinity
-		}
+	if antiAffinityPatternRe.MatchString(message) {
+		return ConstraintAntiAffinity
 	}
 
 	// Check affinity
-	for _, pattern := range affinityPatterns {
-		if matched, _ := regexp.MatchString(pattern, message); matched {
-			return ConstraintAffinity
-		}
+	if affinityPatternRe.MatchString(message) {
+		return ConstraintAffinity
 	}
 
 	// Check node selector
-	for _, pattern := range nodeSelectorPatterns {
-		if matched, _ := regexp.MatchString(pattern, message); matched {
-			return ConstraintNodeSelector
-		}
+	if nodeSelectorPatternRe.MatchString(message) {
+		return ConstraintNodeSelector
 	}
 
 	return ConstraintUnknown

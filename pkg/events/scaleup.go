@@ -10,6 +10,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 )
 
 // ScaleUpDecision represents a decision to scale up a NodeGroup
@@ -170,6 +171,7 @@ func (c *ScaleUpController) makeScaleUpDecision(
 		c.logger.Debug("NodeGroup is in cooldown period",
 			zap.String("nodeGroup", ng.Name),
 		)
+		metrics.ScaleUpDecisionsTotal.WithLabelValues(ng.Name, ng.Namespace, "skipped_cooldown").Inc()
 		return nil, nil
 	}
 
@@ -180,6 +182,7 @@ func (c *ScaleUpController) makeScaleUpDecision(
 			zap.Int32("desiredNodes", ng.Status.DesiredNodes),
 			zap.Int32("maxNodes", ng.Spec.MaxNodes),
 		)
+		metrics.ScaleUpDecisionsTotal.WithLabelValues(ng.Name, ng.Namespace, "skipped_max_capacity").Inc()
 		return nil, nil
 	}
 
@@ -222,6 +225,10 @@ func (c *ScaleUpController) makeScaleUpDecision(
 		zap.String("instanceType", instanceType),
 		zap.Int("matchingPods", len(match.MatchingPods)),
 	)
+
+	// Emit metrics for scale-up decision
+	metrics.ScaleUpDecisionsTotal.WithLabelValues(ng.Name, ng.Namespace, "executed").Inc()
+	metrics.ScaleUpDecisionNodesRequested.WithLabelValues(ng.Name, ng.Namespace).Observe(float64(nodesToAdd))
 
 	return &ScaleUpDecision{
 		NodeGroup:    ng,

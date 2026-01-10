@@ -256,6 +256,8 @@ func TestCreateNodeGroupForPod(t *testing.T) {
 			MinNodes:            1,
 			MaxNodes:            5,
 			DefaultDatacenterID: "dc-test",
+			DefaultOfferingIDs:  []string{"offering-1"},
+			ResourceIdentifier:  "test-cluster",
 		}
 		creator := NewDynamicNodeGroupCreator(fakeClient, logger, template)
 
@@ -289,7 +291,15 @@ func TestCreateNodeGroupForPod(t *testing.T) {
 
 	t.Run("Copies pod node selector to NodeGroup labels", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-		creator := NewDynamicNodeGroupCreator(fakeClient, logger, nil)
+		template := &NodeGroupTemplate{
+			Namespace:           "default",
+			MinNodes:            1,
+			MaxNodes:            10,
+			DefaultDatacenterID: "dc-default",
+			DefaultOfferingIDs:  []string{"offering-1"},
+			ResourceIdentifier:  "test-cluster",
+		}
+		creator := NewDynamicNodeGroupCreator(fakeClient, logger, template)
 
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-pod"},
@@ -317,7 +327,15 @@ func TestCreateNodeGroupForPod(t *testing.T) {
 
 	t.Run("Extracts taints from pod tolerations", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-		creator := NewDynamicNodeGroupCreator(fakeClient, logger, nil)
+		template := &NodeGroupTemplate{
+			Namespace:           "default",
+			MinNodes:            1,
+			MaxNodes:            10,
+			DefaultDatacenterID: "dc-default",
+			DefaultOfferingIDs:  []string{"offering-1"},
+			ResourceIdentifier:  "test-cluster",
+		}
+		creator := NewDynamicNodeGroupCreator(fakeClient, logger, template)
 
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-pod"},
@@ -411,4 +429,63 @@ func TestIsSystemToleration(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateTemplate(t *testing.T) {
+	scheme := runtime.NewScheme()
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	logger := zap.NewNop()
+
+	t.Run("Valid template passes validation", func(t *testing.T) {
+		template := &NodeGroupTemplate{
+			DefaultDatacenterID: "dc-1",
+			DefaultOfferingIDs:  []string{"offering-1"},
+			ResourceIdentifier:  "test-cluster",
+		}
+		creator := NewDynamicNodeGroupCreator(fakeClient, logger, template)
+
+		err := creator.ValidateTemplate()
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+	})
+
+	t.Run("Missing DatacenterID fails validation", func(t *testing.T) {
+		template := &NodeGroupTemplate{
+			DefaultOfferingIDs: []string{"offering-1"},
+			ResourceIdentifier: "test-cluster",
+		}
+		creator := NewDynamicNodeGroupCreator(fakeClient, logger, template)
+
+		err := creator.ValidateTemplate()
+		if err == nil {
+			t.Error("Expected error for missing DatacenterID")
+		}
+	})
+
+	t.Run("Missing OfferingIDs fails validation", func(t *testing.T) {
+		template := &NodeGroupTemplate{
+			DefaultDatacenterID: "dc-1",
+			ResourceIdentifier:  "test-cluster",
+		}
+		creator := NewDynamicNodeGroupCreator(fakeClient, logger, template)
+
+		err := creator.ValidateTemplate()
+		if err == nil {
+			t.Error("Expected error for missing OfferingIDs")
+		}
+	})
+
+	t.Run("Missing ResourceIdentifier fails validation", func(t *testing.T) {
+		template := &NodeGroupTemplate{
+			DefaultDatacenterID: "dc-1",
+			DefaultOfferingIDs:  []string{"offering-1"},
+		}
+		creator := NewDynamicNodeGroupCreator(fakeClient, logger, template)
+
+		err := creator.ValidateTemplate()
+		if err == nil {
+			t.Error("Expected error for missing ResourceIdentifier")
+		}
+	})
 }
