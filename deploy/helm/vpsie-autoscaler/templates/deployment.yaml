@@ -31,8 +31,8 @@ spec:
       serviceAccountName: {{ include "vpsie-autoscaler.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
-      {{- if .Values.priorityClassName }}
-      priorityClassName: {{ .Values.priorityClassName }}
+      {{- if or .Values.priorityClassName .Values.priorityClass.create }}
+      priorityClassName: {{ .Values.priorityClassName | default "system-vpsie-autoscaler" }}
       {{- end }}
       containers:
       - name: controller

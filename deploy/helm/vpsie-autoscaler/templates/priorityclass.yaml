@@ -1,0 +1,11 @@
+{{- if .Values.priorityClass.create }}
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ .Values.priorityClassName | default "system-vpsie-autoscaler" }}
+  labels:
+    {{- include "vpsie-autoscaler.labels" . | nindent 4 }}
+value: 1000000
+globalDefault: false
+description: "Priority class for VPSie Kubernetes Autoscaler - high priority but below system-critical"
+{{- end }}
