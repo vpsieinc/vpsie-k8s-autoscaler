@@ -297,15 +297,43 @@ func (r *NodeGroupReconciler) reconcileIntelligentScaleDown(
 		zap.Int("candidateCount", len(candidates)),
 	)
 
-	// Perform intelligent scale-down with safety checks
+	// Perform intelligent scale-down with safety checks (drains nodes)
 	if err := r.ScaleDownManager.ScaleDown(ctx, ng, candidates); err != nil {
 		logger.Error("Intelligent scale-down failed", zap.Error(err))
 		SetErrorCondition(ng, true, ReasonScaleDownFailed, fmt.Sprintf("Scale-down failed: %v", err))
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Intelligent scale-down completed successfully",
-		zap.Int("nodesRemoved", len(candidates)),
+	// After successful drain, delete the corresponding VPSieNode CRs
+	// The VPSieNode controller will handle VM termination and K8s node deletion
+	deletedCount := 0
+	for _, candidate := range candidates {
+		// Find the VPSieNode CR for this node
+		for _, vn := range vpsieNodes {
+			if vn.Status.NodeName == candidate.Node.Name {
+				logger.Info("Deleting VPSieNode after successful drain",
+					zap.String("vpsienode", vn.Name),
+					zap.String("nodeName", candidate.Node.Name),
+				)
+
+				if err := r.Delete(ctx, &vn); err != nil {
+					logger.Error("Failed to delete VPSieNode",
+						zap.String("vpsienode", vn.Name),
+						zap.Error(err),
+					)
+					// Continue with other nodes - don't fail entire operation
+					continue
+				}
+
+				deletedCount++
+				break
+			}
+		}
+	}
+
+	logger.Info("Intelligent scale-down completed",
+		zap.Int("nodesDrained", len(candidates)),
+		zap.Int("vpsieNodesDeleted", deletedCount),
 	)
 
 	// Requeue to verify scale-down progress
