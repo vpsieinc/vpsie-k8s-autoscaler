@@ -114,6 +114,15 @@ func (s *ScaleDownManager) IsSafeToRemove(
 // hasPodsWithLocalStorage checks if any pods use local storage volumes
 func (s *ScaleDownManager) hasPodsWithLocalStorage(ctx context.Context, pods []*corev1.Pod) (bool, string) {
 	for _, pod := range pods {
+		// Skip DaemonSet pods from system namespaces - they will be recreated on other nodes
+		// and their EmptyDir data is typically ephemeral (logs, caches, etc.)
+		if s.isSkippableDaemonSetPod(pod) {
+			s.logger.Debug("skipping DaemonSet pod from local storage check",
+				"pod", pod.Name,
+				"namespace", pod.Namespace)
+			continue
+		}
+
 		for _, volume := range pod.Spec.Volumes {
 			// Check for EmptyDir volumes
 			if volume.EmptyDir != nil {
@@ -146,6 +155,38 @@ func (s *ScaleDownManager) hasPodsWithLocalStorage(ctx context.Context, pods []*
 	}
 
 	return false, ""
+}
+
+// isSkippableDaemonSetPod checks if a pod is a DaemonSet pod from a system namespace
+// that can be safely skipped during local storage checks. DaemonSet pods will be
+// automatically recreated on other nodes and typically use EmptyDir for ephemeral data.
+func (s *ScaleDownManager) isSkippableDaemonSetPod(pod *corev1.Pod) bool {
+	// Check if pod is owned by a DaemonSet
+	isDaemonSet := false
+	for _, owner := range pod.OwnerReferences {
+		if owner.Kind == "DaemonSet" {
+			isDaemonSet = true
+			break
+		}
+	}
+
+	if !isDaemonSet {
+		return false
+	}
+
+	// System namespaces where DaemonSet pods can be safely evicted
+	systemNamespaces := map[string]bool{
+		"kube-system":     true,
+		"kube-public":     true,
+		"kube-node-lease": true,
+		"cilium":          true,
+		"calico-system":   true,
+		"flannel":         true,
+		"weave-net":       true,
+		"tigera-operator": true,
+	}
+
+	return systemNamespaces[pod.Namespace]
 }
 
 // isPVCLocal checks if a PVC is backed by a local volume

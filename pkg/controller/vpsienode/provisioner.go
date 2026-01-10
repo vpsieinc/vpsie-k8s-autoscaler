@@ -93,7 +93,22 @@ func (p *Provisioner) createVPS(ctx context.Context, vn *v1alpha1.VPSieNode, log
 					DiskGB:   vps.Disk,
 				}
 
-				// Continue with normal provisioning flow
+				// For K8s-managed nodes (VPS ID=0 but IP exists), skip VPS status check
+				// The K8s node exists and is running, so go directly to Provisioned
+				if vps.ID == 0 && vps.IPAddress != "" {
+					logger.Info("K8s-managed node discovered, transitioning to Provisioned",
+						zap.String("vpsienode", vn.Name),
+						zap.String("hostname", vps.Hostname),
+						zap.String("ip", vps.IPAddress),
+					)
+					SetPhase(vn, v1alpha1.VPSieNodePhaseProvisioned, ReasonProvisioned, "K8s node is running")
+					SetVPSReadyCondition(vn, true, ReasonProvisioned, "K8s node is running")
+					now := metav1.Now()
+					vn.Status.ProvisionedAt = &now
+					return ctrl.Result{RequeueAfter: FastRequeueAfter}, nil
+				}
+
+				// Continue with normal provisioning flow for VMs with VPS ID
 				return p.checkVPSStatus(ctx, vn, logger)
 			}
 		}

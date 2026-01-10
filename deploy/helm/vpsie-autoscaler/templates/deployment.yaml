@@ -15,7 +15,9 @@ spec:
   template:
     metadata:
       annotations:
+        {{- if and (not .Values.vpsie.existingSecret) .Values.vpsie.apiToken }}
         checksum/config: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -46,57 +48,27 @@ spec:
         - --metrics-addr={{ .Values.controller.metricsAddr }}
         - --health-addr={{ .Values.controller.healthAddr }}
         {{- if .Values.controller.leaderElection.enabled }}
-        - --leader-elect=true
+        - --leader-election=true
         - --leader-election-id={{ .Values.controller.leaderElection.id }}
         {{- if .Values.controller.leaderElection.namespace }}
         - --leader-election-namespace={{ .Values.controller.leaderElection.namespace }}
         {{- end }}
         {{- end }}
         - --sync-period={{ .Values.controller.syncPeriod }}
-        - --max-concurrent-reconciles={{ .Values.controller.maxConcurrentReconciles }}
-        - --node-provision-timeout={{ .Values.controller.nodeProvisionTimeout }}
-        - --node-termination-timeout={{ .Values.controller.nodeTerminationTimeout }}
-        {{- if .Values.costOptimization.enabled }}
-        - --cost-optimization=true
-        - --cost-optimization-strategy={{ .Values.costOptimization.strategy }}
-        - --cost-optimization-interval={{ .Values.costOptimization.optimizationInterval }}
-        {{- end }}
-        {{- if .Values.rebalancing.enabled }}
-        - --rebalancing=true
-        - --rebalancing-interval={{ .Values.rebalancing.interval }}
-        - --rebalancing-max-concurrent={{ .Values.rebalancing.maxConcurrent }}
-        {{- end }}
-        {{- if .Values.spotInstances.enabled }}
-        - --spot-instances=true
-        - --spot-grace-period={{ .Values.spotInstances.gracePeriod }}
-        {{- end }}
+        - --vpsie-secret-name={{ include "vpsie-autoscaler.secretName" . }}
+        - --vpsie-secret-namespace={{ .Release.Namespace }}
         {{- with .Values.extraArgs }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
         env:
-        - name: VPSIE_API_URL
-          value: {{ .Values.vpsie.apiURL | quote }}
-        {{- if not .Values.vpsie.existingSecret }}
-        - name: VPSIE_API_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: {{ include "vpsie-autoscaler.secretName" . }}
-              key: token
-        {{- else }}
-        - name: VPSIE_API_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: {{ .Values.vpsie.existingSecret }}
-              key: token
-        {{- end }}
-        - name: VPSIE_RATE_LIMIT
-          value: {{ .Values.vpsie.rateLimit | quote }}
-        - name: VPSIE_TIMEOUT
-          value: {{ .Values.vpsie.timeout | quote }}
         - name: POD_NAMESPACE
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
+        - name: VPSIE_SECRET_NAME
+          value: {{ include "vpsie-autoscaler.secretName" . | quote }}
+        - name: VPSIE_SECRET_NAMESPACE
+          value: {{ .Release.Namespace | quote }}
         {{- with .Values.env }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

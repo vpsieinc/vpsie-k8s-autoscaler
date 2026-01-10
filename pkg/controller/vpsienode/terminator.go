@@ -112,7 +112,9 @@ func (t *Terminator) DeleteVPS(ctx context.Context, vn *v1alpha1.VPSieNode, logg
 		logger.Info("No VPS ID set, skipping VPS deletion",
 			zap.String("vpsienode", vn.Name),
 		)
-		// No VPS to delete, termination is complete
+		// No VPS to delete, mark termination as complete
+		now := metav1.Now()
+		vn.Status.DeletedAt = &now
 		return ctrl.Result{}, nil
 	}
 

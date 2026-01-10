@@ -164,7 +164,7 @@ func (s *ScaleDownManager) IdentifyUnderutilizedNodes(
 
 	// NodeGroup isolation: Defensive check to ensure only managed NodeGroups are processed
 	if !autoscalerv1alpha1.IsManagedNodeGroup(nodeGroup) {
-		s.logger.Warnw("skipping unmanaged NodeGroup in scale-down",
+		s.logger.Debugw("skipping unmanaged NodeGroup in scale-down",
 			"nodeGroup", nodeGroup.Name,
 			"labels", nodeGroup.Labels)
 		return nil, nil

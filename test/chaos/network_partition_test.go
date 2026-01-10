@@ -338,11 +338,11 @@ func TestNetworkPartition_GradualDegradation(t *testing.T) {
 				latency   time.Duration
 				errorRate float64
 			}{
-				{0, 0},                          // Good
-				{100 * time.Millisecond, 0.1},   // Slight degradation
-				{500 * time.Millisecond, 0.3},   // Moderate degradation
-				{1 * time.Second, 0.5},          // Significant degradation
-				{2 * time.Second, 0.8},          // Severe degradation
+				{0, 0},                        // Good
+				{100 * time.Millisecond, 0.1}, // Slight degradation
+				{500 * time.Millisecond, 0.3}, // Moderate degradation
+				{1 * time.Second, 0.5},        // Significant degradation
+				{2 * time.Second, 0.8},        // Severe degradation
 			}
 
 			for i, level := range levels {

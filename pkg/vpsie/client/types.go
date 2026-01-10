@@ -273,23 +273,23 @@ type AddK8sSlaveRequest struct {
 
 // K8sNodeGroup represents a node group in a VPSie K8s cluster
 type K8sNodeGroup struct {
-	ID              int    `json:"id"`         // Numeric ID used for API calls
-	GroupName       string `json:"group_name"` // Display name
-	Identifier      string `json:"identifier"` // UUID identifier
-	BoxsizeID       int    `json:"boxsize_id"` // K8s size/package ID
-	DatacenterID    int    `json:"datacenter_id"`
-	DCIdentifier    string `json:"dcIdentifier"` // Datacenter UUID
-	RAM             int    `json:"ram"`          // RAM in MB
-	CPU             int    `json:"cpu"`          // CPU cores
-	SSD             int    `json:"ssd"`          // Disk in GB
-	Traffic         int    `json:"traffic"`      // Bandwidth
-	NodesCount      int    `json:"nodes_count"`  // Number of nodes in group
-	ClusterID       int    `json:"cluster_id"`
-	ProjectID       int    `json:"project_id"`
-	IsActive        int    `json:"is_active"`
-	IsDeleted       int    `json:"is_deleted"`
-	CreatedOn       string `json:"created_on"`
-	LastUpdated     string `json:"last_updated"`
+	ID           int    `json:"id"`         // Numeric ID used for API calls
+	GroupName    string `json:"group_name"` // Display name
+	Identifier   string `json:"identifier"` // UUID identifier
+	BoxsizeID    int    `json:"boxsize_id"` // K8s size/package ID
+	DatacenterID int    `json:"datacenter_id"`
+	DCIdentifier string `json:"dcIdentifier"` // Datacenter UUID
+	RAM          int    `json:"ram"`          // RAM in MB
+	CPU          int    `json:"cpu"`          // CPU cores
+	SSD          int    `json:"ssd"`          // Disk in GB
+	Traffic      int    `json:"traffic"`      // Bandwidth
+	NodesCount   int    `json:"nodes_count"`  // Number of nodes in group
+	ClusterID    int    `json:"cluster_id"`
+	ProjectID    int    `json:"project_id"`
+	IsActive     int    `json:"is_active"`
+	IsDeleted    int    `json:"is_deleted"`
+	CreatedOn    string `json:"created_on"`
+	LastUpdated  string `json:"last_updated"`
 }
 
 // ListK8sNodeGroupsResponse represents the response from listing K8s node groups

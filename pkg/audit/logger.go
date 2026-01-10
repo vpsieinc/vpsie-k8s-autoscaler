@@ -66,11 +66,11 @@ type ResourceInfo struct {
 
 // AuditLogger handles audit event logging
 type AuditLogger struct {
-	logger        *zap.Logger
-	enabled       bool
-	mu            sync.RWMutex
-	defaultActor  string
-	eventSinks    []EventSink
+	logger       *zap.Logger
+	enabled      bool
+	mu           sync.RWMutex
+	defaultActor string
+	eventSinks   []EventSink
 }
 
 // EventSink defines an interface for custom audit event destinations
@@ -331,8 +331,8 @@ func (a *AuditLogger) LogScaleUp(ctx context.Context, nodeGroupName, namespace s
 			Namespace: namespace,
 		},
 		Details: map[string]interface{}{
-			"fromCount": fromCount,
-			"toCount":   toCount,
+			"fromCount":  fromCount,
+			"toCount":    toCount,
 			"nodesAdded": toCount - fromCount,
 		},
 	})
