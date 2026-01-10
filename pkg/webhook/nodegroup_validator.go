@@ -8,6 +8,7 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 
 	autoscalerv1alpha1 "github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 )
 
 const (
@@ -144,6 +145,7 @@ func (v *NodeGroupValidator) validateNodeCount(ng *autoscalerv1alpha1.NodeGroup)
 // validateNamespace validates that the NodeGroup is in the kube-system namespace
 func (v *NodeGroupValidator) validateNamespace(ng *autoscalerv1alpha1.NodeGroup) error {
 	if ng.Namespace != RequiredNamespace {
+		metrics.WebhookNamespaceValidationRejectionsTotal.WithLabelValues("NodeGroup", ng.Namespace).Inc()
 		return fmt.Errorf("NodeGroup resources must be created in the %q namespace, got %q",
 			RequiredNamespace, ng.Namespace)
 	}

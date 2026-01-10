@@ -8,6 +8,7 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 
 	autoscalerv1alpha1 "github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 )
 
 // Package-level compiled regular expressions for VPSieNode validation
@@ -100,6 +101,7 @@ func (v *VPSieNodeValidator) Validate(vn *autoscalerv1alpha1.VPSieNode, operatio
 // validateNamespace validates that the VPSieNode is in the kube-system namespace
 func (v *VPSieNodeValidator) validateNamespace(vn *autoscalerv1alpha1.VPSieNode) error {
 	if vn.Namespace != RequiredNamespace {
+		metrics.WebhookNamespaceValidationRejectionsTotal.WithLabelValues("VPSieNode", vn.Namespace).Inc()
 		return fmt.Errorf("VPSieNode resources must be created in the %q namespace, got %q",
 			RequiredNamespace, vn.Namespace)
 	}

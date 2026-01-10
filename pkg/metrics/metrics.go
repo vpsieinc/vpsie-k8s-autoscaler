@@ -607,6 +607,18 @@ var (
 		},
 		[]string{"nodegroup", "namespace"},
 	)
+
+	// WebhookNamespaceValidationRejectionsTotal tracks namespace validation rejections in webhooks
+	WebhookNamespaceValidationRejectionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "webhook_namespace_validation_rejections_total",
+			Help:      "Total number of webhook namespace validation rejections",
+		},
+		[]string{"resource_type", "namespace"},
+		// resource_type: NodeGroup, VPSieNode
+		// namespace: the rejected namespace
+	)
 )
 
 // RegisterMetrics registers all metrics with the controller-runtime metrics registry
@@ -674,6 +686,8 @@ func RegisterMetrics() {
 		EventBufferDropped,
 		ScaleUpDecisionsTotal,
 		ScaleUpDecisionNodesRequested,
+		// Webhook Metrics
+		WebhookNamespaceValidationRejectionsTotal,
 	)
 }
 
@@ -728,4 +742,6 @@ func ResetMetrics() {
 	DynamicNodeGroupCreationsTotal.Reset()
 	ScaleUpDecisionsTotal.Reset()
 	ScaleUpDecisionNodesRequested.Reset()
+	// Webhook Metrics
+	WebhookNamespaceValidationRejectionsTotal.Reset()
 }
