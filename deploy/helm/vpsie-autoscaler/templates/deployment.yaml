@@ -32,7 +32,7 @@ spec:
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       {{- if or .Values.priorityClassName .Values.priorityClass.create }}
-      priorityClassName: {{ .Values.priorityClassName | default "system-vpsie-autoscaler" }}
+      priorityClassName: {{ .Values.priorityClassName | default "vpsie-autoscaler-critical" }}
       {{- end }}
       containers:
       - name: controller

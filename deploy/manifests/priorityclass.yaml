@@ -2,7 +2,7 @@
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
-  name: system-vpsie-autoscaler
+  name: vpsie-autoscaler-critical
   labels:
     app: vpsie-autoscaler
     component: controller

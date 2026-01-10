@@ -23,7 +23,7 @@ spec:
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: vpsie-autoscaler-controller
-      priorityClassName: system-vpsie-autoscaler
+      priorityClassName: vpsie-autoscaler-critical
       containers:
       - name: controller
         image: vpsie/k8s-autoscaler:latest
