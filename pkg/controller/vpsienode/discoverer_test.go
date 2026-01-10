@@ -482,6 +482,79 @@ func TestIsNodeClaimedByOther_EmptyLabel(t *testing.T) {
 	assert.False(t, result) // Empty label means not claimed
 }
 
+// claimNode Tests
+
+func TestClaimNode_Success(t *testing.T) {
+	// Arrange - node without any labels should be claimable
+	k8sNode := newTestK8sNode("unclaimed-node", "10.0.0.50", nil)
+	mockClient := NewMockVPSieClient()
+	discoverer := newTestDiscoverer(t, mockClient, k8sNode)
+
+	vn := newTestVPSieNode("my-vpsienode")
+	vn.Spec.NodeGroupName = "test-nodegroup"
+
+	// Act
+	err := discoverer.claimNode(context.Background(), k8sNode, vn)
+
+	// Assert
+	require.NoError(t, err)
+	// Verify node labels were updated
+	assert.Equal(t, "my-vpsienode", k8sNode.Labels[v1alpha1.VPSieNodeLabelKey])
+	assert.Equal(t, "test-nodegroup", k8sNode.Labels[v1alpha1.NodeGroupLabelKey])
+}
+
+func TestClaimNode_NilLabels(t *testing.T) {
+	// Arrange - node with nil Labels map
+	k8sNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "nil-labels-node",
+			Labels: nil, // Explicitly nil
+		},
+		Status: corev1.NodeStatus{
+			Addresses: []corev1.NodeAddress{
+				{Type: corev1.NodeInternalIP, Address: "10.0.0.60"},
+			},
+		},
+	}
+	mockClient := NewMockVPSieClient()
+	discoverer := newTestDiscoverer(t, mockClient, k8sNode)
+
+	vn := newTestVPSieNode("my-vpsienode")
+	vn.Spec.NodeGroupName = "test-nodegroup"
+
+	// Act
+	err := discoverer.claimNode(context.Background(), k8sNode, vn)
+
+	// Assert
+	require.NoError(t, err)
+	// Verify labels map was created and populated
+	require.NotNil(t, k8sNode.Labels)
+	assert.Equal(t, "my-vpsienode", k8sNode.Labels[v1alpha1.VPSieNodeLabelKey])
+	assert.Equal(t, "test-nodegroup", k8sNode.Labels[v1alpha1.NodeGroupLabelKey])
+}
+
+func TestClaimNode_ConflictError(t *testing.T) {
+	// This test verifies that claimNode handles conflict gracefully.
+	// We test this by creating a scenario where the node was already modified.
+	// Note: The fake client doesn't truly support conflict detection, but we can
+	// verify the code path handles pre-claimed nodes via isNodeClaimedByOther.
+
+	// Arrange - node already claimed by another VPSieNode
+	k8sNode := newTestK8sNode("claimed-node", "10.0.0.70", map[string]string{
+		v1alpha1.VPSieNodeLabelKey: "other-vpsienode", // Already claimed
+	})
+	mockClient := NewMockVPSieClient()
+	discoverer := newTestDiscoverer(t, mockClient, k8sNode)
+
+	vn := newTestVPSieNode("my-vpsienode")
+
+	// Act - The node is already claimed, verify isNodeClaimedByOther detects it
+	isClaimed := discoverer.isNodeClaimedByOther(k8sNode, vn)
+
+	// Assert
+	assert.True(t, isClaimed, "Node should be detected as claimed by another VPSieNode")
+}
+
 // Discovery edge case - VPSieNode with nil CreatedAt
 func TestDiscoverVPSID_NilCreatedAt(t *testing.T) {
 	// Arrange

@@ -101,9 +101,16 @@ func (p *Provisioner) createVPS(ctx context.Context, vn *v1alpha1.VPSieNode, log
 						zap.String("hostname", vps.Hostname),
 						zap.String("ip", vps.IPAddress),
 					)
+					// Set NodeName from discovered hostname for the Joining phase to find it
+					if vn.Status.NodeName == "" && vps.Hostname != "" {
+						vn.Status.NodeName = vps.Hostname
+					}
 					SetPhase(vn, v1alpha1.VPSieNodePhaseProvisioned, ReasonProvisioned, "K8s node is running")
 					SetVPSReadyCondition(vn, true, ReasonProvisioned, "K8s node is running")
 					now := metav1.Now()
+					if vn.Status.CreatedAt == nil {
+						vn.Status.CreatedAt = &now
+					}
 					vn.Status.ProvisionedAt = &now
 					return ctrl.Result{RequeueAfter: FastRequeueAfter}, nil
 				}

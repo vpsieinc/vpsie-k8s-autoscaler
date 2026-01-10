@@ -24,9 +24,11 @@ func TestNewDynamicNodeGroupCreator(t *testing.T) {
 		creator := NewDynamicNodeGroupCreator(fakeClient, logger, nil)
 		if creator == nil {
 			t.Fatal("Expected creator to be created")
+			return
 		}
 		if creator.template == nil {
 			t.Fatal("Expected default template to be set")
+			return
 		}
 		if creator.template.MinNodes != 1 {
 			t.Errorf("Expected MinNodes=1, got %d", creator.template.MinNodes)
@@ -116,6 +118,7 @@ func TestFindSuitableNodeGroup(t *testing.T) {
 		result := creator.FindSuitableNodeGroup(ctx, pod, nodeGroups)
 		if result == nil {
 			t.Fatal("Expected to find suitable NodeGroup")
+			return
 		}
 		if result.Name != "managed-ng" {
 			t.Errorf("Expected managed-ng, got %s", result.Name)
@@ -191,6 +194,7 @@ func TestFindSuitableNodeGroup(t *testing.T) {
 		result := creator.FindSuitableNodeGroup(ctx, pod, nodeGroups)
 		if result == nil {
 			t.Fatal("Expected to find suitable NodeGroup")
+			return
 		}
 		if result.Name != "gpu-ng" {
 			t.Errorf("Expected gpu-ng, got %s", result.Name)
@@ -235,6 +239,7 @@ func TestFindSuitableNodeGroup(t *testing.T) {
 		result := creator.FindSuitableNodeGroup(ctx, pod, nodeGroups)
 		if result == nil {
 			t.Fatal("Expected to find suitable NodeGroup")
+			return
 		}
 		if result.Name != "generic-ng" {
 			t.Errorf("Expected generic-ng, got %s", result.Name)

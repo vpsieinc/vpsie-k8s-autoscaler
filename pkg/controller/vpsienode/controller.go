@@ -157,6 +157,8 @@ func (r *VPSieNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Capture original state BEFORE reconcile modifies vn
 	// This is critical for the patch to detect status changes
 	originalVPSID := vn.Spec.VPSieInstanceID
+	originalNodeName := vn.Spec.NodeName
+	originalIPAddress := vn.Spec.IPAddress
 	originalCreationRequested := vn.Annotations != nil && vn.Annotations[AnnotationCreationRequested] == "true"
 	originalState := vn.DeepCopy()
 
@@ -164,8 +166,17 @@ func (r *VPSieNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	result, err := r.reconcile(ctx, vn, logger)
 
 	// Check if object metadata or spec was modified
-	specOrMetadataChanged := vn.Spec.VPSieInstanceID != originalVPSID
+	specOrMetadataChanged := vn.Spec.VPSieInstanceID != originalVPSID ||
+		vn.Spec.NodeName != originalNodeName ||
+		vn.Spec.IPAddress != originalIPAddress
 	creationRequestedChanged := (vn.Annotations != nil && vn.Annotations[AnnotationCreationRequested] == "true") != originalCreationRequested
+
+	// Capture current status before Update() to preserve it.
+	// The fake client's status subresource behavior resets in-memory status
+	// after Update(). In production, the subsequent Status().Patch() is
+	// authoritative, but this prevents test failures and ensures status
+	// changes made during reconcile are not lost between Update() and Patch().
+	currentStatus := vn.Status.DeepCopy()
 
 	// Update object if spec or annotations were modified
 	if specOrMetadataChanged || creationRequestedChanged {
@@ -176,6 +187,8 @@ func (r *VPSieNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 			return result, fmt.Errorf("reconcile error: %w, object update error: %v", err, updateErr)
 		}
+		// Restore status after Update() - see comment above for explanation.
+		vn.Status = *currentStatus
 	}
 
 	// Always update status with optimistic locking

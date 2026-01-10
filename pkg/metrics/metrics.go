@@ -619,6 +619,40 @@ var (
 		// resource_type: NodeGroup, VPSieNode
 		// namespace: the rejected namespace
 	)
+
+	// VPSieNode Discovery Metrics
+
+	// VPSieNodeDiscoveryDuration tracks the duration of VPSieNode discovery operations
+	VPSieNodeDiscoveryDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Name:      "vpsienode_discovery_duration_seconds",
+			Help:      "Duration of VPSieNode discovery operations in seconds",
+			Buckets:   prometheus.ExponentialBuckets(0.1, 2, 10), // 100ms to ~51s
+		},
+	)
+
+	// VPSieNodeDiscoveryStrategyUsed tracks which discovery strategy was successful
+	VPSieNodeDiscoveryStrategyUsed = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "vpsienode_discovery_strategy_used_total",
+			Help:      "Total number of successful discoveries by strategy",
+		},
+		[]string{"strategy"},
+		// strategy: unclaimed_k8s_node, unclaimed_k8s_node_ip, hostname_pattern, ip_matching
+	)
+
+	// VPSieNodeDiscoveryFailuresTotal tracks the number of discovery failures by reason
+	VPSieNodeDiscoveryFailuresTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "vpsienode_discovery_failures_total",
+			Help:      "Total number of VPSieNode discovery failures by reason",
+		},
+		[]string{"reason"},
+		// reason: timeout, api_error, not_found
+	)
 )
 
 // RegisterMetrics registers all metrics with the controller-runtime metrics registry
@@ -688,6 +722,10 @@ func RegisterMetrics() {
 		ScaleUpDecisionNodesRequested,
 		// Webhook Metrics
 		WebhookNamespaceValidationRejectionsTotal,
+		// VPSieNode Discovery Metrics
+		VPSieNodeDiscoveryDuration,
+		VPSieNodeDiscoveryStrategyUsed,
+		VPSieNodeDiscoveryFailuresTotal,
 	)
 }
 
@@ -744,4 +782,8 @@ func ResetMetrics() {
 	ScaleUpDecisionNodesRequested.Reset()
 	// Webhook Metrics
 	WebhookNamespaceValidationRejectionsTotal.Reset()
+	// VPSieNode Discovery Metrics
+	VPSieNodeDiscoveryStrategyUsed.Reset()
+	VPSieNodeDiscoveryFailuresTotal.Reset()
+	// Note: VPSieNodeDiscoveryDuration is a Histogram without Reset() method
 }
