@@ -316,6 +316,7 @@ func (r *NodeGroupReconciler) reconcileIntelligentScaleDown(
 	}
 
 	deletedCount := 0
+	var deletionErrors []error
 	for _, candidate := range candidates {
 		// Find the VPSieNode CR for this node using map lookup
 		vn, ok := vpsieNodeByNodeName[candidate.Node.Name]
@@ -333,6 +334,7 @@ func (r *NodeGroupReconciler) reconcileIntelligentScaleDown(
 				zap.String("vpsienode", vn.Name),
 				zap.Error(err),
 			)
+			deletionErrors = append(deletionErrors, fmt.Errorf("delete VPSieNode %s: %w", vn.Name, err))
 			// Continue with other nodes - don't fail entire operation
 			continue
 		}
@@ -340,9 +342,18 @@ func (r *NodeGroupReconciler) reconcileIntelligentScaleDown(
 		deletedCount++
 	}
 
+	// Log warning if some deletions failed
+	if len(deletionErrors) > 0 {
+		logger.Warn("Some VPSieNode deletions failed during scale-down",
+			zap.Int("failedCount", len(deletionErrors)),
+			zap.Errors("errors", deletionErrors),
+		)
+	}
+
 	logger.Info("Intelligent scale-down completed",
 		zap.Int("nodesDrained", len(candidates)),
 		zap.Int("vpsieNodesDeleted", deletedCount),
+		zap.Int("deletionsFailed", len(deletionErrors)),
 	)
 
 	// Requeue to verify scale-down progress
