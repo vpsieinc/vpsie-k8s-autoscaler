@@ -458,6 +458,9 @@ func TestFindMatchingNodeGroups(t *testing.T) {
 	ng1 := v1alpha1.NodeGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "ng-production",
+			Labels: map[string]string{
+				v1alpha1.ManagedLabelKey: v1alpha1.ManagedLabelValue,
+			},
 		},
 		Spec: v1alpha1.NodeGroupSpec{
 			Labels: map[string]string{
@@ -473,6 +476,9 @@ func TestFindMatchingNodeGroups(t *testing.T) {
 	ng2 := v1alpha1.NodeGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "ng-staging",
+			Labels: map[string]string{
+				v1alpha1.ManagedLabelKey: v1alpha1.ManagedLabelValue,
+			},
 		},
 		Spec: v1alpha1.NodeGroupSpec{
 			Labels: map[string]string{
@@ -488,6 +494,9 @@ func TestFindMatchingNodeGroups(t *testing.T) {
 	ng3 := v1alpha1.NodeGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "ng-no-labels",
+			Labels: map[string]string{
+				v1alpha1.ManagedLabelKey: v1alpha1.ManagedLabelValue,
+			},
 		},
 		Spec: v1alpha1.NodeGroupSpec{
 			Labels:   map[string]string{},
