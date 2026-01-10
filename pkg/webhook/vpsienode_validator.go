@@ -94,14 +94,6 @@ func (v *VPSieNodeValidator) Validate(vn *autoscalerv1alpha1.VPSieNode, operatio
 		// Node configuration is now handled entirely by VPSie API
 	}
 
-	// UPDATE-specific validations
-	if operation == admissionv1.Update {
-		// Validate immutable fields
-		if err := v.validateImmutableFields(vn); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
@@ -219,25 +211,6 @@ func (v *VPSieNodeValidator) validateSSHKeyIDs(vn *autoscalerv1alpha1.VPSieNode)
 		}
 		seen[keyID] = true
 	}
-
-	return nil
-}
-
-// validateImmutableFields validates that immutable fields haven't changed
-func (v *VPSieNodeValidator) validateImmutableFields(vn *autoscalerv1alpha1.VPSieNode) error {
-	// For UPDATE operations, we would need the old object to compare
-	// This is a placeholder - in a full implementation, you would:
-	// 1. Get the old object from the admission request
-	// 2. Compare immutable fields (NodeGroupName, Datacenter, OfferingID, etc.)
-	// 3. Return error if any immutable fields changed
-
-	// Example immutable fields:
-	// - NodeGroupName (can't move a node to a different group)
-	// - Datacenter (can't move a node to a different datacenter)
-	// - OfferingID (can't change instance type after creation)
-
-	// Note: This would require updating the Validate signature to accept
-	// both old and new objects, or updating the server to pass the old object
 
 	return nil
 }
