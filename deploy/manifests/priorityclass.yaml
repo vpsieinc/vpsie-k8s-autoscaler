@@ -1,0 +1,11 @@
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: system-vpsie-autoscaler
+  labels:
+    app: vpsie-autoscaler
+    component: controller
+value: 1000000
+globalDefault: false
+description: "Priority class for VPSie Kubernetes Node Autoscaler controller"
