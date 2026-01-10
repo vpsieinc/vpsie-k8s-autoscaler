@@ -489,11 +489,15 @@ func TestMetrics_NodeDrainDuration(t *testing.T) {
 
 		// Call DrainNode
 		startTime := time.Now()
-		errs := sdm.DrainNode(context.Background(), node, 30*time.Second)
+		err = sdm.DrainNode(context.Background(), node)
 		drainDuration := time.Since(startTime)
 
 		// Drain should complete (may have errors for fake client, but timing is recorded)
-		t.Logf("Drain completed in %v with %d errors", drainDuration, len(errs))
+		if err != nil {
+			t.Logf("Drain completed in %v with error: %v", drainDuration, err)
+		} else {
+			t.Logf("Drain completed in %v successfully", drainDuration)
+		}
 
 		// Verify histogram was updated (result may be "success" or "error" depending on fake client behavior)
 		// We just verify that SOME drain duration was recorded
