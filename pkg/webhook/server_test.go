@@ -16,8 +16,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	autoscalerv1alpha1 "github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 )
 
 // createTestServer creates a test webhook server instance
@@ -683,4 +685,419 @@ func getTestDecoder() runtime.Decoder {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	return serializer.NewCodecFactory(scheme).UniversalDeserializer()
+}
+
+// TestNodeGroupValidator_NamespaceValidation tests namespace validation for NodeGroup
+func TestNodeGroupValidator_NamespaceValidation(t *testing.T) {
+	logger := zap.NewNop()
+	validator := NewNodeGroupValidator(logger)
+
+	tests := []struct {
+		name        string
+		namespace   string
+		operation   admissionv1.Operation
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name:        "CREATE in kube-system allowed",
+			namespace:   "kube-system",
+			operation:   admissionv1.Create,
+			expectError: false,
+		},
+		{
+			name:        "CREATE in default namespace rejected",
+			namespace:   "default",
+			operation:   admissionv1.Create,
+			expectError: true,
+			errorMsg:    "must be created in the \"kube-system\" namespace",
+		},
+		{
+			name:        "CREATE in custom namespace rejected",
+			namespace:   "my-namespace",
+			operation:   admissionv1.Create,
+			expectError: true,
+			errorMsg:    "must be created in the \"kube-system\" namespace",
+		},
+		{
+			name:        "CREATE with empty namespace rejected",
+			namespace:   "",
+			operation:   admissionv1.Create,
+			expectError: true,
+			errorMsg:    "must be created in the \"kube-system\" namespace",
+		},
+		{
+			name:        "UPDATE in kube-system allowed",
+			namespace:   "kube-system",
+			operation:   admissionv1.Update,
+			expectError: false,
+		},
+		{
+			name:        "UPDATE in default namespace rejected",
+			namespace:   "default",
+			operation:   admissionv1.Update,
+			expectError: true,
+			errorMsg:    "must be created in the \"kube-system\" namespace",
+		},
+		{
+			name:        "DELETE in other namespace allowed (no namespace check on delete)",
+			namespace:   "other-namespace",
+			operation:   admissionv1.Delete,
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ng := &autoscalerv1alpha1.NodeGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-nodegroup",
+					Namespace: tt.namespace,
+				},
+				Spec: autoscalerv1alpha1.NodeGroupSpec{
+					MinNodes:          1,
+					MaxNodes:          10,
+					DatacenterID:      "dc-1",
+					OfferingIDs:       []string{"offering-1"},
+					KubernetesVersion: "v1.28.0",
+					OSImageID:         "ubuntu-22.04",
+				},
+			}
+
+			err := validator.Validate(ng, tt.operation)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errorMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestVPSieNodeValidator_NamespaceValidation tests namespace validation for VPSieNode
+func TestVPSieNodeValidator_NamespaceValidation(t *testing.T) {
+	logger := zap.NewNop()
+	validator := NewVPSieNodeValidator(logger)
+
+	tests := []struct {
+		name        string
+		namespace   string
+		operation   admissionv1.Operation
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name:        "CREATE in kube-system allowed",
+			namespace:   "kube-system",
+			operation:   admissionv1.Create,
+			expectError: false,
+		},
+		{
+			name:        "CREATE in default namespace rejected",
+			namespace:   "default",
+			operation:   admissionv1.Create,
+			expectError: true,
+			errorMsg:    "must be created in the \"kube-system\" namespace",
+		},
+		{
+			name:        "CREATE in custom namespace rejected",
+			namespace:   "my-namespace",
+			operation:   admissionv1.Create,
+			expectError: true,
+			errorMsg:    "must be created in the \"kube-system\" namespace",
+		},
+		{
+			name:        "CREATE with empty namespace rejected",
+			namespace:   "",
+			operation:   admissionv1.Create,
+			expectError: true,
+			errorMsg:    "must be created in the \"kube-system\" namespace",
+		},
+		{
+			name:        "UPDATE in kube-system allowed",
+			namespace:   "kube-system",
+			operation:   admissionv1.Update,
+			expectError: false,
+		},
+		{
+			name:        "UPDATE in default namespace rejected",
+			namespace:   "default",
+			operation:   admissionv1.Update,
+			expectError: true,
+			errorMsg:    "must be created in the \"kube-system\" namespace",
+		},
+		{
+			name:        "DELETE in other namespace allowed (no namespace check on delete)",
+			namespace:   "other-namespace",
+			operation:   admissionv1.Delete,
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vn := &autoscalerv1alpha1.VPSieNode{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-vpsienode",
+					Namespace: tt.namespace,
+				},
+				Spec: autoscalerv1alpha1.VPSieNodeSpec{
+					NodeGroupName:     "test-nodegroup",
+					DatacenterID:      "dc-1",
+					InstanceType:      "standard-2",
+					KubernetesVersion: "v1.28.0",
+					OSImageID:         "ubuntu-22.04",
+				},
+			}
+
+			err := validator.Validate(vn, tt.operation)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errorMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestRequiredNamespaceConstant verifies the RequiredNamespace constant
+func TestRequiredNamespaceConstant(t *testing.T) {
+	assert.Equal(t, "kube-system", RequiredNamespace)
+}
+
+// TestNodeGroupValidator_NamespaceRejectionMetric tests that namespace validation rejections are recorded as metrics
+func TestNodeGroupValidator_NamespaceRejectionMetric(t *testing.T) {
+	// Reset metrics before test
+	metrics.WebhookNamespaceValidationRejectionsTotal.Reset()
+
+	logger := zap.NewNop()
+	validator := NewNodeGroupValidator(logger)
+
+	tests := []struct {
+		name              string
+		namespace         string
+		operation         admissionv1.Operation
+		expectError       bool
+		expectMetricInc   bool
+		expectedNamespace string
+	}{
+		{
+			name:            "CREATE in kube-system - no metric increment",
+			namespace:       "kube-system",
+			operation:       admissionv1.Create,
+			expectError:     false,
+			expectMetricInc: false,
+		},
+		{
+			name:              "CREATE in default namespace - metric incremented",
+			namespace:         "default",
+			operation:         admissionv1.Create,
+			expectError:       true,
+			expectMetricInc:   true,
+			expectedNamespace: "default",
+		},
+		{
+			name:              "CREATE in custom namespace - metric incremented",
+			namespace:         "my-custom-namespace",
+			operation:         admissionv1.Create,
+			expectError:       true,
+			expectMetricInc:   true,
+			expectedNamespace: "my-custom-namespace",
+		},
+		{
+			name:              "UPDATE in wrong namespace - metric incremented",
+			namespace:         "other-ns",
+			operation:         admissionv1.Update,
+			expectError:       true,
+			expectMetricInc:   true,
+			expectedNamespace: "other-ns",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset metrics before each test case
+			metrics.WebhookNamespaceValidationRejectionsTotal.Reset()
+
+			ng := &autoscalerv1alpha1.NodeGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-nodegroup",
+					Namespace: tt.namespace,
+				},
+				Spec: autoscalerv1alpha1.NodeGroupSpec{
+					MinNodes:          1,
+					MaxNodes:          10,
+					DatacenterID:      "dc-1",
+					OfferingIDs:       []string{"offering-1"},
+					KubernetesVersion: "v1.28.0",
+					OSImageID:         "ubuntu-22.04",
+				},
+			}
+
+			err := validator.Validate(ng, tt.operation)
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			// Check metric value
+			if tt.expectMetricInc {
+				metricValue := testutil.ToFloat64(metrics.WebhookNamespaceValidationRejectionsTotal.WithLabelValues("NodeGroup", tt.expectedNamespace))
+				assert.Equal(t, float64(1), metricValue, "expected metric to be incremented for namespace %s", tt.expectedNamespace)
+			} else {
+				// When no error, the metric should not exist or be 0
+				metricValue := testutil.ToFloat64(metrics.WebhookNamespaceValidationRejectionsTotal.WithLabelValues("NodeGroup", tt.namespace))
+				assert.Equal(t, float64(0), metricValue, "expected metric to not be incremented")
+			}
+		})
+	}
+}
+
+// TestVPSieNodeValidator_NamespaceRejectionMetric tests that namespace validation rejections are recorded as metrics
+func TestVPSieNodeValidator_NamespaceRejectionMetric(t *testing.T) {
+	// Reset metrics before test
+	metrics.WebhookNamespaceValidationRejectionsTotal.Reset()
+
+	logger := zap.NewNop()
+	validator := NewVPSieNodeValidator(logger)
+
+	tests := []struct {
+		name              string
+		namespace         string
+		operation         admissionv1.Operation
+		expectError       bool
+		expectMetricInc   bool
+		expectedNamespace string
+	}{
+		{
+			name:            "CREATE in kube-system - no metric increment",
+			namespace:       "kube-system",
+			operation:       admissionv1.Create,
+			expectError:     false,
+			expectMetricInc: false,
+		},
+		{
+			name:              "CREATE in default namespace - metric incremented",
+			namespace:         "default",
+			operation:         admissionv1.Create,
+			expectError:       true,
+			expectMetricInc:   true,
+			expectedNamespace: "default",
+		},
+		{
+			name:              "CREATE in custom namespace - metric incremented",
+			namespace:         "my-custom-namespace",
+			operation:         admissionv1.Create,
+			expectError:       true,
+			expectMetricInc:   true,
+			expectedNamespace: "my-custom-namespace",
+		},
+		{
+			name:              "UPDATE in wrong namespace - metric incremented",
+			namespace:         "other-ns",
+			operation:         admissionv1.Update,
+			expectError:       true,
+			expectMetricInc:   true,
+			expectedNamespace: "other-ns",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset metrics before each test case
+			metrics.WebhookNamespaceValidationRejectionsTotal.Reset()
+
+			vn := &autoscalerv1alpha1.VPSieNode{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-vpsienode",
+					Namespace: tt.namespace,
+				},
+				Spec: autoscalerv1alpha1.VPSieNodeSpec{
+					NodeGroupName:     "test-nodegroup",
+					DatacenterID:      "dc-1",
+					InstanceType:      "standard-2",
+					KubernetesVersion: "v1.28.0",
+					OSImageID:         "ubuntu-22.04",
+				},
+			}
+
+			err := validator.Validate(vn, tt.operation)
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			// Check metric value
+			if tt.expectMetricInc {
+				metricValue := testutil.ToFloat64(metrics.WebhookNamespaceValidationRejectionsTotal.WithLabelValues("VPSieNode", tt.expectedNamespace))
+				assert.Equal(t, float64(1), metricValue, "expected metric to be incremented for namespace %s", tt.expectedNamespace)
+			} else {
+				// When no error, the metric should not exist or be 0
+				metricValue := testutil.ToFloat64(metrics.WebhookNamespaceValidationRejectionsTotal.WithLabelValues("VPSieNode", tt.namespace))
+				assert.Equal(t, float64(0), metricValue, "expected metric to not be incremented")
+			}
+		})
+	}
+}
+
+// TestNamespaceRejectionMetricLabels verifies correct label values for the metric
+func TestNamespaceRejectionMetricLabels(t *testing.T) {
+	// Reset metrics before test
+	metrics.WebhookNamespaceValidationRejectionsTotal.Reset()
+
+	logger := zap.NewNop()
+	ngValidator := NewNodeGroupValidator(logger)
+	vnValidator := NewVPSieNodeValidator(logger)
+
+	// Trigger NodeGroup rejection
+	ng := &autoscalerv1alpha1.NodeGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-ng",
+			Namespace: "wrong-namespace-1",
+		},
+		Spec: autoscalerv1alpha1.NodeGroupSpec{
+			MinNodes:          1,
+			MaxNodes:          10,
+			DatacenterID:      "dc-1",
+			OfferingIDs:       []string{"offering-1"},
+			KubernetesVersion: "v1.28.0",
+			OSImageID:         "ubuntu-22.04",
+		},
+	}
+	_ = ngValidator.Validate(ng, admissionv1.Create)
+
+	// Trigger VPSieNode rejection
+	vn := &autoscalerv1alpha1.VPSieNode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-vn",
+			Namespace: "wrong-namespace-2",
+		},
+		Spec: autoscalerv1alpha1.VPSieNodeSpec{
+			NodeGroupName:     "test-nodegroup",
+			DatacenterID:      "dc-1",
+			InstanceType:      "standard-2",
+			KubernetesVersion: "v1.28.0",
+			OSImageID:         "ubuntu-22.04",
+		},
+	}
+	_ = vnValidator.Validate(vn, admissionv1.Create)
+
+	// Verify both metrics are tracked with correct labels
+	ngMetric := testutil.ToFloat64(metrics.WebhookNamespaceValidationRejectionsTotal.WithLabelValues("NodeGroup", "wrong-namespace-1"))
+	assert.Equal(t, float64(1), ngMetric, "NodeGroup rejection metric should be 1")
+
+	vnMetric := testutil.ToFloat64(metrics.WebhookNamespaceValidationRejectionsTotal.WithLabelValues("VPSieNode", "wrong-namespace-2"))
+	assert.Equal(t, float64(1), vnMetric, "VPSieNode rejection metric should be 1")
+
+	// Verify other resource type / namespace combinations are not affected
+	wrongLabelMetric := testutil.ToFloat64(metrics.WebhookNamespaceValidationRejectionsTotal.WithLabelValues("NodeGroup", "wrong-namespace-2"))
+	assert.Equal(t, float64(0), wrongLabelMetric, "metric with wrong label combination should be 0")
 }

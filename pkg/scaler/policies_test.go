@@ -130,11 +130,11 @@ func TestPolicyEngine_GetThresholds(t *testing.T) {
 	engine := NewPolicyEngine(logger.Sugar(), config)
 
 	tests := []struct {
-		name             string
-		mode             PolicyMode
-		expectedCPU      float64
-		expectedMem      float64
-		expectedWindow   time.Duration
+		name           string
+		mode           PolicyMode
+		expectedCPU    float64
+		expectedMem    float64
+		expectedWindow time.Duration
 	}{
 		{
 			name:           "Aggressive mode",

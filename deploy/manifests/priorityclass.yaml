@@ -1,0 +1,14 @@
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: vpsie-autoscaler-critical
+  labels:
+    app: vpsie-autoscaler
+    component: controller
+# Priority 1000000 is high but below system-critical (~2 billion)
+# This ensures autoscaler pods preempt user workloads but not kube-system pods
+value: 1000000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: "Priority class for VPSie Kubernetes Node Autoscaler controller"

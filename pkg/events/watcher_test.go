@@ -313,6 +313,9 @@ func TestGetNodeGroups(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "ng-1",
 			Namespace: "default",
+			Labels: map[string]string{
+				v1alpha1.ManagedLabelKey: v1alpha1.ManagedLabelValue,
+			},
 		},
 		Spec: v1alpha1.NodeGroupSpec{
 			MinNodes: 1,
@@ -324,6 +327,9 @@ func TestGetNodeGroups(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "ng-2",
 			Namespace: "default",
+			Labels: map[string]string{
+				v1alpha1.ManagedLabelKey: v1alpha1.ManagedLabelValue,
+			},
 		},
 		Spec: v1alpha1.NodeGroupSpec{
 			MinNodes: 2,

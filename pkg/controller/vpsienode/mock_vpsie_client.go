@@ -30,6 +30,9 @@ type MockVPSieClient struct {
 	// ListVMsFunc allows custom behavior for ListVMs
 	ListVMsFunc func(ctx context.Context) ([]vpsieclient.VPS, error)
 
+	// ListK8sNodeGroupsFunc allows custom behavior for ListK8sNodeGroups
+	ListK8sNodeGroupsFunc func(ctx context.Context, clusterIdentifier string) ([]vpsieclient.K8sNodeGroup, error)
+
 	// CallCounts tracks how many times each method was called
 	CallCounts map[string]int
 }
@@ -246,6 +249,22 @@ func (m *MockVPSieClient) AddK8sSlaveToGroup(ctx context.Context, clusterIdentif
 	m.NextID++
 
 	return vps, nil
+}
+
+// ListK8sNodeGroups mocks listing K8s node groups
+func (m *MockVPSieClient) ListK8sNodeGroups(ctx context.Context, clusterIdentifier string) ([]vpsieclient.K8sNodeGroup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.CallCounts["ListK8sNodeGroups"]++
+
+	// Use custom function if provided
+	if m.ListK8sNodeGroupsFunc != nil {
+		return m.ListK8sNodeGroupsFunc(ctx, clusterIdentifier)
+	}
+
+	// Default: return empty list
+	return nil, nil
 }
 
 // Helper functions to parse string IDs to int

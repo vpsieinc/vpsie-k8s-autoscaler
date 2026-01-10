@@ -63,6 +63,10 @@ func (r *NodeGroupReconciler) reconcile(ctx context.Context, ng *v1alpha1.NodeGr
 		}
 	}
 
+	// Create patch BEFORE any status modifications for proper optimistic locking
+	// MergeFrom captures the original state, and Patch computes the diff to the modified state
+	patch := client.MergeFrom(ng.DeepCopy())
+
 	// Update conditions for reconciliation start
 	UpdateConditionsForReconcile(ng)
 
@@ -134,12 +138,41 @@ func (r *NodeGroupReconciler) reconcile(ctx context.Context, ng *v1alpha1.NodeGr
 			"Scaling down from %d to %d nodes (-%d nodes)", ng.Status.CurrentNodes, ng.Status.DesiredNodes, nodesToRemove)
 		result, reconcileErr = r.reconcileScaleDown(ctx, ng, vpsieNodes, logger)
 	} else {
-		logger.Info("No scaling needed",
-			zap.Int32("current", ng.Status.CurrentNodes),
-			zap.Int32("desired", ng.Status.DesiredNodes),
-			zap.Int32("ready", ng.Status.ReadyNodes),
-		)
-		result = ctrl.Result{RequeueAfter: DefaultRequeueAfter}
+		// No explicit scaling needed - check if utilization-based scale-down should trigger
+		if r.ScaleDownManager != nil && ng.Spec.ScaleDownPolicy.Enabled &&
+			ng.Status.CurrentNodes > ng.Spec.MinNodes {
+			// Evaluate if we should scale down based on utilization
+			if shouldScaleDown, nodesToRemove := r.evaluateUtilizationBasedScaleDown(ctx, ng, logger); shouldScaleDown {
+				logger.Info("Utilization-based scale-down triggered",
+					zap.Int32("current", ng.Status.CurrentNodes),
+					zap.Int("nodesToRemove", nodesToRemove),
+				)
+				// Reduce DesiredNodes to trigger scale-down
+				newDesired := ng.Status.CurrentNodes - int32(nodesToRemove)
+				if newDesired < ng.Spec.MinNodes {
+					newDesired = ng.Spec.MinNodes
+				}
+				SetDesiredNodes(ng, newDesired)
+				r.Recorder.Eventf(ng, corev1.EventTypeNormal, "ScalingDown",
+					"Utilization-based scale-down: reducing from %d to %d nodes (-%d nodes)",
+					ng.Status.CurrentNodes, newDesired, nodesToRemove)
+				result, reconcileErr = r.reconcileScaleDown(ctx, ng, vpsieNodes, logger)
+				needsScaleDown = true // For condition update below
+			} else {
+				logger.Debug("No utilization-based scale-down needed",
+					zap.Int32("current", ng.Status.CurrentNodes),
+					zap.Int32("min", ng.Spec.MinNodes),
+				)
+				result = ctrl.Result{RequeueAfter: DefaultRequeueAfter}
+			}
+		} else {
+			logger.Info("No scaling needed",
+				zap.Int32("current", ng.Status.CurrentNodes),
+				zap.Int32("desired", ng.Status.DesiredNodes),
+				zap.Int32("ready", ng.Status.ReadyNodes),
+			)
+			result = ctrl.Result{RequeueAfter: DefaultRequeueAfter}
+		}
 	}
 
 	// Update conditions after scaling decision
@@ -156,11 +189,7 @@ func (r *NodeGroupReconciler) reconcile(ctx context.Context, ng *v1alpha1.NodeGr
 		SetErrorCondition(ng, false, ReasonReconciling, "")
 	}
 
-	// Create patch AFTER all status modifications to capture complete delta
-	// This ensures the patch contains all changes made above
-	patch := client.MergeFrom(ng.DeepCopy())
-
-	// Apply status changes with optimistic locking
+	// Apply status changes with optimistic locking (patch was created before modifications)
 	if err := r.Status().Patch(ctx, ng, patch); err != nil {
 		if apierrors.IsConflict(err) {
 			logger.Info("Status update conflict, will retry")
@@ -268,15 +297,63 @@ func (r *NodeGroupReconciler) reconcileIntelligentScaleDown(
 		zap.Int("candidateCount", len(candidates)),
 	)
 
-	// Perform intelligent scale-down with safety checks
+	// Perform intelligent scale-down with safety checks (drains nodes)
 	if err := r.ScaleDownManager.ScaleDown(ctx, ng, candidates); err != nil {
 		logger.Error("Intelligent scale-down failed", zap.Error(err))
 		SetErrorCondition(ng, true, ReasonScaleDownFailed, fmt.Sprintf("Scale-down failed: %v", err))
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Intelligent scale-down completed successfully",
-		zap.Int("nodesRemoved", len(candidates)),
+	// After successful drain, delete the corresponding VPSieNode CRs
+	// The VPSieNode controller will handle VM termination and K8s node deletion
+
+	// Build map for O(1) lookup instead of O(n*m) nested loops
+	vpsieNodeByNodeName := make(map[string]*v1alpha1.VPSieNode)
+	for i := range vpsieNodes {
+		if nodeName := vpsieNodes[i].Status.NodeName; nodeName != "" {
+			vpsieNodeByNodeName[nodeName] = &vpsieNodes[i]
+		}
+	}
+
+	deletedCount := 0
+	var deletionErrors []error
+	for _, candidate := range candidates {
+		// Find the VPSieNode CR for this node using map lookup
+		vn, ok := vpsieNodeByNodeName[candidate.Node.Name]
+		if !ok {
+			continue
+		}
+
+		logger.Info("Deleting VPSieNode after successful drain",
+			zap.String("vpsienode", vn.Name),
+			zap.String("nodeName", candidate.Node.Name),
+		)
+
+		if err := r.Delete(ctx, vn); err != nil {
+			logger.Error("Failed to delete VPSieNode",
+				zap.String("vpsienode", vn.Name),
+				zap.Error(err),
+			)
+			deletionErrors = append(deletionErrors, fmt.Errorf("delete VPSieNode %s: %w", vn.Name, err))
+			// Continue with other nodes - don't fail entire operation
+			continue
+		}
+
+		deletedCount++
+	}
+
+	// Log warning if some deletions failed
+	if len(deletionErrors) > 0 {
+		logger.Warn("Some VPSieNode deletions failed during scale-down",
+			zap.Int("failedCount", len(deletionErrors)),
+			zap.Errors("errors", deletionErrors),
+		)
+	}
+
+	logger.Info("Intelligent scale-down completed",
+		zap.Int("nodesDrained", len(candidates)),
+		zap.Int("vpsieNodesDeleted", deletedCount),
+		zap.Int("deletionsFailed", len(deletionErrors)),
 	)
 
 	// Requeue to verify scale-down progress
@@ -325,6 +402,82 @@ func (r *NodeGroupReconciler) reconcileSimpleScaleDown(
 
 	// Requeue to check progress
 	return ctrl.Result{RequeueAfter: FastRequeueAfter}, nil
+}
+
+// evaluateUtilizationBasedScaleDown checks if scale-down should be triggered based on node utilization.
+// Returns true and the number of nodes to remove if scale-down is warranted.
+func (r *NodeGroupReconciler) evaluateUtilizationBasedScaleDown(
+	ctx context.Context,
+	ng *v1alpha1.NodeGroup,
+	logger *zap.Logger,
+) (bool, int) {
+	if r.ScaleDownManager == nil {
+		return false, 0
+	}
+
+	// Check cooldown period from last scale action
+	if ng.Status.LastScaleDownTime != nil {
+		cooldown := time.Duration(ng.Spec.ScaleDownPolicy.CooldownSeconds) * time.Second
+		if time.Since(ng.Status.LastScaleDownTime.Time) < cooldown {
+			logger.Debug("Within scale-down cooldown period",
+				zap.Duration("cooldown", cooldown),
+				zap.Duration("elapsed", time.Since(ng.Status.LastScaleDownTime.Time)),
+			)
+			return false, 0
+		}
+	}
+
+	// Also check cooldown from last scale-up (stabilization)
+	if ng.Status.LastScaleTime != nil {
+		stabilization := time.Duration(ng.Spec.ScaleDownPolicy.StabilizationWindowSeconds) * time.Second
+		if time.Since(ng.Status.LastScaleTime.Time) < stabilization {
+			logger.Debug("Within stabilization window after scale-up",
+				zap.Duration("stabilization", stabilization),
+				zap.Duration("elapsed", time.Since(ng.Status.LastScaleTime.Time)),
+			)
+			return false, 0
+		}
+	}
+
+	// Identify underutilized nodes
+	candidates, err := r.ScaleDownManager.IdentifyUnderutilizedNodes(ctx, ng)
+	if err != nil {
+		logger.Error("Failed to identify underutilized nodes for evaluation", zap.Error(err))
+		return false, 0
+	}
+
+	if len(candidates) == 0 {
+		logger.Debug("No underutilized nodes found")
+		return false, 0
+	}
+
+	// Determine how many nodes can be removed while staying above MinNodes
+	currentNodes := int(ng.Status.CurrentNodes)
+	minNodes := int(ng.Spec.MinNodes)
+	maxRemovable := currentNodes - minNodes
+
+	if maxRemovable <= 0 {
+		logger.Debug("At minimum nodes, cannot scale down",
+			zap.Int("current", currentNodes),
+			zap.Int("min", minNodes),
+		)
+		return false, 0
+	}
+
+	// Only remove underutilized nodes up to the max removable
+	nodesToRemove := len(candidates)
+	if nodesToRemove > maxRemovable {
+		nodesToRemove = maxRemovable
+	}
+
+	logger.Info("Utilization-based scale-down evaluation complete",
+		zap.Int("underutilizedCandidates", len(candidates)),
+		zap.Int("nodesToRemove", nodesToRemove),
+		zap.Int("currentNodes", currentNodes),
+		zap.Int("minNodes", minNodes),
+	)
+
+	return true, nodesToRemove
 }
 
 // buildVPSieNode creates a new VPSieNode spec for the NodeGroup

@@ -1,0 +1,14 @@
+{{- if .Values.priorityClass.create }}
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ .Values.priorityClassName | default "vpsie-autoscaler-critical" }}
+  labels:
+    {{- include "vpsie-autoscaler.labels" . | nindent 4 }}
+# Priority 1000000 is high but below system-critical (~2 billion)
+# This ensures autoscaler pods preempt user workloads but not kube-system pods
+value: 1000000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: "Priority class for VPSie Kubernetes Autoscaler - high priority but below system-critical"
+{{- end }}

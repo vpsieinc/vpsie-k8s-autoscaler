@@ -8,6 +8,33 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 
 	autoscalerv1alpha1 "github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
+)
+
+const (
+	// RequiredNamespace is the only namespace where NodeGroup and VPSieNode resources can be created
+	RequiredNamespace = "kube-system"
+)
+
+// Package-level compiled regular expressions for validation
+var (
+	// validDatacenterRegex validates datacenter format (alphanumeric, hyphens, underscores)
+	validDatacenterRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+	// validOfferingIDRegex validates offering ID format (alphanumeric, hyphens)
+	validOfferingIDRegex = regexp.MustCompile(`^[a-zA-Z0-9-]+$`)
+
+	// validKubernetesVersionRegex validates semantic version format (v1.28.0, v1.29.1-rc.0, etc.)
+	validKubernetesVersionRegex = regexp.MustCompile(`^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$`)
+
+	// validOSImageRegex validates OS image ID format (alphanumeric, underscores, dots, hyphens)
+	validOSImageRegex = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+
+	// labelKeyRegex validates Kubernetes label key format
+	labelKeyRegex = regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9-_.]*[a-zA-Z0-9])?/)?[a-zA-Z0-9]([a-zA-Z0-9-_.]*[a-zA-Z0-9])?$`)
+
+	// labelValueRegex validates Kubernetes label value format
+	labelValueRegex = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-_.]*[a-zA-Z0-9])?$`)
 )
 
 // NodeGroupValidator validates NodeGroup resources
@@ -34,6 +61,11 @@ func (v *NodeGroupValidator) Validate(ng *autoscalerv1alpha1.NodeGroup, operatio
 
 	// Common validations for CREATE and UPDATE
 	if operation == admissionv1.Create || operation == admissionv1.Update {
+		// Validate namespace (must be kube-system)
+		if err := v.validateNamespace(ng); err != nil {
+			return err
+		}
+
 		// Validate min/max nodes
 		if err := v.validateNodeCount(ng); err != nil {
 			return err
@@ -110,6 +142,16 @@ func (v *NodeGroupValidator) validateNodeCount(ng *autoscalerv1alpha1.NodeGroup)
 	return nil
 }
 
+// validateNamespace validates that the NodeGroup is in the kube-system namespace
+func (v *NodeGroupValidator) validateNamespace(ng *autoscalerv1alpha1.NodeGroup) error {
+	if ng.Namespace != RequiredNamespace {
+		metrics.WebhookNamespaceValidationRejectionsTotal.WithLabelValues("NodeGroup", ng.Namespace).Inc()
+		return fmt.Errorf("NodeGroup resources must be created in the %q namespace, got %q",
+			RequiredNamespace, ng.Namespace)
+	}
+	return nil
+}
+
 // validateDatacenter validates the datacenter field
 func (v *NodeGroupValidator) validateDatacenter(ng *autoscalerv1alpha1.NodeGroup) error {
 	if ng.Spec.DatacenterID == "" {
@@ -117,8 +159,7 @@ func (v *NodeGroupValidator) validateDatacenter(ng *autoscalerv1alpha1.NodeGroup
 	}
 
 	// Validate datacenter format (alphanumeric, hyphens, underscores)
-	validDatacenter := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
-	if !validDatacenter.MatchString(ng.Spec.DatacenterID) {
+	if !validDatacenterRegex.MatchString(ng.Spec.DatacenterID) {
 		return fmt.Errorf("spec.datacenterID '%s' contains invalid characters (only alphanumeric, hyphens, and underscores allowed)",
 			ng.Spec.DatacenterID)
 	}
@@ -139,8 +180,7 @@ func (v *NodeGroupValidator) validateOfferingIDs(ng *autoscalerv1alpha1.NodeGrou
 		}
 
 		// Basic format validation (alphanumeric, hyphens)
-		validOfferingID := regexp.MustCompile(`^[a-zA-Z0-9-]+$`)
-		if !validOfferingID.MatchString(offeringID) {
+		if !validOfferingIDRegex.MatchString(offeringID) {
 			return fmt.Errorf("spec.offeringIds[%d] '%s' contains invalid characters",
 				i, offeringID)
 		}
@@ -165,8 +205,7 @@ func (v *NodeGroupValidator) validateKubernetesVersion(ng *autoscalerv1alpha1.No
 	}
 
 	// Validate semantic version format (v1.28.0, v1.29.1-rc.0, etc.)
-	validVersion := regexp.MustCompile(`^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$`)
-	if !validVersion.MatchString(ng.Spec.KubernetesVersion) {
+	if !validKubernetesVersionRegex.MatchString(ng.Spec.KubernetesVersion) {
 		return fmt.Errorf("spec.kubernetesVersion '%s' is not a valid semantic version (expected format: v1.28.0)",
 			ng.Spec.KubernetesVersion)
 	}
@@ -181,8 +220,7 @@ func (v *NodeGroupValidator) validateOSImage(ng *autoscalerv1alpha1.NodeGroup) e
 	}
 
 	// Basic format validation
-	validOSImage := regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
-	if !validOSImage.MatchString(ng.Spec.OSImageID) {
+	if !validOSImageRegex.MatchString(ng.Spec.OSImageID) {
 		return fmt.Errorf("spec.osImageId '%s' contains invalid characters", ng.Spec.OSImageID)
 	}
 
@@ -265,10 +303,6 @@ func (v *NodeGroupValidator) validateScaleDownPolicy(ng *autoscalerv1alpha1.Node
 
 // validateLabels validates node labels
 func (v *NodeGroupValidator) validateLabels(ng *autoscalerv1alpha1.NodeGroup) error {
-	// Kubernetes label key and value regex patterns
-	labelKeyRegex := regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9-_.]*[a-zA-Z0-9])?/)?[a-zA-Z0-9]([a-zA-Z0-9-_.]*[a-zA-Z0-9])?$`)
-	labelValueRegex := regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-_.]*[a-zA-Z0-9])?$`)
-
 	for key, value := range ng.Spec.Labels {
 		// Validate key format
 		if !labelKeyRegex.MatchString(key) {

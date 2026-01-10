@@ -215,6 +215,12 @@ affinity:
         topologyKey: kubernetes.io/hostname
 
 ## Priority class
+priorityClass:
+  # Create the PriorityClass resource
+  create: false
+
+# Name of the PriorityClass to use (if create is true, this will be the created class name)
+# Default: system-vpsie-autoscaler
 priorityClassName: ""
 
 ## Pod disruption budget

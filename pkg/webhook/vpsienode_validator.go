@@ -8,6 +8,28 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 
 	autoscalerv1alpha1 "github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
+)
+
+// Package-level compiled regular expressions for VPSieNode validation
+var (
+	// validNodeGroupNameRegex validates Kubernetes resource name format
+	validNodeGroupNameRegex = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
+
+	// validVPSieNodeDatacenterRegex validates datacenter format (alphanumeric, hyphens, underscores)
+	validVPSieNodeDatacenterRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+	// validInstanceTypeRegex validates instance type format (alphanumeric, hyphens)
+	validInstanceTypeRegex = regexp.MustCompile(`^[a-zA-Z0-9-]+$`)
+
+	// validVPSieNodeKubernetesVersionRegex validates semantic version format
+	validVPSieNodeKubernetesVersionRegex = regexp.MustCompile(`^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$`)
+
+	// validVPSieNodeOSImageRegex validates OS image ID format
+	validVPSieNodeOSImageRegex = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+
+	// validSSHKeyIDRegex validates SSH key ID format (alphanumeric, hyphens, underscores)
+	validSSHKeyIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 )
 
 // VPSieNodeValidator validates VPSieNode resources
@@ -34,6 +56,11 @@ func (v *VPSieNodeValidator) Validate(vn *autoscalerv1alpha1.VPSieNode, operatio
 
 	// Common validations for CREATE and UPDATE
 	if operation == admissionv1.Create || operation == admissionv1.Update {
+		// Validate namespace (must be kube-system)
+		if err := v.validateNamespace(vn); err != nil {
+			return err
+		}
+
 		// Validate NodeGroup reference
 		if err := v.validateNodeGroupRef(vn); err != nil {
 			return err
@@ -68,14 +95,16 @@ func (v *VPSieNodeValidator) Validate(vn *autoscalerv1alpha1.VPSieNode, operatio
 		// Node configuration is now handled entirely by VPSie API
 	}
 
-	// UPDATE-specific validations
-	if operation == admissionv1.Update {
-		// Validate immutable fields
-		if err := v.validateImmutableFields(vn); err != nil {
-			return err
-		}
-	}
+	return nil
+}
 
+// validateNamespace validates that the VPSieNode is in the kube-system namespace
+func (v *VPSieNodeValidator) validateNamespace(vn *autoscalerv1alpha1.VPSieNode) error {
+	if vn.Namespace != RequiredNamespace {
+		metrics.WebhookNamespaceValidationRejectionsTotal.WithLabelValues("VPSieNode", vn.Namespace).Inc()
+		return fmt.Errorf("VPSieNode resources must be created in the %q namespace, got %q",
+			RequiredNamespace, vn.Namespace)
+	}
 	return nil
 }
 
@@ -86,8 +115,7 @@ func (v *VPSieNodeValidator) validateNodeGroupRef(vn *autoscalerv1alpha1.VPSieNo
 	}
 
 	// Validate Kubernetes resource name format
-	validName := regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
-	if !validName.MatchString(vn.Spec.NodeGroupName) {
+	if !validNodeGroupNameRegex.MatchString(vn.Spec.NodeGroupName) {
 		return fmt.Errorf("spec.nodeGroupName '%s' is not a valid Kubernetes resource name",
 			vn.Spec.NodeGroupName)
 	}
@@ -108,8 +136,7 @@ func (v *VPSieNodeValidator) validateDatacenter(vn *autoscalerv1alpha1.VPSieNode
 	}
 
 	// Validate datacenter format
-	validDatacenter := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
-	if !validDatacenter.MatchString(vn.Spec.DatacenterID) {
+	if !validVPSieNodeDatacenterRegex.MatchString(vn.Spec.DatacenterID) {
 		return fmt.Errorf("spec.datacenterID '%s' contains invalid characters", vn.Spec.DatacenterID)
 	}
 
@@ -123,8 +150,7 @@ func (v *VPSieNodeValidator) validateOfferingID(vn *autoscalerv1alpha1.VPSieNode
 	}
 
 	// Basic format validation
-	validInstanceType := regexp.MustCompile(`^[a-zA-Z0-9-]+$`)
-	if !validInstanceType.MatchString(vn.Spec.InstanceType) {
+	if !validInstanceTypeRegex.MatchString(vn.Spec.InstanceType) {
 		return fmt.Errorf("spec.instanceType '%s' contains invalid characters", vn.Spec.InstanceType)
 	}
 
@@ -138,8 +164,7 @@ func (v *VPSieNodeValidator) validateKubernetesVersion(vn *autoscalerv1alpha1.VP
 	}
 
 	// Validate semantic version format
-	validVersion := regexp.MustCompile(`^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$`)
-	if !validVersion.MatchString(vn.Spec.KubernetesVersion) {
+	if !validVPSieNodeKubernetesVersionRegex.MatchString(vn.Spec.KubernetesVersion) {
 		return fmt.Errorf("spec.kubernetesVersion '%s' is not a valid semantic version",
 			vn.Spec.KubernetesVersion)
 	}
@@ -154,8 +179,7 @@ func (v *VPSieNodeValidator) validateOSImage(vn *autoscalerv1alpha1.VPSieNode) e
 	}
 
 	// Basic format validation
-	validOSImage := regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
-	if !validOSImage.MatchString(vn.Spec.OSImageID) {
+	if !validVPSieNodeOSImageRegex.MatchString(vn.Spec.OSImageID) {
 		return fmt.Errorf("spec.osImageId '%s' contains invalid characters", vn.Spec.OSImageID)
 	}
 
@@ -176,8 +200,7 @@ func (v *VPSieNodeValidator) validateSSHKeyIDs(vn *autoscalerv1alpha1.VPSieNode)
 		}
 
 		// Basic format validation (alphanumeric, hyphens, underscores)
-		validKeyID := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
-		if !validKeyID.MatchString(keyID) {
+		if !validSSHKeyIDRegex.MatchString(keyID) {
 			return fmt.Errorf("spec.sshKeyIds[%d] '%s' contains invalid characters", i, keyID)
 		}
 	}
@@ -190,33 +213,6 @@ func (v *VPSieNodeValidator) validateSSHKeyIDs(vn *autoscalerv1alpha1.VPSieNode)
 		}
 		seen[keyID] = true
 	}
-
-	return nil
-}
-
-// validateInstanceConfiguration validates instance configuration
-// (User data/cloud-init support was removed in v0.6.0)
-func (v *VPSieNodeValidator) validateInstanceConfiguration(vn *autoscalerv1alpha1.VPSieNode) error {
-	// Instance configuration is now handled entirely by VPSie API
-	// No additional validation needed beyond CRD schema validation
-	return nil
-}
-
-// validateImmutableFields validates that immutable fields haven't changed
-func (v *VPSieNodeValidator) validateImmutableFields(vn *autoscalerv1alpha1.VPSieNode) error {
-	// For UPDATE operations, we would need the old object to compare
-	// This is a placeholder - in a full implementation, you would:
-	// 1. Get the old object from the admission request
-	// 2. Compare immutable fields (NodeGroupName, Datacenter, OfferingID, etc.)
-	// 3. Return error if any immutable fields changed
-
-	// Example immutable fields:
-	// - NodeGroupName (can't move a node to a different group)
-	// - Datacenter (can't move a node to a different datacenter)
-	// - OfferingID (can't change instance type after creation)
-
-	// Note: This would require updating the Validate signature to accept
-	// both old and new objects, or updating the server to pass the old object
 
 	return nil
 }

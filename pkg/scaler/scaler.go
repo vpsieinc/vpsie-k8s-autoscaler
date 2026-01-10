@@ -148,7 +148,8 @@ func DefaultConfig() *Config {
 	}
 }
 
-// IdentifyUnderutilizedNodes finds nodes with low utilization
+// IdentifyUnderutilizedNodes finds nodes with low utilization.
+// Only processes NodeGroups that have the managed label (autoscaler.vpsie.com/managed=true).
 func (s *ScaleDownManager) IdentifyUnderutilizedNodes(
 	ctx context.Context,
 	nodeGroup *autoscalerv1alpha1.NodeGroup,
@@ -159,6 +160,14 @@ func (s *ScaleDownManager) IdentifyUnderutilizedNodes(
 		s.logger.Infow("identifying underutilized nodes",
 			"nodeGroup", nodeGroup.Name,
 			"requestID", requestID)
+	}
+
+	// NodeGroup isolation: Defensive check to ensure only managed NodeGroups are processed
+	if !autoscalerv1alpha1.IsManagedNodeGroup(nodeGroup) {
+		s.logger.Debugw("skipping unmanaged NodeGroup in scale-down",
+			"nodeGroup", nodeGroup.Name,
+			"labels", nodeGroup.Labels)
+		return nil, nil
 	}
 
 	// Get all nodes in this NodeGroup
@@ -392,37 +401,17 @@ func (s *ScaleDownManager) ScaleDown(
 			continue
 		}
 
-		s.logger.Info("node drained successfully",
+		s.logger.Info("node drained successfully - ready for VPSieNode deletion",
 			"node", candidate.Node.Name,
 			"nodeGroup", nodeGroup.Name)
 
-		// Delete the Kubernetes node object after successful drain
-		// This ensures the node is fully removed from the cluster
-		s.logger.Info("deleting node from cluster",
-			"node", candidate.Node.Name,
-			"nodeGroup", nodeGroup.Name)
-
-		if err := s.client.CoreV1().Nodes().Delete(ctx, candidate.Node.Name, metav1.DeleteOptions{}); err != nil {
-			// Log error but don't fail the entire scale-down operation
-			// The node is already drained and cordoned, so it's safe to continue
-			s.logger.Error("failed to delete node - node is drained but deletion failed",
-				"node", candidate.Node.Name,
-				"error", err)
-
-			// Record node deletion failure metric
-			metrics.ScaleDownErrorsTotal.WithLabelValues(
-				nodeGroup.Name,
-				nodeGroup.Namespace,
-				"node_deletion_failed",
-			).Inc()
-
-			errors = append(errors, fmt.Errorf("failed to delete node %s after drain: %w", candidate.Node.Name, err))
-			continue
-		}
-
-		s.logger.Info("node deleted successfully",
-			"node", candidate.Node.Name,
-			"nodeGroup", nodeGroup.Name)
+		// NOTE: We do NOT delete the Kubernetes node here.
+		// The proper flow is:
+		// 1. ScaleDownManager drains the node (done above)
+		// 2. NodeGroupReconciler deletes the VPSieNode CR
+		// 3. VPSieNode controller terminates the VM and deletes the K8s node
+		//
+		// This ensures proper cleanup of VPSie resources and consistent state.
 
 		successCount++
 
@@ -459,8 +448,8 @@ func (s *ScaleDownManager) getNodeGroupNodes(
 	ctx context.Context,
 	nodeGroup *autoscalerv1alpha1.NodeGroup,
 ) ([]*corev1.Node, error) {
-	// List all nodes with NodeGroup label
-	labelSelector := fmt.Sprintf("autoscaler.vpsie.com/nodegroup=%s", nodeGroup.Name)
+	// List all nodes with NodeGroup label using centralized constants
+	labelSelector := fmt.Sprintf("%s=%s", autoscalerv1alpha1.NodeGroupLabelKey, nodeGroup.Name)
 	nodeList, err := s.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
 	})

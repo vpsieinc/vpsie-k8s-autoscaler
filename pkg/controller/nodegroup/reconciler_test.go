@@ -373,3 +373,91 @@ func TestStatusPatchTiming(t *testing.T) {
 	assert.Equal(t, int32(7), ng.Status.CurrentNodes, "Modified object should have new values")
 	assert.Equal(t, int32(8), ng.Status.DesiredNodes, "Modified object should have new values")
 }
+
+// TestNodeGroupIsolationFilter verifies that only managed NodeGroups are processed
+func TestNodeGroupIsolationFilter(t *testing.T) {
+	tests := []struct {
+		name      string
+		labels    map[string]string
+		isManaged bool
+	}{
+		{
+			name:      "managed NodeGroup with correct label",
+			labels:    map[string]string{ManagedLabelKey: ManagedLabelValue},
+			isManaged: true,
+		},
+		{
+			name:      "unmanaged NodeGroup without labels",
+			labels:    nil,
+			isManaged: false,
+		},
+		{
+			name:      "unmanaged NodeGroup with empty labels",
+			labels:    map[string]string{},
+			isManaged: false,
+		},
+		{
+			name:      "unmanaged NodeGroup with wrong label value",
+			labels:    map[string]string{ManagedLabelKey: "false"},
+			isManaged: false,
+		},
+		{
+			name:      "unmanaged NodeGroup with different label",
+			labels:    map[string]string{"some-other-label": "true"},
+			isManaged: false,
+		},
+		{
+			name: "managed NodeGroup with additional labels",
+			labels: map[string]string{
+				ManagedLabelKey: ManagedLabelValue,
+				"environment":   "production",
+				"team":          "platform",
+			},
+			isManaged: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ng := &v1alpha1.NodeGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-ng",
+					Namespace: "default",
+					Labels:    tt.labels,
+				},
+			}
+
+			result := IsManagedNodeGroup(ng)
+			assert.Equal(t, tt.isManaged, result)
+		})
+	}
+}
+
+// TestBuildVPSieNodeHasManagedLabel verifies VPSieNodes inherit managed label from NodeGroup
+func TestBuildVPSieNodeHasManagedLabel(t *testing.T) {
+	ng := &v1alpha1.NodeGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-ng",
+			Namespace: "default",
+			Labels: map[string]string{
+				ManagedLabelKey: ManagedLabelValue,
+			},
+		},
+		Spec: v1alpha1.NodeGroupSpec{
+			DatacenterID: "dc-1",
+			OfferingIDs:  []string{"offering-1"},
+			OSImageID:    "ubuntu-22.04",
+		},
+	}
+
+	r := &NodeGroupReconciler{}
+	vn := r.buildVPSieNode(ng)
+
+	// Verify VPSieNode has managed label
+	assert.Equal(t, ManagedLabelValue, vn.Labels[ManagedLabelKey],
+		"VPSieNode should inherit managed label")
+
+	// Verify VPSieNode has nodegroup label
+	assert.Equal(t, ng.Name, vn.Labels[NodeGroupNameLabelKey],
+		"VPSieNode should have nodegroup name label")
+}

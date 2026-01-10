@@ -288,11 +288,11 @@ func TestGetNodeDrainDuration(t *testing.T) {
 	oneHourAgo := now.Add(-1 * time.Hour)
 
 	tests := []struct {
-		name            string
-		node            *corev1.Node
-		expectedMin     time.Duration
-		expectedMax     time.Duration
-		expectZero      bool
+		name        string
+		node        *corev1.Node
+		expectedMin time.Duration
+		expectedMax time.Duration
+		expectZero  bool
 	}{
 		{
 			name: "Node draining for 5 minutes",
@@ -540,10 +540,10 @@ func TestCordonNode(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
 	tests := []struct {
-		name           string
-		node           *corev1.Node
-		expectChange   bool
-		expectError    bool
+		name         string
+		node         *corev1.Node
+		expectChange bool
+		expectError  bool
 	}{
 		{
 			name: "Cordon schedulable node",
@@ -610,10 +610,10 @@ func TestUncordonNode(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
 	tests := []struct {
-		name           string
-		node           *corev1.Node
-		expectChange   bool
-		expectError    bool
+		name         string
+		node         *corev1.Node
+		expectChange bool
+		expectError  bool
 	}{
 		{
 			name: "Uncordon cordoned node",
@@ -749,10 +749,10 @@ func TestAnnotateNodeDrainStatus(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
 	tests := []struct {
-		name         string
-		node         *corev1.Node
-		status       string
-		expectError  bool
+		name        string
+		node        *corev1.Node
+		status      string
+		expectError bool
 	}{
 		{
 			name: "Set status to complete",

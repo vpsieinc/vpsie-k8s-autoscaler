@@ -554,6 +554,105 @@ var (
 		},
 		[]string{"event_type", "category", "severity"},
 	)
+
+	// Dynamic NodeGroup Metrics
+
+	// DynamicNodeGroupCreationsTotal tracks dynamic NodeGroup creation attempts
+	DynamicNodeGroupCreationsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "dynamic_nodegroup_creations_total",
+			Help:      "Total number of dynamic NodeGroup creation attempts",
+		},
+		[]string{"result", "namespace"}, // result: success, failure
+	)
+
+	// EventWatcher Metrics
+
+	// EventBufferSize tracks the current size of the event buffer
+	EventBufferSize = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Name:      "event_buffer_size",
+			Help:      "Current number of scheduling events in the buffer",
+		},
+	)
+
+	// EventBufferDropped tracks the number of events dropped due to buffer overflow
+	EventBufferDropped = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "event_buffer_dropped_total",
+			Help:      "Total number of events dropped due to buffer overflow",
+		},
+	)
+
+	// ScaleUpDecisionsTotal tracks scale-up decisions made
+	ScaleUpDecisionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "scale_up_decisions_total",
+			Help:      "Total number of scale-up decisions made",
+		},
+		[]string{"nodegroup", "namespace", "result"}, // result: executed, skipped_cooldown, skipped_max_capacity
+	)
+
+	// ScaleUpDecisionNodesRequested tracks nodes requested in scale-up decisions
+	ScaleUpDecisionNodesRequested = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Name:      "scale_up_decision_nodes_requested",
+			Help:      "Number of nodes requested in scale-up decisions",
+			Buckets:   prometheus.LinearBuckets(1, 1, 10), // 1 to 10 nodes
+		},
+		[]string{"nodegroup", "namespace"},
+	)
+
+	// WebhookNamespaceValidationRejectionsTotal tracks namespace validation rejections in webhooks
+	WebhookNamespaceValidationRejectionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "webhook_namespace_validation_rejections_total",
+			Help:      "Total number of webhook namespace validation rejections",
+		},
+		[]string{"resource_type", "namespace"},
+		// resource_type: NodeGroup, VPSieNode
+		// namespace: the rejected namespace
+	)
+
+	// VPSieNode Discovery Metrics
+
+	// VPSieNodeDiscoveryDuration tracks the duration of VPSieNode discovery operations
+	VPSieNodeDiscoveryDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Name:      "vpsienode_discovery_duration_seconds",
+			Help:      "Duration of VPSieNode discovery operations in seconds",
+			Buckets:   prometheus.ExponentialBuckets(0.1, 2, 10), // 100ms to ~51s
+		},
+	)
+
+	// VPSieNodeDiscoveryStrategyUsed tracks which discovery strategy was successful
+	VPSieNodeDiscoveryStrategyUsed = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "vpsienode_discovery_strategy_used_total",
+			Help:      "Total number of successful discoveries by strategy",
+		},
+		[]string{"strategy"},
+		// strategy: unclaimed_k8s_node, unclaimed_k8s_node_ip, hostname_pattern, ip_matching
+	)
+
+	// VPSieNodeDiscoveryFailuresTotal tracks the number of discovery failures by reason
+	VPSieNodeDiscoveryFailuresTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "vpsienode_discovery_failures_total",
+			Help:      "Total number of VPSieNode discovery failures by reason",
+		},
+		[]string{"reason"},
+		// reason: timeout, api_error, not_found
+	)
 )
 
 // RegisterMetrics registers all metrics with the controller-runtime metrics registry
@@ -615,6 +714,18 @@ func RegisterMetrics() {
 		CredentialValid,
 		// Phase 5 Security Metrics - Audit Logging
 		AuditEventsTotal,
+		// Dynamic NodeGroup and Event Watcher Metrics
+		DynamicNodeGroupCreationsTotal,
+		EventBufferSize,
+		EventBufferDropped,
+		ScaleUpDecisionsTotal,
+		ScaleUpDecisionNodesRequested,
+		// Webhook Metrics
+		WebhookNamespaceValidationRejectionsTotal,
+		// VPSieNode Discovery Metrics
+		VPSieNodeDiscoveryDuration,
+		VPSieNodeDiscoveryStrategyUsed,
+		VPSieNodeDiscoveryFailuresTotal,
 	)
 }
 
@@ -665,4 +776,14 @@ func ResetMetrics() {
 	NodeUtilizationCPU.Reset()
 	NodeUtilizationMemory.Reset()
 	NodeGroupCostCurrent.Reset()
+	// Dynamic NodeGroup and Event Watcher Metrics
+	DynamicNodeGroupCreationsTotal.Reset()
+	ScaleUpDecisionsTotal.Reset()
+	ScaleUpDecisionNodesRequested.Reset()
+	// Webhook Metrics
+	WebhookNamespaceValidationRejectionsTotal.Reset()
+	// VPSieNode Discovery Metrics
+	VPSieNodeDiscoveryStrategyUsed.Reset()
+	VPSieNodeDiscoveryFailuresTotal.Reset()
+	// Note: VPSieNodeDiscoveryDuration is a Histogram without Reset() method
 }

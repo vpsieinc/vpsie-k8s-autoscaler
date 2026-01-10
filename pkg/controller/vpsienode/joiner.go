@@ -179,12 +179,32 @@ func (j *Joiner) MonitorNode(ctx context.Context, vn *v1alpha1.VPSieNode, logger
 }
 
 // findKubernetesNode finds the Kubernetes Node corresponding to the VPSieNode
+// Uses IP-first matching strategy for reliability in async provisioning scenarios
 func (j *Joiner) findKubernetesNode(ctx context.Context, vn *v1alpha1.VPSieNode, logger *zap.Logger) (*corev1.Node, error) {
-	// Try finding by exact node name first
+	// Strategy 1: Try finding by IP address first (most reliable)
+	// IP addresses are stable identifiers in cloud environments
+	if vn.Spec.IPAddress != "" {
+		node, err := j.findNodeByIP(ctx, vn.Spec.IPAddress)
+		if err == nil && node != nil {
+			logger.Debug("Found node by IP address",
+				zap.String("ip", vn.Spec.IPAddress),
+				zap.String("nodeName", node.Name),
+			)
+			return node, nil
+		}
+		if err != nil && !errors.IsNotFound(err) {
+			logger.Debug("Error finding node by IP", zap.Error(err))
+		}
+	}
+
+	// Strategy 2: Try finding by exact node name
 	if vn.Spec.NodeName != "" {
 		node := &corev1.Node{}
 		err := j.client.Get(ctx, types.NamespacedName{Name: vn.Spec.NodeName}, node)
 		if err == nil {
+			logger.Debug("Found node by name",
+				zap.String("nodeName", vn.Spec.NodeName),
+			)
 			return node, nil
 		}
 		if !errors.IsNotFound(err) {
@@ -192,24 +212,17 @@ func (j *Joiner) findKubernetesNode(ctx context.Context, vn *v1alpha1.VPSieNode,
 		}
 	}
 
-	// Try finding by IP address
-	if vn.Spec.IPAddress != "" {
-		node, err := j.findNodeByIP(ctx, vn.Spec.IPAddress)
-		if err == nil {
-			return node, nil
-		}
-		if !errors.IsNotFound(err) {
-			logger.Debug("Error finding node by IP", zap.Error(err))
-		}
-	}
-
-	// Try finding by hostname
+	// Strategy 3: Try finding by hostname (fallback)
 	if vn.Status.Hostname != "" {
 		node, err := j.findNodeByHostname(ctx, vn.Status.Hostname)
-		if err == nil {
+		if err == nil && node != nil {
+			logger.Debug("Found node by hostname",
+				zap.String("hostname", vn.Status.Hostname),
+				zap.String("nodeName", node.Name),
+			)
 			return node, nil
 		}
-		if !errors.IsNotFound(err) {
+		if err != nil && !errors.IsNotFound(err) {
 			logger.Debug("Error finding node by hostname", zap.Error(err))
 		}
 	}
@@ -292,10 +305,10 @@ func (j *Joiner) applyNodeConfiguration(ctx context.Context, vn *v1alpha1.VPSieN
 	}
 
 	requiredLabels := map[string]string{
-		"autoscaler.vpsie.com/managed":    "true",
-		"autoscaler.vpsie.com/nodegroup":  vn.Spec.NodeGroupName,
-		"autoscaler.vpsie.com/vpsienode":  vn.Name,
-		"autoscaler.vpsie.com/datacenter": vn.Spec.DatacenterID,
+		v1alpha1.ManagedLabelKey:    v1alpha1.ManagedLabelValue,
+		v1alpha1.NodeGroupLabelKey:  vn.Spec.NodeGroupName,
+		v1alpha1.VPSieNodeLabelKey:  vn.Name,
+		v1alpha1.DatacenterLabelKey: vn.Spec.DatacenterID,
 	}
 
 	for key, value := range requiredLabels {

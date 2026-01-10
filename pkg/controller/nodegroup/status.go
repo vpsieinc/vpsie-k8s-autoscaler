@@ -10,6 +10,40 @@ import (
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 )
 
+// Re-export label constants from v1alpha1 for backward compatibility and convenience.
+// These are the canonical definitions, re-exported for use within the controller package.
+const (
+	// ManagedLabelKey is the label key used to mark NodeGroups as managed by the autoscaler.
+	ManagedLabelKey = v1alpha1.ManagedLabelKey
+
+	// ManagedLabelValue is the expected value for the managed label.
+	ManagedLabelValue = v1alpha1.ManagedLabelValue
+
+	// NodeGroupNameLabelKey is the label key used to identify which NodeGroup a resource belongs to.
+	NodeGroupNameLabelKey = v1alpha1.NodeGroupLabelKey
+)
+
+// IsManagedNodeGroup checks if the NodeGroup has the managed label set to "true".
+// Delegates to v1alpha1.IsManagedNodeGroup for consistent behavior.
+func IsManagedNodeGroup(ng *v1alpha1.NodeGroup) bool {
+	return v1alpha1.IsManagedNodeGroup(ng)
+}
+
+// SetNodeGroupManaged adds the managed label to a NodeGroup.
+// Delegates to v1alpha1.SetNodeGroupManaged for consistent behavior.
+func SetNodeGroupManaged(ng *v1alpha1.NodeGroup) {
+	v1alpha1.SetNodeGroupManaged(ng)
+}
+
+// ManagedLabelSelector returns a client.MatchingLabels selector that can be used
+// to filter NodeGroups to only those managed by the autoscaler.
+// This is useful for List operations that should only return managed NodeGroups.
+func ManagedLabelSelector() client.MatchingLabels {
+	return client.MatchingLabels{
+		ManagedLabelKey: ManagedLabelValue,
+	}
+}
+
 // UpdateNodeGroupStatus updates the NodeGroup status based on the current state of VPSieNodes
 func UpdateNodeGroupStatus(ctx context.Context, c client.Client, ng *v1alpha1.NodeGroup, vpsieNodes []v1alpha1.VPSieNode) error {
 	// Calculate node counts
@@ -190,16 +224,19 @@ func IsReady(ng *v1alpha1.NodeGroup) bool {
 		ng.Status.CurrentNodes == ng.Status.DesiredNodes
 }
 
-// GetNodeGroupNameLabel returns the label key for NodeGroup name
+// GetNodeGroupNameLabel returns the label key for NodeGroup name.
+// Deprecated: Use NodeGroupNameLabelKey constant directly instead.
 func GetNodeGroupNameLabel() string {
-	return "autoscaler.vpsie.com/nodegroup"
+	return NodeGroupNameLabelKey
 }
 
-// GetNodeGroupLabels returns labels to apply to VPSieNodes
+// GetNodeGroupLabels returns labels to apply to VPSieNodes.
+// This includes both the NodeGroup name label and the managed label,
+// ensuring that all VPSieNodes created by a managed NodeGroup are properly labeled.
 func GetNodeGroupLabels(ng *v1alpha1.NodeGroup) map[string]string {
 	labels := make(map[string]string)
-	labels[GetNodeGroupNameLabel()] = ng.Name
-	labels["autoscaler.vpsie.com/managed"] = "true"
+	labels[NodeGroupNameLabelKey] = ng.Name
+	labels[ManagedLabelKey] = ManagedLabelValue
 	return labels
 }
 

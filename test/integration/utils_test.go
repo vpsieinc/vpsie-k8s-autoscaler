@@ -23,7 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -64,7 +64,7 @@ func NewTestCluster(t *testing.T, namespace string) (*TestCluster, error) {
 	}
 
 	// Setup scheme
-	scheme := runtime.NewScheme()
+	scheme := k8sruntime.NewScheme()
 	if err := corev1.AddToScheme(scheme); err != nil {
 		return nil, fmt.Errorf("failed to add core/v1 to scheme: %w", err)
 	}
@@ -578,11 +578,14 @@ func CreateTestNodeGroup(ctx context.Context, client client.Client, name, namesp
 			Namespace: namespace,
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:          minNodes,
-			MaxNodes:          maxNodes,
-			TargetUtilization: 70,
-			DatacenterID:      "test-dc",
-			OfferingID:        "test-offering",
+			MinNodes:           minNodes,
+			MaxNodes:           maxNodes,
+			DatacenterID:       "test-dc",
+			OfferingIDs:        []string{"test-offering"},
+			ResourceIdentifier: "test-cluster",
+			Project:            "test-project",
+			OSImageID:          "test-os-image",
+			KubernetesVersion:  "v1.28.0",
 		},
 	}
 
@@ -598,9 +601,14 @@ func CreateTestVPSieNode(ctx context.Context, client client.Client, name, namesp
 			Namespace: namespace,
 		},
 		Spec: autoscalerv1alpha1.VPSieNodeSpec{
-			NodeGroupName: nodeGroupName,
-			OfferingID:    "test-offering",
-			DatacenterID:  "test-dc",
+			NodeGroupName:      nodeGroupName,
+			InstanceType:       "test-offering",
+			DatacenterID:       "test-dc",
+			VPSieInstanceID:    12345,
+			ResourceIdentifier: "test-cluster",
+			Project:            "test-project",
+			OSImageID:          "test-os-image",
+			KubernetesVersion:  "v1.28.0",
 		},
 	}
 

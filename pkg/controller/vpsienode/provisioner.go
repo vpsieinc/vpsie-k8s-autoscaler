@@ -18,6 +18,8 @@ type Provisioner struct {
 	vpsieClient VPSieClientInterface
 	// SSH key IDs to inject into VPS
 	sshKeyIDs []string
+	// discoverer handles VPS ID discovery for async provisioning
+	discoverer *Discoverer
 }
 
 // NewProvisioner creates a new Provisioner
@@ -26,6 +28,11 @@ func NewProvisioner(vpsieClient VPSieClientInterface, sshKeyIDs []string) *Provi
 		vpsieClient: vpsieClient,
 		sshKeyIDs:   sshKeyIDs,
 	}
+}
+
+// SetDiscoverer sets the discoverer for async VPS ID discovery
+func (p *Provisioner) SetDiscoverer(d *Discoverer) {
+	p.discoverer = d
 }
 
 // Provision creates a VPS and transitions through provisioning phases
@@ -47,11 +54,73 @@ const AnnotationCreationRequested = "autoscaler.vpsie.com/creation-requested"
 func (p *Provisioner) createVPS(ctx context.Context, vn *v1alpha1.VPSieNode, logger *zap.Logger) (ctrl.Result, error) {
 	// Check if creation was already requested (to avoid duplicate API calls)
 	if vn.Annotations != nil && vn.Annotations[AnnotationCreationRequested] == "true" {
-		logger.Info("Node creation already requested, waiting for node to appear",
+		logger.Info("Node creation already requested, attempting discovery",
 			zap.String("vpsienode", vn.Name),
 		)
-		// TODO: In future, could try to discover node ID by listing nodes in the group
-		// For now, just wait and requeue
+
+		// Attempt to discover the VPS ID
+		if p.discoverer != nil {
+			vps, timedOut, err := p.discoverer.DiscoverVPSID(ctx, vn)
+			if err != nil {
+				logger.Warn("VPS discovery failed", zap.Error(err))
+				// Continue - will retry on next reconcile
+			} else if timedOut {
+				// Discovery timeout - mark as failed
+				logger.Error("VPS discovery timeout exceeded",
+					zap.String("vpsienode", vn.Name),
+				)
+				return ctrl.Result{}, fmt.Errorf("VPS discovery timeout exceeded")
+			} else if vps != nil {
+				// Discovery successful - update VPSieNode
+				logger.Info("VPS discovered successfully",
+					zap.Int("vpsID", vps.ID),
+					zap.String("hostname", vps.Hostname),
+					zap.String("ip", vps.IPAddress),
+				)
+
+				// Update VPSieNode with discovered VPS information
+				vn.Spec.VPSieInstanceID = vps.ID
+				vn.Spec.IPAddress = vps.IPAddress
+				vn.Spec.IPv6Address = vps.IPv6Address
+				if vn.Spec.NodeName == "" && vps.Hostname != "" {
+					vn.Spec.NodeName = vps.Hostname
+				}
+				vn.Status.Hostname = vps.Hostname
+				vn.Status.VPSieStatus = vps.Status
+				vn.Status.Resources = v1alpha1.NodeResources{
+					CPU:      vps.CPU,
+					MemoryMB: vps.RAM,
+					DiskGB:   vps.Disk,
+				}
+
+				// For K8s-managed nodes (VPS ID=0 but IP exists), skip VPS status check
+				// The K8s node exists and is running, so go directly to Provisioned
+				if vps.ID == 0 && vps.IPAddress != "" {
+					logger.Info("K8s-managed node discovered, transitioning to Provisioned",
+						zap.String("vpsienode", vn.Name),
+						zap.String("hostname", vps.Hostname),
+						zap.String("ip", vps.IPAddress),
+					)
+					// Set NodeName from discovered hostname for the Joining phase to find it
+					if vn.Status.NodeName == "" && vps.Hostname != "" {
+						vn.Status.NodeName = vps.Hostname
+					}
+					SetPhase(vn, v1alpha1.VPSieNodePhaseProvisioned, ReasonProvisioned, "K8s node is running")
+					SetVPSReadyCondition(vn, true, ReasonProvisioned, "K8s node is running")
+					now := metav1.Now()
+					if vn.Status.CreatedAt == nil {
+						vn.Status.CreatedAt = &now
+					}
+					vn.Status.ProvisionedAt = &now
+					return ctrl.Result{RequeueAfter: FastRequeueAfter}, nil
+				}
+
+				// Continue with normal provisioning flow for VMs with VPS ID
+				return p.checkVPSStatus(ctx, vn, logger)
+			}
+		}
+
+		// VPS not discovered yet, keep waiting
 		return ctrl.Result{RequeueAfter: FastRequeueAfter}, nil
 	}
 
@@ -263,17 +332,6 @@ func (p *Provisioner) generateHostname(vn *v1alpha1.VPSieNode) string {
 	// Generate hostname from VPSieNode name
 	// Kubernetes node names must be lowercase and can contain dashes
 	return vn.Name
-}
-
-// getSSHKeyIDs returns SSH key IDs to use for VPS provisioning
-// Prefers spec-level SSH keys (per-node override), falls back to provisioner-level (global config)
-func (p *Provisioner) getSSHKeyIDs(vn *v1alpha1.VPSieNode) []string {
-	// If VPSieNode spec has SSH keys defined, use them (per-node override)
-	if len(vn.Spec.SSHKeyIDs) > 0 {
-		return vn.Spec.SSHKeyIDs
-	}
-	// Fall back to provisioner-level SSH keys (global configuration from controller options)
-	return p.sshKeyIDs
 }
 
 // GetVPS gets the VPS for a VPSieNode

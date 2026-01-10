@@ -52,12 +52,10 @@ type NodeGroupReconciler struct {
 	Recorder         record.EventRecorder
 
 	// Secret watching for credential rotation
-	SecretName         string // Name of the secret containing VPSie credentials
-	SecretNamespace    string // Namespace of the secret
-	credentialsHash    string // Hash of current credentials for change detection
-	credentialsHashMu  sync.RWMutex
-	lastSecretCheck    time.Time
-	secretCheckMu      sync.RWMutex
+	SecretName        string // Name of the secret containing VPSie credentials
+	SecretNamespace   string // Namespace of the secret
+	credentialsHash   string // Hash of current credentials for change detection
+	credentialsHashMu sync.RWMutex
 }
 
 // SetupWithManager sets up the controller with the Manager
@@ -125,9 +123,10 @@ func (r *NodeGroupReconciler) secretToNodeGroups(ctx context.Context, obj client
 		r.checkAndRotateCredentials(rotationCtx, secret)
 	}()
 
-	// Get all NodeGroups to trigger reconciliation
+	// Get all managed NodeGroups to trigger reconciliation
+	// Only managed NodeGroups need credential rotation since they're the only ones we control
 	var nodeGroupList v1alpha1.NodeGroupList
-	if err := r.List(ctx, &nodeGroupList); err != nil {
+	if err := r.List(ctx, &nodeGroupList, ManagedLabelSelector()); err != nil {
 		r.Logger.Error("Failed to list NodeGroups for secret change", zap.Error(err))
 		return nil
 	}
@@ -325,6 +324,18 @@ func (r *NodeGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		logger.Error("Failed to get NodeGroup", zap.Error(err))
 		return ctrl.Result{}, err
+	}
+
+	// NodeGroup isolation: Skip NodeGroups not managed by the autoscaler.
+	// Only NodeGroups with the managed label (autoscaler.vpsie.com/managed=true) are processed.
+	// This prevents the autoscaler from interfering with externally created or static NodeGroups.
+	if !IsManagedNodeGroup(ng) {
+		logger.Debug("Skipping unmanaged NodeGroup",
+			zap.String("nodegroup", ng.Name),
+			zap.Any("labels", ng.Labels),
+		)
+		// Do not requeue - only process if the NodeGroup is updated to add the managed label
+		return ctrl.Result{}, nil
 	}
 
 	// Handle deletion

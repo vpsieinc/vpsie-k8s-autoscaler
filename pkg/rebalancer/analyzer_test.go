@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,9 +21,11 @@ func TestNewAnalyzer(t *testing.T) {
 		analyzer := NewAnalyzer(kubeClient, nil, nil)
 		if analyzer == nil {
 			t.Fatal("Expected analyzer to be created")
+			return
 		}
 		if analyzer.config == nil {
 			t.Fatal("Expected default config to be set")
+			return
 		}
 		if analyzer.config.MinHealthyPercent != 75 {
 			t.Errorf("Expected MinHealthyPercent=75, got %d", analyzer.config.MinHealthyPercent)
@@ -242,11 +245,11 @@ func createHealthyNode(name, nodeGroup, offering string) *corev1.Node {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 			Labels: map[string]string{
-				"vpsie.io/nodegroup": nodeGroup,
-				"vpsie.io/offering":  offering,
+				v1alpha1.NodeGroupLabelKey: nodeGroup,
+				v1alpha1.OfferingLabelKey:  offering,
 			},
 			Annotations: map[string]string{
-				"vpsie.io/vps-id": "12345",
+				v1alpha1.VPSIDAnnotationKey: "12345",
 			},
 		},
 		Spec: corev1.NodeSpec{},

@@ -115,7 +115,8 @@ func (a *ResourceAnalyzer) CalculatePodResources(pod *corev1.Pod) PodResourceReq
 	}
 }
 
-// FindMatchingNodeGroups finds NodeGroups that can satisfy the pending pods
+// FindMatchingNodeGroups finds NodeGroups that can satisfy the pending pods.
+// Only managed NodeGroups (with autoscaler.vpsie.com/managed=true label) are considered.
 func (a *ResourceAnalyzer) FindMatchingNodeGroups(
 	pendingPods []corev1.Pod,
 	nodeGroups []v1alpha1.NodeGroup,
@@ -123,6 +124,14 @@ func (a *ResourceAnalyzer) FindMatchingNodeGroups(
 	matches := make([]NodeGroupMatch, 0)
 
 	for _, ng := range nodeGroups {
+		// NodeGroup isolation: Skip NodeGroups not managed by the autoscaler
+		if !v1alpha1.IsManagedNodeGroup(&ng) {
+			a.logger.Debug("Skipping unmanaged NodeGroup",
+				zap.String("nodeGroup", ng.Name),
+			)
+			continue
+		}
+
 		match := a.matchNodeGroup(&ng, pendingPods)
 		if match != nil && len(match.MatchingPods) > 0 {
 			matches = append(matches, *match)

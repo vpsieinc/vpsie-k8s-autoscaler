@@ -9,12 +9,14 @@ import (
 
 	"github.com/go-logr/zapr"
 	"go.uber.org/zap"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	metricsv1beta1 "k8s.io/metrics/pkg/client/clientset/versioned"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
@@ -23,7 +25,7 @@ import (
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/vpsienode"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/events"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/scaler"
-	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/client"
+	vpsieclient "github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/client"
 )
 
 // ControllerManager manages the lifecycle of all controllers
@@ -31,7 +33,7 @@ type ControllerManager struct {
 	config            *rest.Config
 	options           *Options
 	mgr               ctrl.Manager
-	vpsieClient       *client.Client
+	vpsieClient       *vpsieclient.Client
 	k8sClient         kubernetes.Interface
 	metricsClient     metricsv1beta1.Interface
 	scaleDownManager  *scaler.ScaleDownManager
@@ -90,6 +92,18 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 		return nil, fmt.Errorf("failed to create manager: %w", err)
 	}
 
+	// Add field indexer for pod's spec.nodeName field
+	// This is required for efficient pod listing by node name (used in drainer)
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &corev1.Pod{}, "spec.nodeName", func(obj client.Object) []string {
+		pod := obj.(*corev1.Pod)
+		if pod.Spec.NodeName == "" {
+			return nil
+		}
+		return []string{pod.Spec.NodeName}
+	}); err != nil {
+		return nil, fmt.Errorf("failed to add pod node name indexer: %w", err)
+	}
+
 	// Create Kubernetes clientset
 	k8sClient, err := kubernetes.NewForConfig(config)
 	if err != nil {
@@ -104,7 +118,7 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 
 	// Create VPSie API client
 	ctx := context.Background()
-	vpsieClient, err := client.NewClient(ctx, k8sClient, &client.ClientOptions{
+	vpsieClient, err := vpsieclient.NewClient(ctx, k8sClient, &vpsieclient.ClientOptions{
 		SecretName:      opts.VPSieSecretName,
 		SecretNamespace: opts.VPSieSecretNamespace,
 	})
@@ -135,12 +149,21 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 		scheme:           scheme,
 	}
 
+	// Create DynamicNodeGroupCreator for automatic NodeGroup provisioning
+	// Uses default template - can be customized via configuration
+	dynamicCreator := events.NewDynamicNodeGroupCreator(
+		mgr.GetClient(),
+		logger,
+		nil, // Uses default template
+	)
+
 	// Create EventWatcher and ScaleUpController for pending pod detection
 	// ScaleUpController is created first with nil watcher, then wired up after EventWatcher is created
 	scaleUpController := events.NewScaleUpController(
 		mgr.GetClient(),
 		resourceAnalyzer,
 		nil, // Will set EventWatcher after creation via SetWatcher
+		dynamicCreator,
 		logger,
 	)
 
@@ -344,7 +367,7 @@ func (cm *ControllerManager) GetManager() ctrl.Manager {
 }
 
 // GetVPSieClient returns the VPSie API client
-func (cm *ControllerManager) GetVPSieClient() *client.Client {
+func (cm *ControllerManager) GetVPSieClient() *vpsieclient.Client {
 	return cm.vpsieClient
 }
 

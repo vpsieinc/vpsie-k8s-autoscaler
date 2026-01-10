@@ -54,8 +54,8 @@ jobs:
             type=semver,pattern={{major}}
             # Tag with 'latest' for main branch
             type=raw,value=latest,enable={{is_default_branch}}
-            # Tag with commit sha
-            type=sha,prefix={{branch}}-
+            # Tag with short commit sha (sha- prefix ensures valid tag)
+            type=sha,prefix=sha-
 
       - name: Get version information
         id: version

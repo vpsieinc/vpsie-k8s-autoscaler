@@ -76,10 +76,14 @@ func BenchmarkScaleUp(b *testing.B) {
 						Namespace: testNamespace,
 					},
 					Spec: autoscalerv1alpha1.NodeGroupSpec{
-						MinNodes:     scenario.minNodes,
-						MaxNodes:     scenario.maxNodes,
-						DatacenterID: "us-west-1",
-						OfferingID:   "standard-4cpu-8gb",
+						MinNodes:           scenario.minNodes,
+						MaxNodes:           scenario.maxNodes,
+						DatacenterID:       "us-west-1",
+						OfferingIDs:        []string{"standard-4cpu-8gb"},
+						ResourceIdentifier: "test-cluster",
+						Project:            "test-project",
+						OSImageID:          "test-os-image",
+						KubernetesVersion:  "v1.28.0",
 					},
 				}
 
@@ -193,10 +197,14 @@ func BenchmarkConcurrentScaling(b *testing.B) {
 								Namespace: testNamespace,
 							},
 							Spec: autoscalerv1alpha1.NodeGroupSpec{
-								MinNodes:     1,
-								MaxNodes:     3,
-								DatacenterID: "us-west-1",
-								OfferingID:   "standard-2cpu-4gb",
+								MinNodes:           1,
+								MaxNodes:           3,
+								DatacenterID:       "us-west-1",
+								OfferingIDs:        []string{"standard-2cpu-4gb"},
+								ResourceIdentifier: "test-cluster",
+								Project:            "test-project",
+								OSImageID:          "test-os-image",
+								KubernetesVersion:  "v1.28.0",
 							},
 						}
 
@@ -297,10 +305,14 @@ func BenchmarkAPILatency(b *testing.B) {
 						Namespace: testNamespace,
 					},
 					Spec: autoscalerv1alpha1.NodeGroupSpec{
-						MinNodes:     1,
-						MaxNodes:     5,
-						DatacenterID: "us-west-1",
-						OfferingID:   "standard-2cpu-4gb",
+						MinNodes:           1,
+						MaxNodes:           5,
+						DatacenterID:       "us-west-1",
+						OfferingIDs:        []string{"standard-2cpu-4gb"},
+						ResourceIdentifier: "test-cluster",
+						Project:            "test-project",
+						OSImageID:          "test-os-image",
+						KubernetesVersion:  "v1.28.0",
 					},
 				}
 
@@ -396,10 +408,14 @@ func BenchmarkResourceUsage(b *testing.B) {
 						Namespace: testNamespace,
 					},
 					Spec: autoscalerv1alpha1.NodeGroupSpec{
-						MinNodes:     1,
-						MaxNodes:     5,
-						DatacenterID: "us-west-1",
-						OfferingID:   "standard-2cpu-4gb",
+						MinNodes:           1,
+						MaxNodes:           5,
+						DatacenterID:       "us-west-1",
+						OfferingIDs:        []string{"standard-2cpu-4gb"},
+						ResourceIdentifier: "test-cluster",
+						Project:            "test-project",
+						OSImageID:          "test-os-image",
+						KubernetesVersion:  "v1.28.0",
 					},
 				}
 				err := k8sClient.Create(ctx, nodeGroup)
@@ -472,10 +488,14 @@ func BenchmarkReconciliationLoop(b *testing.B) {
 						Namespace: testNamespace,
 					},
 					Spec: autoscalerv1alpha1.NodeGroupSpec{
-						MinNodes:     1,
-						MaxNodes:     3,
-						DatacenterID: "us-west-1",
-						OfferingID:   "standard-2cpu-4gb",
+						MinNodes:           1,
+						MaxNodes:           3,
+						DatacenterID:       "us-west-1",
+						OfferingIDs:        []string{"standard-2cpu-4gb"},
+						ResourceIdentifier: "test-cluster",
+						Project:            "test-project",
+						OSImageID:          "test-os-image",
+						KubernetesVersion:  "v1.28.0",
 					},
 				}
 				err := k8sClient.Create(ctx, nodeGroup)
@@ -498,7 +518,7 @@ func BenchmarkReconciliationLoop(b *testing.B) {
 				require.NoError(b, err)
 
 				// Make a minor change
-				ng.Spec.TargetUtilization = 70 + int32(i%10)
+				ng.Spec.Notes = fmt.Sprintf("bench-iteration-%d", i)
 				startTime := time.Now()
 				err = k8sClient.Update(ctx, ng)
 				require.NoError(b, err)
@@ -590,10 +610,14 @@ func BenchmarkStateTransitions(b *testing.B) {
 						Namespace: testNamespace,
 					},
 					Spec: autoscalerv1alpha1.NodeGroupSpec{
-						MinNodes:     3,
-						MaxNodes:     3,
-						DatacenterID: "us-west-1",
-						OfferingID:   "standard-2cpu-4gb",
+						MinNodes:           3,
+						MaxNodes:           3,
+						DatacenterID:       "us-west-1",
+						OfferingIDs:        []string{"standard-2cpu-4gb"},
+						ResourceIdentifier: "test-cluster",
+						Project:            "test-project",
+						OSImageID:          "test-os-image",
+						KubernetesVersion:  "v1.28.0",
 					},
 				}
 

@@ -21,6 +21,7 @@ import (
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -184,11 +185,14 @@ func TestNodeGroup_CRUD(t *testing.T) {
 			Namespace: testNamespace,
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:          2,
-			MaxNodes:          5,
-			TargetUtilization: 80,
-			DatacenterID:      "us-west-1",
-			OfferingID:        "standard-2cpu-4gb",
+			MinNodes:           2,
+			MaxNodes:           5,
+			DatacenterID:       "us-west-1",
+			OfferingIDs:        []string{"standard-2cpu-4gb"},
+			ResourceIdentifier: "test-cluster",
+			Project:            "test-project",
+			OSImageID:          "test-os-image",
+			KubernetesVersion:  "v1.28.0",
 		},
 	}
 
@@ -242,9 +246,14 @@ func TestVPSieNode_CRUD(t *testing.T) {
 			Namespace: testNamespace,
 		},
 		Spec: autoscalerv1alpha1.VPSieNodeSpec{
-			NodeGroupName: "test-nodegroup",
-			OfferingID:    "standard-2cpu-4gb",
-			DatacenterID:  "us-west-1",
+			NodeGroupName:      "test-nodegroup",
+			InstanceType:       "standard-2cpu-4gb",
+			DatacenterID:       "us-west-1",
+			VPSieInstanceID:    12345,
+			ResourceIdentifier: "test-cluster",
+			Project:            "test-project",
+			OSImageID:          "test-os-image",
+			KubernetesVersion:  "v1.28.0",
 		},
 	}
 
@@ -263,7 +272,7 @@ func TestVPSieNode_CRUD(t *testing.T) {
 
 	// Test Update Status
 	retrieved.Status.Phase = autoscalerv1alpha1.VPSieNodePhaseProvisioning
-	retrieved.Status.VPSInstanceID = "vps-12345"
+	retrieved.Status.VPSieStatus = "running"
 	err = k8sClient.Status().Update(ctx, retrieved)
 	require.NoError(t, err)
 
@@ -275,7 +284,7 @@ func TestVPSieNode_CRUD(t *testing.T) {
 	}, updated)
 	require.NoError(t, err)
 	assert.Equal(t, autoscalerv1alpha1.VPSieNodePhaseProvisioning, updated.Status.Phase)
-	assert.Equal(t, "vps-12345", updated.Status.VPSInstanceID)
+	assert.Equal(t, "running", updated.Status.VPSieStatus)
 
 	// Test Delete
 	err = k8sClient.Delete(ctx, vpsieNode)
@@ -409,10 +418,14 @@ func TestMetricsEndpoint_Integration(t *testing.T) {
 			Namespace: testNamespace,
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:     1,
-			MaxNodes:     3,
-			DatacenterID: "us-west-1",
-			OfferingID:   "standard-2cpu-4gb",
+			MinNodes:           1,
+			MaxNodes:           3,
+			DatacenterID:       "us-west-1",
+			OfferingIDs:        []string{"standard-2cpu-4gb"},
+			ResourceIdentifier: "test-cluster",
+			Project:            "test-project",
+			OSImageID:          "test-os-image",
+			KubernetesVersion:  "v1.28.0",
 		},
 	}
 
@@ -480,10 +493,14 @@ func TestControllerReconciliation_Integration(t *testing.T) {
 			Namespace: testNamespace,
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:     2,
-			MaxNodes:     5,
-			DatacenterID: "us-west-1",
-			OfferingID:   "standard-2cpu-4gb",
+			MinNodes:           2,
+			MaxNodes:           5,
+			DatacenterID:       "us-west-1",
+			OfferingIDs:        []string{"standard-2cpu-4gb"},
+			ResourceIdentifier: "test-cluster",
+			Project:            "test-project",
+			OSImageID:          "test-os-image",
+			KubernetesVersion:  "v1.28.0",
 		},
 	}
 
@@ -508,7 +525,7 @@ func TestControllerReconciliation_Integration(t *testing.T) {
 	// Verify VPSieNode specs
 	for _, node := range vpsieNodes {
 		assert.Equal(t, nodeGroup.Name, node.Spec.NodeGroupName)
-		assert.Equal(t, nodeGroup.Spec.OfferingID, node.Spec.OfferingID)
+		assert.Contains(t, nodeGroup.Spec.OfferingIDs, node.Spec.InstanceType)
 		assert.Equal(t, nodeGroup.Spec.DatacenterID, node.Spec.DatacenterID)
 	}
 
@@ -613,10 +630,14 @@ func TestGracefulShutdown_Integration(t *testing.T) {
 			Namespace: testNamespace,
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:     2,
-			MaxNodes:     5,
-			DatacenterID: "us-west-1",
-			OfferingID:   "standard-2cpu-4gb",
+			MinNodes:           2,
+			MaxNodes:           5,
+			DatacenterID:       "us-west-1",
+			OfferingIDs:        []string{"standard-2cpu-4gb"},
+			ResourceIdentifier: "test-cluster",
+			Project:            "test-project",
+			OSImageID:          "test-os-image",
+			KubernetesVersion:  "v1.28.0",
 		},
 	}
 
@@ -629,8 +650,8 @@ func TestGracefulShutdown_Integration(t *testing.T) {
 	// Wait for initial reconciliation
 	time.Sleep(5 * time.Second)
 
-	// Get initial metrics
-	initialMetrics := getMetricValue(t, fmt.Sprintf("http://localhost:%d/metrics", 18086),
+	// Get initial metrics (value captured but not compared - test focuses on shutdown behavior)
+	_ = getMetricValue(t, fmt.Sprintf("http://localhost:%d/metrics", 18086),
 		"vpsie_autoscaler_controller_reconcile_total")
 
 	t.Log("Sending SIGTERM signal")
@@ -776,10 +797,14 @@ func TestShutdownWithActiveReconciliation(t *testing.T) {
 			Namespace: testNamespace,
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:     5, // More nodes = longer reconciliation
-			MaxNodes:     10,
-			DatacenterID: "us-west-1",
-			OfferingID:   "large-8cpu-16gb",
+			MinNodes:           5, // More nodes = longer reconciliation
+			MaxNodes:           10,
+			DatacenterID:       "us-west-1",
+			OfferingIDs:        []string{"large-8cpu-16gb"},
+			ResourceIdentifier: "test-cluster",
+			Project:            "test-project",
+			OSImageID:          "test-os-image",
+			KubernetesVersion:  "v1.28.0",
 		},
 	}
 
@@ -899,10 +924,14 @@ func TestLeaderElection_Integration(t *testing.T) {
 			Namespace: testNamespace,
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:     1,
-			MaxNodes:     3,
-			DatacenterID: "us-west-1",
-			OfferingID:   "standard-2cpu-4gb",
+			MinNodes:           1,
+			MaxNodes:           3,
+			DatacenterID:       "us-west-1",
+			OfferingIDs:        []string{"standard-2cpu-4gb"},
+			ResourceIdentifier: "test-cluster",
+			Project:            "test-project",
+			OSImageID:          "test-os-image",
+			KubernetesVersion:  "v1.28.0",
 		},
 	}
 
@@ -984,10 +1013,14 @@ func TestLeaderElection_Handoff(t *testing.T) {
 			Namespace: testNamespace,
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:     1,
-			MaxNodes:     3,
-			DatacenterID: "us-west-1",
-			OfferingID:   "standard-2cpu-4gb",
+			MinNodes:           1,
+			MaxNodes:           3,
+			DatacenterID:       "us-west-1",
+			OfferingIDs:        []string{"standard-2cpu-4gb"},
+			ResourceIdentifier: "test-cluster",
+			Project:            "test-project",
+			OSImageID:          "test-os-image",
+			KubernetesVersion:  "v1.28.0",
 		},
 	}
 
@@ -1104,11 +1137,14 @@ func TestScaleUp_EndToEnd(t *testing.T) {
 			Namespace: testNamespace,
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:          1,
-			MaxNodes:          5,
-			TargetUtilization: 70,
-			DatacenterID:      "us-west-1",
-			OfferingID:        "standard-4cpu-8gb",
+			MinNodes:           1,
+			MaxNodes:           5,
+			DatacenterID:       "us-west-1",
+			OfferingIDs:        []string{"standard-4cpu-8gb"},
+			ResourceIdentifier: "test-cluster",
+			Project:            "test-project",
+			OSImageID:          "test-os-image",
+			KubernetesVersion:  "v1.28.0",
 		},
 	}
 
@@ -1149,8 +1185,8 @@ func TestScaleUp_EndToEnd(t *testing.T) {
 						Image: "busybox",
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{
-								corev1.ResourceCPU:    "2",
-								corev1.ResourceMemory: "4Gi",
+								corev1.ResourceCPU:    resource.MustParse("2"),
+								corev1.ResourceMemory: resource.MustParse("4Gi"),
 							},
 						},
 					},
@@ -1260,10 +1296,14 @@ func TestMixedScaling_EndToEnd(t *testing.T) {
 				Namespace: testNamespace,
 			},
 			Spec: autoscalerv1alpha1.NodeGroupSpec{
-				MinNodes:     ng.minNodes,
-				MaxNodes:     ng.maxNodes,
-				DatacenterID: "us-west-1",
-				OfferingID:   "standard-2cpu-4gb",
+				MinNodes:           ng.minNodes,
+				MaxNodes:           ng.maxNodes,
+				DatacenterID:       "us-west-1",
+				OfferingIDs:        []string{"standard-2cpu-4gb"},
+				ResourceIdentifier: "test-cluster",
+				Project:            "test-project",
+				OSImageID:          "test-os-image",
+				KubernetesVersion:  "v1.28.0",
 			},
 		}
 
@@ -1382,10 +1422,14 @@ func TestScalingWithFailures(t *testing.T) {
 			Namespace: testNamespace,
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:     2,
-			MaxNodes:     5,
-			DatacenterID: "us-west-1",
-			OfferingID:   "standard-2cpu-4gb",
+			MinNodes:           2,
+			MaxNodes:           5,
+			DatacenterID:       "us-west-1",
+			OfferingIDs:        []string{"standard-2cpu-4gb"},
+			ResourceIdentifier: "test-cluster",
+			Project:            "test-project",
+			OSImageID:          "test-os-image",
+			KubernetesVersion:  "v1.28.0",
 		},
 	}
 
@@ -1418,7 +1462,7 @@ func TestScalingWithFailures(t *testing.T) {
 	// Test rate limiting
 	t.Log("Testing rate limiting scenario")
 
-	mockServer.RateLimitRemaining = 0 // Trigger rate limiting
+	mockServer.SetRateLimit(0) // Trigger rate limiting by setting limit to 0
 
 	// Try to update NodeGroup to trigger more API calls
 	err = k8sClient.Get(ctx, client.ObjectKey{
@@ -1440,7 +1484,7 @@ func TestScalingWithFailures(t *testing.T) {
 	assert.Greater(t, rateLimitErrors, errorCount, "Should have rate limit errors")
 
 	// Reset rate limit
-	mockServer.RateLimitRemaining = 100
+	mockServer.SetRateLimit(100)
 
 	// Verify recovery after rate limit
 	require.Eventually(t, func() bool {

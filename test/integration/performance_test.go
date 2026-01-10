@@ -343,13 +343,14 @@ func TestControllerLoad_100NodeGroups(t *testing.T) {
 				Namespace: testNamespace,
 			},
 			Spec: autoscalerv1alpha1.NodeGroupSpec{
-				MinNodes:      1,
-				MaxNodes:      3,
-				DatacenterID:  "dc-us-east-1",
-				OfferingID:    "small-2cpu-4gb",
-				SSHKeyID:      "key-123",
-				FirewallID:    "fw-456",
-				BackupEnabled: false,
+				MinNodes:           1,
+				MaxNodes:           3,
+				DatacenterID:       "dc-us-east-1",
+				OfferingIDs:        []string{"small-2cpu-4gb"},
+				ResourceIdentifier: "test-cluster",
+				Project:            "test-project",
+				OSImageID:          "test-os-image",
+				KubernetesVersion:  "v1.28.0",
 			},
 		}
 
@@ -527,11 +528,14 @@ func TestHighChurnRate(t *testing.T) {
 							Namespace: testNamespace,
 						},
 						Spec: autoscalerv1alpha1.NodeGroupSpec{
-							MinNodes:     1,
-							MaxNodes:     2,
-							DatacenterID: "dc-us-east-1",
-							OfferingID:   "small-2cpu-4gb",
-							SSHKeyID:     "key-123",
+							MinNodes:           1,
+							MaxNodes:           2,
+							DatacenterID:       "dc-us-east-1",
+							OfferingIDs:        []string{"small-2cpu-4gb"},
+							ResourceIdentifier: "test-cluster",
+							Project:            "test-project",
+							OSImageID:          "test-os-image",
+							KubernetesVersion:  "v1.28.0",
 						},
 					}
 
@@ -650,11 +654,14 @@ func TestLargeScaleReconciliation(t *testing.T) {
 			Namespace: testNamespace,
 		},
 		Spec: autoscalerv1alpha1.NodeGroupSpec{
-			MinNodes:     nodeCount,
-			MaxNodes:     nodeCount,
-			DatacenterID: "dc-us-east-1",
-			OfferingID:   "small-2cpu-4gb",
-			SSHKeyID:     "key-123",
+			MinNodes:           nodeCount,
+			MaxNodes:           nodeCount,
+			DatacenterID:       "dc-us-east-1",
+			OfferingIDs:        []string{"small-2cpu-4gb"},
+			ResourceIdentifier: "test-cluster",
+			Project:            "test-project",
+			OSImageID:          "test-os-image",
+			KubernetesVersion:  "v1.28.0",
 		},
 	}
 
@@ -742,11 +749,14 @@ func BenchmarkNodeGroupReconciliation(b *testing.B) {
 				Namespace: testNamespace,
 			},
 			Spec: autoscalerv1alpha1.NodeGroupSpec{
-				MinNodes:     1,
-				MaxNodes:     3,
-				DatacenterID: "dc-us-east-1",
-				OfferingID:   "small-2cpu-4gb",
-				SSHKeyID:     "key-123",
+				MinNodes:           1,
+				MaxNodes:           3,
+				DatacenterID:       "dc-us-east-1",
+				OfferingIDs:        []string{"small-2cpu-4gb"},
+				ResourceIdentifier: "test-cluster",
+				Project:            "test-project",
+				OSImageID:          "test-os-image",
+				KubernetesVersion:  "v1.28.0",
 			},
 		}
 
@@ -775,10 +785,14 @@ func BenchmarkVPSieNodeStatusUpdate(b *testing.B) {
 			Namespace: testNamespace,
 		},
 		Spec: autoscalerv1alpha1.VPSieNodeSpec{
-			VMID:         1000,
-			DatacenterID: "dc-us-east-1",
-			OfferingID:   "small-2cpu-4gb",
-			SSHKeyID:     "key-123",
+			VPSieInstanceID:    1000,
+			DatacenterID:       "dc-us-east-1",
+			InstanceType:       "small-2cpu-4gb",
+			NodeGroupName:      "test-nodegroup",
+			ResourceIdentifier: "test-cluster",
+			Project:            "test-project",
+			OSImageID:          "test-os-image",
+			KubernetesVersion:  "v1.28.0",
 		},
 	}
 
@@ -803,9 +817,9 @@ func BenchmarkVPSieNodeStatusUpdate(b *testing.B) {
 		}
 
 		// Update status
-		currentNode.Status.Phase = autoscalerv1alpha1.VPSieNodePhaseRunning
-		currentNode.Status.IPAddress = fmt.Sprintf("192.168.1.%d", i%256)
-		currentNode.Status.LastUpdated = metav1.Now()
+		currentNode.Status.Phase = autoscalerv1alpha1.VPSieNodePhaseReady
+		currentNode.Status.VPSieStatus = fmt.Sprintf("running-%d", i%256)
+		currentNode.Status.NodeName = fmt.Sprintf("node-%d", i%256)
 
 		err = k8sClient.Status().Update(ctx, &currentNode)
 		if err != nil {

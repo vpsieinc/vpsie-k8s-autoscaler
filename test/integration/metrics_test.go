@@ -59,8 +59,8 @@ func TestMetrics_ScaleDownBlockedTotal(t *testing.T) {
 
 		// Create ScaleDownManager
 		config := scaler.DefaultConfig()
-		config.ScaleDownCooldown = 10 * time.Minute
-		sdm := scaler.NewScaleDownManager(k8sClient, metricsClient, config)
+		config.CooldownPeriod = 10 * time.Minute
+		sdm := scaler.NewScaleDownManager(k8sClient, metricsClient, logger, config)
 
 		// Create NodeGroup with recent scale-down
 		ng := &v1alpha1.NodeGroup{
@@ -71,13 +71,12 @@ func TestMetrics_ScaleDownBlockedTotal(t *testing.T) {
 			Spec: v1alpha1.NodeGroupSpec{
 				MinNodes:     1,
 				MaxNodes:     10,
-				DatacenterID: 123,
+				DatacenterID: "123",
 			},
 			Status: v1alpha1.NodeGroupStatus{
-				CurrentNodes:        2,
-				DesiredNodes:        2,
-				LastScaleDownTime:   &metav1.Time{Time: time.Now().Add(-1 * time.Minute)}, // Recent scale-down
-				LastScaleDownNodeID: "some-vm-id",
+				CurrentNodes:      2,
+				DesiredNodes:      2,
+				LastScaleDownTime: &metav1.Time{Time: time.Now().Add(-1 * time.Minute)}, // Recent scale-down
 			},
 		}
 
@@ -122,8 +121,8 @@ func TestMetrics_ScaleDownBlockedTotal(t *testing.T) {
 
 		// Create ScaleDownManager
 		config := scaler.DefaultConfig()
-		config.ScaleDownCooldown = 0 // No cooldown
-		sdm := scaler.NewScaleDownManager(k8sClient, metricsClient, config)
+		config.CooldownPeriod = 0 // No cooldown
+		sdm := scaler.NewScaleDownManager(k8sClient, metricsClient, logger, config)
 
 		// Create NodeGroup at minimum nodes
 		ng := &v1alpha1.NodeGroup{
@@ -134,12 +133,12 @@ func TestMetrics_ScaleDownBlockedTotal(t *testing.T) {
 			Spec: v1alpha1.NodeGroupSpec{
 				MinNodes:     2, // At minimum
 				MaxNodes:     10,
-				DatacenterID: 123,
+				DatacenterID: "123",
 			},
 			Status: v1alpha1.NodeGroupStatus{
 				CurrentNodes: 2, // At minimum
 				DesiredNodes: 2,
-				Nodes: []v1alpha1.NodeStatus{
+				Nodes: []v1alpha1.NodeInfo{
 					{NodeName: "test-node-min"},
 					{NodeName: "test-node-min-2"},
 				},
@@ -214,8 +213,8 @@ func TestMetrics_ScaleDownBlockedTotal(t *testing.T) {
 
 		// Create ScaleDownManager
 		config := scaler.DefaultConfig()
-		config.ScaleDownCooldown = 0
-		sdm := scaler.NewScaleDownManager(k8sClient, metricsClient, config)
+		config.CooldownPeriod = 0
+		sdm := scaler.NewScaleDownManager(k8sClient, metricsClient, logger, config)
 
 		// Create NodeGroup
 		ng := &v1alpha1.NodeGroup{
@@ -226,12 +225,12 @@ func TestMetrics_ScaleDownBlockedTotal(t *testing.T) {
 			Spec: v1alpha1.NodeGroupSpec{
 				MinNodes:     1,
 				MaxNodes:     10,
-				DatacenterID: 123,
+				DatacenterID: "123",
 			},
 			Status: v1alpha1.NodeGroupStatus{
 				CurrentNodes: 3,
 				DesiredNodes: 3,
-				Nodes: []v1alpha1.NodeStatus{
+				Nodes: []v1alpha1.NodeInfo{
 					{NodeName: "test-node-storage"},
 					{NodeName: "test-node-2"},
 					{NodeName: "test-node-3"},
@@ -283,8 +282,8 @@ func TestMetrics_ScaleDownBlockedTotal(t *testing.T) {
 
 		// Create ScaleDownManager
 		config := scaler.DefaultConfig()
-		config.ScaleDownCooldown = 0
-		sdm := scaler.NewScaleDownManager(k8sClient, metricsClient, config)
+		config.CooldownPeriod = 0
+		sdm := scaler.NewScaleDownManager(k8sClient, metricsClient, logger, config)
 
 		// Create NodeGroup
 		ng := &v1alpha1.NodeGroup{
@@ -295,12 +294,12 @@ func TestMetrics_ScaleDownBlockedTotal(t *testing.T) {
 			Spec: v1alpha1.NodeGroupSpec{
 				MinNodes:     1,
 				MaxNodes:     10,
-				DatacenterID: 123,
+				DatacenterID: "123",
 			},
 			Status: v1alpha1.NodeGroupStatus{
 				CurrentNodes: 3,
 				DesiredNodes: 3,
-				Nodes: []v1alpha1.NodeStatus{
+				Nodes: []v1alpha1.NodeInfo{
 					{NodeName: "test-node-protected"},
 					{NodeName: "test-node-2"},
 					{NodeName: "test-node-3"},
@@ -372,7 +371,7 @@ func TestMetrics_SafetyCheckFailuresTotal(t *testing.T) {
 
 		// Create ScaleDownManager
 		config := scaler.DefaultConfig()
-		sdm := scaler.NewScaleDownManager(k8sClient, metricsClient, config)
+		sdm := scaler.NewScaleDownManager(k8sClient, metricsClient, logger, config)
 
 		// Call IsSafeToRemove - should fail local storage check
 		safe, reason, err := sdm.IsSafeToRemove(context.Background(), node, []*corev1.Pod{pod})
@@ -410,7 +409,7 @@ func TestMetrics_SafetyCheckFailuresTotal(t *testing.T) {
 
 		// Create ScaleDownManager
 		config := scaler.DefaultConfig()
-		sdm := scaler.NewScaleDownManager(k8sClient, metricsClient, config)
+		sdm := scaler.NewScaleDownManager(k8sClient, metricsClient, logger, config)
 
 		// Call IsSafeToRemove - should fail protection check
 		safe, reason, err := sdm.IsSafeToRemove(context.Background(), node, []*corev1.Pod{})
@@ -486,15 +485,19 @@ func TestMetrics_NodeDrainDuration(t *testing.T) {
 		// Create ScaleDownManager
 		config := scaler.DefaultConfig()
 		config.DrainTimeout = 1 * time.Minute
-		sdm := scaler.NewScaleDownManager(k8sClient, metricsClient, config)
+		sdm := scaler.NewScaleDownManager(k8sClient, metricsClient, logger, config)
 
 		// Call DrainNode
 		startTime := time.Now()
-		errs := sdm.DrainNode(context.Background(), node, 30*time.Second)
+		err = sdm.DrainNode(context.Background(), node)
 		drainDuration := time.Since(startTime)
 
 		// Drain should complete (may have errors for fake client, but timing is recorded)
-		t.Logf("Drain completed in %v with %d errors", drainDuration, len(errs))
+		if err != nil {
+			t.Logf("Drain completed in %v with error: %v", drainDuration, err)
+		} else {
+			t.Logf("Drain completed in %v successfully", drainDuration)
+		}
 
 		// Verify histogram was updated (result may be "success" or "error" depending on fake client behavior)
 		// We just verify that SOME drain duration was recorded
@@ -574,7 +577,7 @@ func TestMetrics_NodeDrainPodsEvicted(t *testing.T) {
 		// Create ScaleDownManager
 		config := scaler.DefaultConfig()
 		config.DrainTimeout = 1 * time.Minute
-		sdm := scaler.NewScaleDownManager(k8sClient, metricsClient, config)
+		sdm := scaler.NewScaleDownManager(k8sClient, metricsClient, logger, config)
 
 		// Call DrainNode
 		errs := sdm.DrainNode(context.Background(), node, 30*time.Second)

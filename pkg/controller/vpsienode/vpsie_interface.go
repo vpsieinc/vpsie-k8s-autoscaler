@@ -18,6 +18,10 @@ type VPSieClientInterface interface {
 	// AddK8sSlaveToGroup adds a slave node to a specific node group in a VPSie K8s cluster
 	// Uses endpoint: POST /k8s/cluster/byId/{clusterIdentifier}/add/slave/group/{groupID}
 	AddK8sSlaveToGroup(ctx context.Context, clusterIdentifier string, groupID int) (*vpsieclient.VPS, error)
+	// ListK8sNodeGroups lists all node groups for a VPSie managed Kubernetes cluster
+	// Returns the node groups with their numeric IDs and node counts
+	// Used by Discoverer to find VPS nodes created via async provisioning
+	ListK8sNodeGroups(ctx context.Context, clusterIdentifier string) ([]vpsieclient.K8sNodeGroup, error)
 }
 
 // Ensure vpsieclient.Client implements VPSieClientInterface

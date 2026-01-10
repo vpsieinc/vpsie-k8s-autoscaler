@@ -1,0 +1,69 @@
+{{- if .Values.rbac.create }}
+apiVersion: {{ include "vpsie-autoscaler.rbac.apiVersion" . }}
+kind: ClusterRole
+metadata:
+  name: {{ include "vpsie-autoscaler.fullname" . }}
+  labels:
+    {{- include "vpsie-autoscaler.labels" . | nindent 4 }}
+rules:
+  # Core API resources
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims", "persistentvolumes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Coordination for leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Custom resources
+  - apiGroups: ["autoscaler.vpsie.com"]
+    resources: ["nodegroups", "nodegroups/status", "nodegroups/finalizers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["autoscaler.vpsie.com"]
+    resources: ["vpsienodes", "vpsienodes/status", "vpsienodes/finalizers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Policy for PDB checks
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch"]
+  # Apps for deployment/replicaset checks
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  # Metrics API for node utilization (required for scale-down decisions)
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: {{ include "vpsie-autoscaler.rbac.apiVersion" . }}
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "vpsie-autoscaler.fullname" . }}
+  labels:
+    {{- include "vpsie-autoscaler.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "vpsie-autoscaler.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "vpsie-autoscaler.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

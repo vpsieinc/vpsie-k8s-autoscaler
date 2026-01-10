@@ -71,6 +71,7 @@ func TestNewCalculator(t *testing.T) {
 
 	if calc == nil {
 		t.Fatal("NewCalculator returned nil")
+		return
 	}
 
 	if calc.client == nil {

@@ -80,17 +80,17 @@ type CircuitBreaker struct {
 	mu               sync.RWMutex
 
 	// Enhanced metrics tracking
-	totalRequests       int64     // Total requests since creation
-	totalFailures       int64     // Total failures since creation
-	totalSuccesses      int64     // Total successes since creation
-	consecutiveFailures int       // Current consecutive failures
-	openDurationTotal   time.Duration // Total time spent in open state
+	totalRequests         int64         // Total requests since creation
+	totalFailures         int64         // Total failures since creation
+	totalSuccesses        int64         // Total successes since creation
+	consecutiveFailures   int           // Current consecutive failures
+	openDurationTotal     time.Duration // Total time spent in open state
 	halfOpenDurationTotal time.Duration // Total time spent in half-open state
-	lastOpenTime        time.Time // When circuit last opened
-	lastHalfOpenTime    time.Time // When circuit last entered half-open
-	halfOpenAttempts    int64     // Number of half-open test requests
-	halfOpenSuccesses   int64     // Number of successful half-open requests
-	halfOpenFailures    int64     // Number of failed half-open requests
+	lastOpenTime          time.Time     // When circuit last opened
+	lastHalfOpenTime      time.Time     // When circuit last entered half-open
+	halfOpenAttempts      int64         // Number of half-open test requests
+	halfOpenSuccesses     int64         // Number of successful half-open requests
+	halfOpenFailures      int64         // Number of failed half-open requests
 
 	// Sliding window for failure rate calculation
 	slidingWindow []bool // true = success, false = failure
@@ -328,20 +328,20 @@ func (cb *CircuitBreaker) GetStats() CircuitBreakerStats {
 
 	return CircuitBreakerStats{
 		State:                 cb.state,
-		FailureCount:         cb.failureCount,
-		SuccessCount:         cb.successCount,
-		LastStateChange:      cb.lastStateChange,
-		HalfOpenRequests:     cb.halfOpenRequests,
-		TotalRequests:        cb.totalRequests,
-		TotalFailures:        cb.totalFailures,
-		TotalSuccesses:       cb.totalSuccesses,
-		ConsecutiveFailures:  cb.consecutiveFailures,
-		OpenDurationTotal:    cb.openDurationTotal,
+		FailureCount:          cb.failureCount,
+		SuccessCount:          cb.successCount,
+		LastStateChange:       cb.lastStateChange,
+		HalfOpenRequests:      cb.halfOpenRequests,
+		TotalRequests:         cb.totalRequests,
+		TotalFailures:         cb.totalFailures,
+		TotalSuccesses:        cb.totalSuccesses,
+		ConsecutiveFailures:   cb.consecutiveFailures,
+		OpenDurationTotal:     cb.openDurationTotal,
 		HalfOpenDurationTotal: cb.halfOpenDurationTotal,
-		HalfOpenAttempts:     cb.halfOpenAttempts,
-		HalfOpenSuccesses:    cb.halfOpenSuccesses,
-		HalfOpenFailures:     cb.halfOpenFailures,
-		FailureRate:          failureRate,
+		HalfOpenAttempts:      cb.halfOpenAttempts,
+		HalfOpenSuccesses:     cb.halfOpenSuccesses,
+		HalfOpenFailures:      cb.halfOpenFailures,
+		FailureRate:           failureRate,
 	}
 }
 
