@@ -10,6 +10,27 @@ import (
 	autoscalerv1alpha1 "github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 )
 
+// Package-level compiled regular expressions for VPSieNode validation
+var (
+	// validNodeGroupNameRegex validates Kubernetes resource name format
+	validNodeGroupNameRegex = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
+
+	// validVPSieNodeDatacenterRegex validates datacenter format (alphanumeric, hyphens, underscores)
+	validVPSieNodeDatacenterRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+	// validInstanceTypeRegex validates instance type format (alphanumeric, hyphens)
+	validInstanceTypeRegex = regexp.MustCompile(`^[a-zA-Z0-9-]+$`)
+
+	// validVPSieNodeKubernetesVersionRegex validates semantic version format
+	validVPSieNodeKubernetesVersionRegex = regexp.MustCompile(`^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$`)
+
+	// validVPSieNodeOSImageRegex validates OS image ID format
+	validVPSieNodeOSImageRegex = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+
+	// validSSHKeyIDRegex validates SSH key ID format (alphanumeric, hyphens, underscores)
+	validSSHKeyIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+)
+
 // VPSieNodeValidator validates VPSieNode resources
 type VPSieNodeValidator struct {
 	logger *zap.Logger
@@ -100,8 +121,7 @@ func (v *VPSieNodeValidator) validateNodeGroupRef(vn *autoscalerv1alpha1.VPSieNo
 	}
 
 	// Validate Kubernetes resource name format
-	validName := regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
-	if !validName.MatchString(vn.Spec.NodeGroupName) {
+	if !validNodeGroupNameRegex.MatchString(vn.Spec.NodeGroupName) {
 		return fmt.Errorf("spec.nodeGroupName '%s' is not a valid Kubernetes resource name",
 			vn.Spec.NodeGroupName)
 	}
@@ -122,8 +142,7 @@ func (v *VPSieNodeValidator) validateDatacenter(vn *autoscalerv1alpha1.VPSieNode
 	}
 
 	// Validate datacenter format
-	validDatacenter := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
-	if !validDatacenter.MatchString(vn.Spec.DatacenterID) {
+	if !validVPSieNodeDatacenterRegex.MatchString(vn.Spec.DatacenterID) {
 		return fmt.Errorf("spec.datacenterID '%s' contains invalid characters", vn.Spec.DatacenterID)
 	}
 
@@ -137,8 +156,7 @@ func (v *VPSieNodeValidator) validateOfferingID(vn *autoscalerv1alpha1.VPSieNode
 	}
 
 	// Basic format validation
-	validInstanceType := regexp.MustCompile(`^[a-zA-Z0-9-]+$`)
-	if !validInstanceType.MatchString(vn.Spec.InstanceType) {
+	if !validInstanceTypeRegex.MatchString(vn.Spec.InstanceType) {
 		return fmt.Errorf("spec.instanceType '%s' contains invalid characters", vn.Spec.InstanceType)
 	}
 
@@ -152,8 +170,7 @@ func (v *VPSieNodeValidator) validateKubernetesVersion(vn *autoscalerv1alpha1.VP
 	}
 
 	// Validate semantic version format
-	validVersion := regexp.MustCompile(`^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$`)
-	if !validVersion.MatchString(vn.Spec.KubernetesVersion) {
+	if !validVPSieNodeKubernetesVersionRegex.MatchString(vn.Spec.KubernetesVersion) {
 		return fmt.Errorf("spec.kubernetesVersion '%s' is not a valid semantic version",
 			vn.Spec.KubernetesVersion)
 	}
@@ -168,8 +185,7 @@ func (v *VPSieNodeValidator) validateOSImage(vn *autoscalerv1alpha1.VPSieNode) e
 	}
 
 	// Basic format validation
-	validOSImage := regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
-	if !validOSImage.MatchString(vn.Spec.OSImageID) {
+	if !validVPSieNodeOSImageRegex.MatchString(vn.Spec.OSImageID) {
 		return fmt.Errorf("spec.osImageId '%s' contains invalid characters", vn.Spec.OSImageID)
 	}
 
@@ -190,8 +206,7 @@ func (v *VPSieNodeValidator) validateSSHKeyIDs(vn *autoscalerv1alpha1.VPSieNode)
 		}
 
 		// Basic format validation (alphanumeric, hyphens, underscores)
-		validKeyID := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
-		if !validKeyID.MatchString(keyID) {
+		if !validSSHKeyIDRegex.MatchString(keyID) {
 			return fmt.Errorf("spec.sshKeyIds[%d] '%s' contains invalid characters", i, keyID)
 		}
 	}
