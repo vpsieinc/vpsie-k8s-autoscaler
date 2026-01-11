@@ -1300,22 +1300,148 @@ func TestTolerationMatching(t *testing.T) {
 		taint := nodeWithTaint.Spec.Taints[0]
 
 		// Act: Check if wildcard toleration matches the taint
-		// result := tolerationMatches(&wildcardToleration, &taint)
+		result := tolerationMatches(&wildcardToleration, &taint)
 
 		// Assert: Wildcard toleration SHOULD match any taint because:
 		// - Empty Key + Exists operator matches all keys
 		// - Empty Effect matches all effects (NoSchedule, NoExecute, PreferNoSchedule)
 		_ = pod
 		_ = nodeWithTaint
-		_ = wildcardToleration
-		_ = taint
 
 		// Verification items:
 		// - tolerationMatches(&wildcardToleration, &taint) == true
 		// - Pod can be scheduled on any node regardless of taints
 		// - Scale-down should be ALLOWED for pods with wildcard toleration
 
-		t.Skip("Skeleton: Implementation required - tolerationMatches function")
+		assert.True(t, result, "Wildcard toleration should match any taint")
+	})
+
+	// Test tolerationMatchesTaint with multiple tolerations
+	t.Run("AC1: tolerationMatchesTaint finds matching toleration in list", func(t *testing.T) {
+		// Arrange: Create a list of tolerations including the matching one
+		tolerations := []corev1.Toleration{
+			{
+				Key:      "other",
+				Value:    "value",
+				Effect:   corev1.TaintEffectNoSchedule,
+				Operator: corev1.TolerationOpEqual,
+			},
+			{
+				Key:      "gpu",
+				Value:    "true",
+				Effect:   corev1.TaintEffectNoSchedule,
+				Operator: corev1.TolerationOpEqual,
+			},
+		}
+
+		taint := &corev1.Taint{
+			Key:    "gpu",
+			Value:  "true",
+			Effect: corev1.TaintEffectNoSchedule,
+		}
+
+		// Act: Check if any toleration in the list matches the taint
+		result := tolerationMatchesTaint(tolerations, taint)
+
+		// Assert: Should find the matching toleration
+		assert.True(t, result, "Should find matching toleration for gpu=true:NoSchedule")
+	})
+
+	// Test tolerationMatchesTaint with no matching toleration
+	t.Run("AC1: tolerationMatchesTaint returns false when no match", func(t *testing.T) {
+		// Arrange: Create tolerations that don't match the taint
+		tolerations := []corev1.Toleration{
+			{
+				Key:      "other",
+				Value:    "value",
+				Effect:   corev1.TaintEffectNoSchedule,
+				Operator: corev1.TolerationOpEqual,
+			},
+		}
+
+		taint := &corev1.Taint{
+			Key:    "gpu",
+			Value:  "true",
+			Effect: corev1.TaintEffectNoSchedule,
+		}
+
+		// Act: Check if any toleration matches
+		result := tolerationMatchesTaint(tolerations, taint)
+
+		// Assert: Should not find a match
+		assert.False(t, result, "Should not find matching toleration for gpu=true:NoSchedule")
+	})
+
+	// Test tolerationMatches with Exists operator
+	t.Run("AC1: Exists operator matches any value for the same key", func(t *testing.T) {
+		// Arrange: Create toleration with Exists operator (matches any value)
+		toleration := &corev1.Toleration{
+			Key:      "gpu",
+			Operator: corev1.TolerationOpExists,
+			Effect:   corev1.TaintEffectNoSchedule,
+		}
+
+		taint := &corev1.Taint{
+			Key:    "gpu",
+			Value:  "any-value",
+			Effect: corev1.TaintEffectNoSchedule,
+		}
+
+		// Act: Check if toleration matches
+		result := tolerationMatches(toleration, taint)
+
+		// Assert: Exists operator should match any value
+		assert.True(t, result, "Exists operator should match any value for the same key")
+	})
+
+	// Test tolerationMatches with Equal operator and different values
+	t.Run("AC1: Equal operator requires exact value match", func(t *testing.T) {
+		// Arrange: Create toleration with Equal operator
+		toleration := &corev1.Toleration{
+			Key:      "gpu",
+			Value:    "v100",
+			Operator: corev1.TolerationOpEqual,
+			Effect:   corev1.TaintEffectNoSchedule,
+		}
+
+		taint := &corev1.Taint{
+			Key:    "gpu",
+			Value:  "a100", // Different value
+			Effect: corev1.TaintEffectNoSchedule,
+		}
+
+		// Act: Check if toleration matches
+		result := tolerationMatches(toleration, taint)
+
+		// Assert: Equal operator should require exact value match
+		assert.False(t, result, "Equal operator should require exact value match")
+	})
+
+	// Test tolerationMatches with empty toleration effect
+	t.Run("AC1: Empty toleration effect matches all effects", func(t *testing.T) {
+		// Arrange: Create toleration with empty effect (matches all effects)
+		toleration := &corev1.Toleration{
+			Key:      "gpu",
+			Value:    "true",
+			Operator: corev1.TolerationOpEqual,
+			Effect:   "", // Empty effect matches all
+		}
+
+		// Test against different effects
+		noScheduleTaint := &corev1.Taint{
+			Key:    "gpu",
+			Value:  "true",
+			Effect: corev1.TaintEffectNoSchedule,
+		}
+		noExecuteTaint := &corev1.Taint{
+			Key:    "gpu",
+			Value:  "true",
+			Effect: corev1.TaintEffectNoExecute,
+		}
+
+		// Act & Assert
+		assert.True(t, tolerationMatches(toleration, noScheduleTaint), "Empty effect should match NoSchedule")
+		assert.True(t, tolerationMatches(toleration, noExecuteTaint), "Empty effect should match NoExecute")
 	})
 }
 

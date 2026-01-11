@@ -499,3 +499,48 @@ func MatchesNodeSelector(node *corev1.Node, pod *corev1.Pod) bool {
 	selector := labels.SelectorFromSet(pod.Spec.NodeSelector)
 	return selector.Matches(nodeLabels)
 }
+
+// tolerationMatches checks if a toleration matches a taint.
+// Per Kubernetes documentation:
+// - Empty key with Exists operator matches all taints (wildcard)
+// - Key must match
+// - Effect must match (empty toleration effect matches all effects)
+// - Operator: Exists matches any value, Equal requires value match
+func tolerationMatches(toleration *corev1.Toleration, taint *corev1.Taint) bool {
+	// Empty key with Exists operator matches all taints
+	if toleration.Key == "" && toleration.Operator == corev1.TolerationOpExists {
+		return true
+	}
+
+	// Key must match
+	if toleration.Key != taint.Key {
+		return false
+	}
+
+	// Effect must match (empty toleration effect matches all effects)
+	if toleration.Effect != "" && toleration.Effect != taint.Effect {
+		return false
+	}
+
+	// Operator-based value matching
+	switch toleration.Operator {
+	case corev1.TolerationOpExists:
+		// Exists operator matches any value
+		return true
+	case corev1.TolerationOpEqual, "":
+		// Equal operator (or default) requires value match
+		return toleration.Value == taint.Value
+	}
+
+	return false
+}
+
+// tolerationMatchesTaint checks if any toleration in the list matches the taint.
+func tolerationMatchesTaint(tolerations []corev1.Toleration, taint *corev1.Taint) bool {
+	for i := range tolerations {
+		if tolerationMatches(&tolerations[i], taint) {
+			return true
+		}
+	}
+	return false
+}
