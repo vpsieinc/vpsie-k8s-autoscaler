@@ -1,6 +1,7 @@
 package events
 
 import (
+	"context"
 	"fmt"
 
 	"go.uber.org/zap"
@@ -8,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/cost"
 )
 
 // ResourceDeficit represents the total resource deficit from pending pods
@@ -34,13 +36,16 @@ type NodeGroupMatch struct {
 
 // ResourceAnalyzer analyzes resource deficits and matches them to NodeGroups
 type ResourceAnalyzer struct {
-	logger *zap.Logger
+	logger     *zap.Logger
+	calculator *cost.Calculator
 }
 
 // NewResourceAnalyzer creates a new resource analyzer
-func NewResourceAnalyzer(logger *zap.Logger) *ResourceAnalyzer {
+// calculator can be nil for backward compatibility (cost scoring will be skipped)
+func NewResourceAnalyzer(logger *zap.Logger, calculator *cost.Calculator) *ResourceAnalyzer {
 	return &ResourceAnalyzer{
-		logger: logger.Named("resource-analyzer"),
+		logger:     logger.Named("resource-analyzer"),
+		calculator: calculator,
 	}
 }
 
@@ -253,6 +258,7 @@ func (a *ResourceAnalyzer) podToleratesTolerates(
 }
 
 // calculateMatchScore calculates a score for how well a NodeGroup matches the demand
+// Cost-aware scoring: cheaper NodeGroups get higher scores
 func (a *ResourceAnalyzer) calculateMatchScore(
 	ng *v1alpha1.NodeGroup,
 	matchingPods []*corev1.Pod,
@@ -279,7 +285,88 @@ func (a *ResourceAnalyzer) calculateMatchScore(
 		score += 100
 	}
 
+	// Cost-aware scoring: prefer cheaper NodeGroups
+	// Higher score for lower cost per resource unit
+	costScore := a.calculateCostScore(ng, deficit)
+	score += costScore
+
 	return score
+}
+
+// calculateCostScore calculates a score based on cost efficiency
+// Returns higher score for cheaper offerings that meet the resource requirements
+func (a *ResourceAnalyzer) calculateCostScore(ng *v1alpha1.NodeGroup, deficit ResourceDeficit) int {
+	if a.calculator == nil {
+		return 0 // No cost scoring if calculator not available
+	}
+
+	if len(ng.Spec.OfferingIDs) == 0 {
+		return 0
+	}
+
+	ctx := context.Background()
+
+	// Find the cheapest offering for this NodeGroup that meets requirements
+	requirements := cost.ResourceRequirements{
+		MinCPU:      int(deficit.CPU.MilliValue() / 1000), // Convert to cores
+		MinMemoryMB: int(deficit.Memory.Value() / (1024 * 1024)),
+	}
+
+	// If requirements are 0, use minimal requirements
+	if requirements.MinCPU == 0 {
+		requirements.MinCPU = 1
+	}
+	if requirements.MinMemoryMB == 0 {
+		requirements.MinMemoryMB = 1024
+	}
+
+	// Get the cost of the preferred or first offering
+	offeringID := ng.Spec.PreferredInstanceType
+	if offeringID == "" && len(ng.Spec.OfferingIDs) > 0 {
+		offeringID = ng.Spec.OfferingIDs[0]
+	}
+
+	offeringCost, err := a.calculator.GetOfferingCost(ctx, offeringID)
+	if err != nil {
+		a.logger.Debug("Failed to get offering cost for scoring",
+			zap.String("nodeGroup", ng.Name),
+			zap.String("offeringID", offeringID),
+			zap.Error(err),
+		)
+		return 0
+	}
+
+	// Calculate cost efficiency score
+	// Lower monthly cost = higher score
+	// Score formula: max 500 points, scaled inversely by cost
+	// $10/month = 500 points, $100/month = 50 points, $500/month = 10 points
+	maxCostScore := 500
+	if offeringCost.MonthlyCost > 0 {
+		// Inverse relationship: cheaper = higher score
+		// Using formula: score = maxScore * (referencePrice / actualPrice)
+		// Reference price of $50/month gives baseline score of 500
+		referencePrice := 50.0
+		costScore := int(float64(maxCostScore) * (referencePrice / offeringCost.MonthlyCost))
+
+		// Cap the score between 10 and maxCostScore
+		if costScore > maxCostScore {
+			costScore = maxCostScore
+		}
+		if costScore < 10 {
+			costScore = 10
+		}
+
+		a.logger.Debug("Calculated cost score",
+			zap.String("nodeGroup", ng.Name),
+			zap.String("offering", offeringCost.Name),
+			zap.Float64("monthlyCost", offeringCost.MonthlyCost),
+			zap.Int("costScore", costScore),
+		)
+
+		return costScore
+	}
+
+	return 0
 }
 
 // sortNodeGroupMatches sorts matches by score (higher first)
@@ -343,6 +430,7 @@ func (a *ResourceAnalyzer) EstimateNodesNeeded(
 }
 
 // SelectInstanceType selects the optimal instance type for a NodeGroup
+// Uses cost-aware selection to find the cheapest offering that meets requirements
 func (a *ResourceAnalyzer) SelectInstanceType(
 	ng *v1alpha1.NodeGroup,
 	deficit ResourceDeficit,
@@ -360,11 +448,50 @@ func (a *ResourceAnalyzer) SelectInstanceType(
 		}
 	}
 
-	// Otherwise, select the first available offering
-	// TODO: In future, implement cost-aware selection based on deficit
+	// Use cost-aware selection if calculator is available
+	if a.calculator != nil && len(ng.Spec.OfferingIDs) > 0 {
+		ctx := context.Background()
+
+		// Calculate resource requirements from deficit
+		requirements := cost.ResourceRequirements{
+			MinCPU:      int(deficit.CPU.MilliValue() / 1000), // Convert to cores
+			MinMemoryMB: int(deficit.Memory.Value() / (1024 * 1024)),
+		}
+
+		// Set minimum requirements if deficit is zero
+		if requirements.MinCPU == 0 {
+			requirements.MinCPU = 1
+		}
+		if requirements.MinMemoryMB == 0 {
+			requirements.MinMemoryMB = 1024
+		}
+
+		// Find cheapest offering that meets requirements from allowed offerings
+		recommendation, err := a.calculator.FindCheapestOffering(ctx, requirements, ng.Spec.OfferingIDs)
+		if err == nil && recommendation != nil {
+			a.logger.Info("Selected cheapest instance type for requirements",
+				zap.String("nodeGroup", ng.Name),
+				zap.String("instanceType", recommendation.OfferingID),
+				zap.String("offeringName", recommendation.OfferingName),
+				zap.Int("requiredCPU", requirements.MinCPU),
+				zap.Int("requiredMemoryMB", requirements.MinMemoryMB),
+			)
+			return recommendation.OfferingID, nil
+		}
+
+		// Log if cost-aware selection failed, fall back to first offering
+		if err != nil {
+			a.logger.Debug("Cost-aware selection failed, falling back to first offering",
+				zap.String("nodeGroup", ng.Name),
+				zap.Error(err),
+			)
+		}
+	}
+
+	// Fallback: select the first available offering
 	if len(ng.Spec.OfferingIDs) > 0 {
 		selected := ng.Spec.OfferingIDs[0]
-		a.logger.Debug("Selected instance type",
+		a.logger.Debug("Selected first available instance type",
 			zap.String("nodeGroup", ng.Name),
 			zap.String("instanceType", selected),
 		)

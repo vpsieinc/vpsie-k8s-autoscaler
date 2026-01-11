@@ -26,6 +26,7 @@ import (
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/events"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/scaler"
 	vpsieclient "github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/client"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/cost"
 )
 
 // ControllerManager manages the lifecycle of all controllers
@@ -130,8 +131,11 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 	scaleDownConfig := scaler.DefaultConfig()
 	scaleDownManager := scaler.NewScaleDownManager(k8sClient, metricsClient, logger, scaleDownConfig)
 
-	// Create ResourceAnalyzer for scale-up decisions
-	resourceAnalyzer := events.NewResourceAnalyzer(logger)
+	// Create cost calculator for cost-aware NodeGroup selection
+	costCalculator := cost.NewCalculator(vpsieClient)
+
+	// Create ResourceAnalyzer for scale-up decisions with cost-aware selection
+	resourceAnalyzer := events.NewResourceAnalyzer(logger, costCalculator)
 
 	// Create health checker
 	healthChecker := NewHealthChecker(vpsieClient)

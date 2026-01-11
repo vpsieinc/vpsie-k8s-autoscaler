@@ -28,7 +28,7 @@ func TestMakeScaleUpDecision(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	logger := zap.NewNop()
 
-	analyzer := NewResourceAnalyzer(logger)
+	analyzer := NewResourceAnalyzer(logger, nil)
 
 	tests := []struct {
 		name             string
@@ -263,7 +263,7 @@ func TestExecuteScaleUp(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	logger := zap.NewNop()
 
-	analyzer := NewResourceAnalyzer(logger)
+	analyzer := NewResourceAnalyzer(logger, nil)
 	watcher := NewEventWatcher(k8sClient, clientset, logger, nil)
 	controller := NewScaleUpController(k8sClient, analyzer, watcher, nil, logger)
 
@@ -402,7 +402,7 @@ func TestHandleScaleUp(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	logger := zap.NewNop()
 
-	analyzer := NewResourceAnalyzer(logger)
+	analyzer := NewResourceAnalyzer(logger, nil)
 	watcher := NewEventWatcher(k8sClient, clientset, logger, nil)
 	controller := NewScaleUpController(k8sClient, analyzer, watcher, nil, logger)
 
@@ -460,7 +460,7 @@ func TestHandleScaleUpNoPendingPods(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	logger := zap.NewNop()
 
-	analyzer := NewResourceAnalyzer(logger)
+	analyzer := NewResourceAnalyzer(logger, nil)
 	watcher := NewEventWatcher(k8sClient, clientset, logger, nil)
 	controller := NewScaleUpController(k8sClient, analyzer, watcher, nil, logger)
 
@@ -530,7 +530,7 @@ func TestHandleScaleUpNoMatchingNodeGroups(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	logger := zap.NewNop()
 
-	analyzer := NewResourceAnalyzer(logger)
+	analyzer := NewResourceAnalyzer(logger, nil)
 	watcher := NewEventWatcher(k8sClient, clientset, logger, nil)
 	controller := NewScaleUpController(k8sClient, analyzer, watcher, nil, logger)
 
@@ -617,7 +617,7 @@ func TestGetScaleUpDecisions(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	logger := zap.NewNop()
 
-	analyzer := NewResourceAnalyzer(logger)
+	analyzer := NewResourceAnalyzer(logger, nil)
 	watcher := NewEventWatcher(k8sClient, clientset, logger, nil)
 	controller := NewScaleUpController(k8sClient, analyzer, watcher, nil, logger)
 

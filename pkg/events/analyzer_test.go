@@ -15,7 +15,7 @@ import (
 
 // TestCalculatePodResources tests pod resource calculation
 func TestCalculatePodResources(t *testing.T) {
-	analyzer := NewResourceAnalyzer(zap.NewNop())
+	analyzer := NewResourceAnalyzer(zap.NewNop(), nil)
 
 	tests := []struct {
 		name           string
@@ -158,7 +158,7 @@ func TestCalculatePodResources(t *testing.T) {
 
 // TestCalculateDeficit tests resource deficit calculation
 func TestCalculateDeficit(t *testing.T) {
-	analyzer := NewResourceAnalyzer(zap.NewNop())
+	analyzer := NewResourceAnalyzer(zap.NewNop(), nil)
 
 	pod1 := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -274,7 +274,7 @@ func TestCalculateDeficit(t *testing.T) {
 
 // TestPodMatchesNodeGroup tests pod to NodeGroup matching
 func TestPodMatchesNodeGroup(t *testing.T) {
-	analyzer := NewResourceAnalyzer(zap.NewNop())
+	analyzer := NewResourceAnalyzer(zap.NewNop(), nil)
 
 	tests := []struct {
 		name      string
@@ -409,7 +409,7 @@ func TestPodMatchesNodeGroup(t *testing.T) {
 
 // TestFindMatchingNodeGroups tests NodeGroup matching logic
 func TestFindMatchingNodeGroups(t *testing.T) {
-	analyzer := NewResourceAnalyzer(zap.NewNop())
+	analyzer := NewResourceAnalyzer(zap.NewNop(), nil)
 
 	pod1 := corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -555,7 +555,7 @@ func TestFindMatchingNodeGroups(t *testing.T) {
 
 // TestCalculateMatchScore tests NodeGroup match scoring
 func TestCalculateMatchScore(t *testing.T) {
-	analyzer := NewResourceAnalyzer(zap.NewNop())
+	analyzer := NewResourceAnalyzer(zap.NewNop(), nil)
 
 	pod1 := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-1"}}
 	pod2 := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-2"}}
@@ -625,7 +625,7 @@ func TestCalculateMatchScore(t *testing.T) {
 
 // TestEstimateNodesNeeded tests node count estimation
 func TestEstimateNodesNeeded(t *testing.T) {
-	analyzer := NewResourceAnalyzer(zap.NewNop())
+	analyzer := NewResourceAnalyzer(zap.NewNop(), nil)
 
 	instanceType := v1alpha1.InstanceTypeInfo{
 		OfferingID: "offering-1",
@@ -703,7 +703,7 @@ func TestEstimateNodesNeeded(t *testing.T) {
 
 // TestSelectInstanceType tests instance type selection
 func TestSelectInstanceType(t *testing.T) {
-	analyzer := NewResourceAnalyzer(zap.NewNop())
+	analyzer := NewResourceAnalyzer(zap.NewNop(), nil)
 
 	deficit := ResourceDeficit{
 		CPU:    resource.MustParse("2000m"),
