@@ -106,19 +106,21 @@ rules:
   resources:
   - events
   verbs:
+  - get
+  - list
+  - watch
   - create
   - patch
   - update
-# Restricted secret access: only the specific secret for VPSie credentials
-# This follows principle of least privilege
+# Secret access for VPSie credentials and credential rotation watching
+# Note: list is required for controller-runtime's secret watcher
 - apiGroups:
   - ""
   resources:
   - secrets
-  resourceNames:
-  - vpsie-secret
   verbs:
   - get
+  - list
   - watch
 
 # PodDisruptionBudget permissions for safe scale-down

@@ -24,17 +24,22 @@ spec:
     spec:
       serviceAccountName: vpsie-autoscaler-controller
       priorityClassName: vpsie-autoscaler-critical
+      imagePullSecrets:
+      - name: ghcr-secret
       containers:
       - name: controller
-        image: vpsie/k8s-autoscaler:latest
-        imagePullPolicy: IfNotPresent
+        image: ghcr.io/vpsieinc/vpsie-k8s-autoscaler:0.7.2
+        imagePullPolicy: Always
         command:
         - /vpsie-autoscaler
         args:
-        - --metrics-bind-address=:8080
-        - --health-probe-bind-address=:8081
-        - --leader-elect=true
+        - --metrics-addr=:8080
+        - --health-addr=:8081
+        - --leader-election=true
         - --log-level=info
+        - --default-datacenter-id=ab70b42f-9f22-11e3-8af5-005056aa8af7
+        - --default-offering-ids=360a7d29-7ca9-11ee-8bba-0050569c68dc,3af1b942-7ca9-11ee-8bba-0050569c68dc
+        - --resource-identifier=567ee954-3b83-4912-8d74-ba47601f1cf6
         ports:
         - name: metrics
           containerPort: 8080
@@ -80,11 +85,13 @@ spec:
             secretKeyRef:
               name: vpsie-secret
               key: clientId
+              optional: true
         - name: VPSIE_CLIENT_SECRET
           valueFrom:
             secretKeyRef:
               name: vpsie-secret
               key: clientSecret
+              optional: true
         - name: POD_NAME
           valueFrom:
             fieldRef:

@@ -48,6 +48,18 @@ type Options struct {
 	// SSHKeyIDs are the VPSie SSH key IDs to inject into provisioned nodes
 	// Optional: can be empty if SSH keys are not required
 	SSHKeyIDs []string
+
+	// Dynamic NodeGroup creation template options
+	// These are used when the autoscaler creates NodeGroups on-the-fly for pending pods
+
+	// DefaultDatacenterID is the VPSie datacenter ID for dynamic NodeGroups
+	DefaultDatacenterID string
+
+	// DefaultOfferingIDs are the VPSie offering IDs available for dynamic NodeGroups
+	DefaultOfferingIDs []string
+
+	// ResourceIdentifier is the VPSie Kubernetes cluster identifier
+	ResourceIdentifier string
 }
 
 // NewDefaultOptions returns Options with default values
@@ -66,6 +78,9 @@ func NewDefaultOptions() *Options {
 		LogFormat:               "json",
 		DevelopmentMode:         false,
 		SSHKeyIDs:               nil, // No SSH keys by default
+		DefaultDatacenterID:     "",  // Must be set for dynamic NodeGroup creation
+		DefaultOfferingIDs:      nil, // Must be set for dynamic NodeGroup creation
+		ResourceIdentifier:      "",  // Must be set for dynamic NodeGroup creation
 	}
 }
 

@@ -105,6 +105,14 @@ func addFlags(cmd *cobra.Command, opts *controller.Options) {
 	flags.StringVar(&opts.VPSieSecretNamespace, "vpsie-secret-namespace", opts.VPSieSecretNamespace,
 		"Namespace of the VPSie credentials secret")
 
+	// Dynamic NodeGroup creation configuration
+	flags.StringVar(&opts.DefaultDatacenterID, "default-datacenter-id", opts.DefaultDatacenterID,
+		"VPSie datacenter ID for dynamic NodeGroup creation")
+	flags.StringSliceVar(&opts.DefaultOfferingIDs, "default-offering-ids", opts.DefaultOfferingIDs,
+		"Comma-separated VPSie offering IDs for dynamic NodeGroup creation")
+	flags.StringVar(&opts.ResourceIdentifier, "resource-identifier", opts.ResourceIdentifier,
+		"VPSie Kubernetes cluster identifier for dynamic NodeGroup creation")
+
 	// Logging configuration
 	flags.StringVar(&opts.LogLevel, "log-level", opts.LogLevel,
 		"Log level (debug, info, warn, error)")
