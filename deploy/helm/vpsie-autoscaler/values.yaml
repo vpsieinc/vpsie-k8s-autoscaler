@@ -7,9 +7,10 @@ replicaCount: 2
 
 ## Image configuration
 image:
-  repository: ghcr.io/vpsie/vpsie-k8s-autoscaler
+  repository: ghcr.io/vpsieinc/vpsie-k8s-autoscaler
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion
+  # Available tags: latest, main, sha-<commit>, v0.7.0, etc.
   tag: ""
 
 imagePullSecrets: []

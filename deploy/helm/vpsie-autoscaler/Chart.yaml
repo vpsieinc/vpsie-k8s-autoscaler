@@ -3,7 +3,7 @@ name: vpsie-autoscaler
 description: A Kubernetes node autoscaler that dynamically provisions and optimizes nodes using the VPSie cloud platform
 type: application
 version: 0.7.0
-appVersion: "0.7.0-beta"
+appVersion: "0.7.0"
 kubeVersion: ">=1.24.0-0"
 
 keywords:
@@ -13,9 +13,9 @@ keywords:
   - cloud
   - cost-optimization
 
-home: https://github.com/vpsie/vpsie-k8s-autoscaler
+home: https://github.com/vpsieinc/vpsie-k8s-autoscaler
 sources:
-  - https://github.com/vpsie/vpsie-k8s-autoscaler
+  - https://github.com/vpsieinc/vpsie-k8s-autoscaler
 
 maintainers:
   - name: VPSie Team
@@ -49,9 +49,9 @@ annotations:
   # Links
   artifacthub.io/links: |
     - name: Documentation
-      url: https://github.com/vpsie/vpsie-k8s-autoscaler/blob/main/README.md
+      url: https://github.com/vpsieinc/vpsie-k8s-autoscaler/blob/main/README.md
     - name: API Documentation
-      url: https://github.com/vpsie/vpsie-k8s-autoscaler/blob/main/docs/API.md
+      url: https://github.com/vpsieinc/vpsie-k8s-autoscaler/blob/main/docs/API.md
 
 # Optional dependencies (e.g., Prometheus Operator for ServiceMonitor)
 # dependencies:

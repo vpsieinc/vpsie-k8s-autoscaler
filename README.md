@@ -9,9 +9,9 @@ Event-driven Kubernetes node autoscaler that dynamically provisions and optimize
 
 ## 🚧 Project Status
 
-**Current Phase:** Phase 5 Complete - Cost Optimization & Node Rebalancer (v0.5.0-alpha) ✅
+**Current Phase:** Phase 5 Complete - Production Ready (v0.7.0) ✅
 
-**Last Updated:** December 3, 2024
+**Last Updated:** January 11, 2026
 
 ### ✅ Phase 1-2 Complete: Controller Implementation & Integration
 
@@ -199,30 +199,64 @@ Event-driven Kubernetes node autoscaler that dynamically provisions and optimize
 
 ## 📦 Container Images
 
-Docker images are automatically built and published to GitHub Container Registry:
+Docker images are automatically built and published to GitHub Container Registry on every merge to main:
 
 ```bash
 # Pull the latest image
-docker pull ghcr.io/vpsie/vpsie-k8s-autoscaler:latest
+docker pull ghcr.io/vpsieinc/vpsie-k8s-autoscaler:latest
 
 # Pull a specific version
-docker pull ghcr.io/vpsie/vpsie-k8s-autoscaler:v0.1.0
+docker pull ghcr.io/vpsieinc/vpsie-k8s-autoscaler:v0.7.0
 
 # Pull from main branch
-docker pull ghcr.io/vpsie/vpsie-k8s-autoscaler:main
+docker pull ghcr.io/vpsieinc/vpsie-k8s-autoscaler:main
+
+# Pull specific commit (short SHA)
+docker pull ghcr.io/vpsieinc/vpsie-k8s-autoscaler:sha-abc1234
 ```
 
 **Available tags:**
-- `latest` - Latest stable release from main branch
-- `v*` - Semantic version tags (e.g., `v0.1.0`, `v0.2.0`)
+- `latest` - Latest from main branch (updated on every merge)
 - `main` - Latest commit from main branch
-- `main-<sha>` - Specific commit from main branch
+- `sha-<commit>` - Specific commit SHA (e.g., `sha-f0cc5a9`)
+- `v*` - Semantic version tags (e.g., `v0.7.0`, `v1.0.0`)
+- `0.7`, `0` - Major.minor and major version tags
+
+**Build behavior:**
+- **On merge to main:** Images are built and pushed to ghcr.io with `latest`, `main`, and `sha-*` tags
+- **On version tag (v*):** Images are pushed with semantic version tags
+- **On pull request:** Test build only (images are NOT pushed)
 
 **Supported architectures:**
 - `linux/amd64`
 - `linux/arm64`
 
 ## Recent Updates
+
+### January 11, 2026 - v0.7.0 Release: Memory Safety & CI/CD Improvements ✅
+
+**What's New:**
+- **Memory Safety Improvements**
+  - Thread-safe node group registry in events package
+  - Concurrent access protection with mutex in metrics package
+  - Memory cleanup on NodeGroup deletion prevents leaks
+  - Safe map access patterns throughout
+
+- **Observability Enhancements**
+  - Label sanitization for Prometheus compatibility
+  - RegisterNodeGroup/UnregisterNodeGroup lifecycle methods
+  - VPSieNode discoverer optimization with caching
+
+- **CI/CD Pipeline Fixes**
+  - Fixed golang.org/x/net vulnerability
+  - Fixed Docker tag format for metadata-action
+  - Fixed DeepCopy import format for CI consistency
+  - Integration tests temporarily disabled (manual trigger only)
+
+- **All Critical CI Checks Passing**
+  - Build, Lint, Unit Tests, Verify CRDs
+  - Go Vulnerability Check, License Compliance
+  - Secret Detection, SBOM Generation, Docker Build
 
 ### December 3, 2024 - Phase 5 Complete: Cost Optimization & Node Rebalancer ✅
 
