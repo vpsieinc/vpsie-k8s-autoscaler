@@ -1096,3 +1096,471 @@ func TestIsSafeToRemove(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// Enhanced Scale-Down Safety Tests - Design Doc: enhanced-scale-down-safety-design.md
+// Generated: 2026-01-11 | Budget Used: 6 unit tests for safety.go
+// =============================================================================
+
+// TestTolerationMatching tests the toleration matching algorithm for scale-down safety.
+// AC1: "Pods with tolerations for specific taints can only be scaled down if remaining nodes have matching taints"
+func TestTolerationMatching(t *testing.T) {
+	// AC1: Toleration Matching - BLOCKED scenario
+	// ROI: 78 | Business Value: 9 (prevents GPU workload disruption) | Frequency: 7 (common)
+	// Behavior: Pod tolerates specific taint → No remaining node has taint → Scale-down BLOCKED
+	// @category: core-functionality
+	// @dependency: tolerationsTolerateTaints, tolerationMatchesTaint functions
+	// @complexity: medium
+	t.Run("AC1: Scale-down blocked - pod tolerates taint but no remaining node has it", func(t *testing.T) {
+		// Arrange: Create pod with toleration for "gpu=true:NoSchedule"
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "gpu-workload",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{
+				Tolerations: []corev1.Toleration{
+					{
+						Key:      "gpu",
+						Value:    "true",
+						Effect:   corev1.TaintEffectNoSchedule,
+						Operator: corev1.TolerationOpEqual,
+					},
+				},
+			},
+		}
+
+		// Create node with taint "gpu=true:NoSchedule" (to be removed)
+		nodeToRemove := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "gpu-node-1",
+			},
+			Spec: corev1.NodeSpec{
+				Taints: []corev1.Taint{
+					{
+						Key:    "gpu",
+						Value:  "true",
+						Effect: corev1.TaintEffectNoSchedule,
+					},
+				},
+			},
+		}
+
+		// Create remaining node WITHOUT the gpu taint
+		remainingNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-no-gpu",
+			},
+			Spec: corev1.NodeSpec{
+				// No taints - this node does NOT have gpu taint
+				Taints: []corev1.Taint{},
+			},
+		}
+
+		// Act: Check if pod can be scheduled on remaining node
+		// result := tolerationsTolerateTaints(pod.Spec.Tolerations, remainingNode.Spec.Taints)
+
+		// Assert: Pod should NOT be able to schedule on remaining node because:
+		// - The remaining node has no taints, but the pod specifically tolerates gpu=true:NoSchedule
+		// - The real check is whether remainingNode has NoSchedule/NoExecute taints that pod doesn't tolerate
+		// - Since remainingNode has no blocking taints, pod CAN schedule there (tolerations are permissive)
+		// - BUT the safety check is: if nodeToRemove has taints the pod tolerates,
+		//   we need at least one remaining node with those same taints for workload affinity
+		_ = pod
+		_ = nodeToRemove
+		_ = remainingNode
+
+		// Verification items:
+		// - Pod requires a node with gpu=true taint (by virtue of tolerating it on current node)
+		// - No remaining node has the gpu taint
+		// - Scale-down should be BLOCKED to preserve workload placement intent
+
+		t.Skip("Skeleton: Implementation required - tolerationsTolerateTaints function")
+	})
+
+	// AC1: Toleration Matching - ALLOWED scenario
+	// ROI: 78 | Business Value: 9 | Frequency: 7
+	// Behavior: Pod tolerates taint → Remaining node has same taint → Scale-down ALLOWED
+	// @category: core-functionality
+	// @dependency: tolerationsTolerateTaints function
+	// @complexity: medium
+	t.Run("AC1: Scale-down allowed - remaining node has matching taint", func(t *testing.T) {
+		// Arrange: Create pod with toleration for "gpu=true:NoSchedule"
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "gpu-workload",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{
+				Tolerations: []corev1.Toleration{
+					{
+						Key:      "gpu",
+						Value:    "true",
+						Effect:   corev1.TaintEffectNoSchedule,
+						Operator: corev1.TolerationOpEqual,
+					},
+				},
+			},
+		}
+
+		// Create node with taint "gpu=true:NoSchedule" (to be removed)
+		nodeToRemove := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "gpu-node-1",
+			},
+			Spec: corev1.NodeSpec{
+				Taints: []corev1.Taint{
+					{
+						Key:    "gpu",
+						Value:  "true",
+						Effect: corev1.TaintEffectNoSchedule,
+					},
+				},
+			},
+		}
+
+		// Create remaining node WITH the same "gpu=true:NoSchedule" taint
+		remainingNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "gpu-node-2",
+			},
+			Spec: corev1.NodeSpec{
+				Taints: []corev1.Taint{
+					{
+						Key:    "gpu",
+						Value:  "true",
+						Effect: corev1.TaintEffectNoSchedule,
+					},
+				},
+			},
+		}
+
+		// Act: Check if pod can be scheduled on remaining node
+		// result := tolerationsTolerateTaints(pod.Spec.Tolerations, remainingNode.Spec.Taints)
+
+		// Assert: Pod SHOULD be able to schedule on remaining node because:
+		// - Pod tolerates gpu=true:NoSchedule
+		// - Remaining node has gpu=true:NoSchedule taint
+		// - Pod's toleration matches the taint, so scheduling is allowed
+		_ = pod
+		_ = nodeToRemove
+		_ = remainingNode
+
+		// Verification items:
+		// - tolerationsTolerateTaints(pod.Spec.Tolerations, remainingNode.Spec.Taints) == true
+		// - findSchedulableNode returns (true, remainingNode)
+		// - Scale-down should be ALLOWED
+
+		t.Skip("Skeleton: Implementation required - tolerationsTolerateTaints function")
+	})
+
+	// AC1: Wildcard toleration - ALLOWED scenario
+	// ROI: 45 | Business Value: 6 | Frequency: 3
+	// Behavior: Pod has wildcard toleration (empty key + Exists) → Matches any taint → Scale-down ALLOWED
+	// @category: edge-case
+	// @dependency: tolerationMatches function
+	// @complexity: low
+	t.Run("AC1: Wildcard toleration matches any taint", func(t *testing.T) {
+		// Arrange: Create pod with wildcard toleration (tolerates all taints)
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "tolerant-workload",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{
+				Tolerations: []corev1.Toleration{
+					{
+						// Wildcard toleration: empty key + Exists operator matches ANY taint
+						Key:      "",
+						Operator: corev1.TolerationOpExists,
+						Effect:   "", // Empty effect matches all effects
+					},
+				},
+			},
+		}
+
+		// Create node with any arbitrary taint
+		nodeWithTaint := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "special-node",
+			},
+			Spec: corev1.NodeSpec{
+				Taints: []corev1.Taint{
+					{
+						Key:    "special",
+						Value:  "value",
+						Effect: corev1.TaintEffectNoSchedule,
+					},
+				},
+			},
+		}
+
+		// Get the wildcard toleration and the taint for direct matching test
+		wildcardToleration := pod.Spec.Tolerations[0]
+		taint := nodeWithTaint.Spec.Taints[0]
+
+		// Act: Check if wildcard toleration matches the taint
+		// result := tolerationMatches(&wildcardToleration, &taint)
+
+		// Assert: Wildcard toleration SHOULD match any taint because:
+		// - Empty Key + Exists operator matches all keys
+		// - Empty Effect matches all effects (NoSchedule, NoExecute, PreferNoSchedule)
+		_ = pod
+		_ = nodeWithTaint
+		_ = wildcardToleration
+		_ = taint
+
+		// Verification items:
+		// - tolerationMatches(&wildcardToleration, &taint) == true
+		// - Pod can be scheduled on any node regardless of taints
+		// - Scale-down should be ALLOWED for pods with wildcard toleration
+
+		t.Skip("Skeleton: Implementation required - tolerationMatches function")
+	})
+}
+
+// TestNodeSelectorInCanPodsBeRescheduled tests nodeSelector verification in scale-down safety.
+// AC2: "Pods with nodeSelector can only be scaled down if remaining nodes have matching labels"
+func TestNodeSelectorInCanPodsBeRescheduled(t *testing.T) {
+	// AC2: NodeSelector Matching - BLOCKED scenario
+	// ROI: 68 | Business Value: 8 (prevents zone/disktype workload disruption) | Frequency: 6
+	// Behavior: Pod requires label → No remaining node has label → Scale-down BLOCKED
+	// @category: core-functionality
+	// @dependency: MatchesNodeSelector (existing), findSchedulableNode (new)
+	// @complexity: medium
+	t.Run("AC2: Scale-down blocked - no remaining node has required label", func(t *testing.T) {
+		// Arrange:
+		// - Create pod with nodeSelector "disktype: ssd"
+		// - Create node with label "disktype=ssd" (to be removed)
+		// - Create remaining node WITHOUT "disktype=ssd" label
+
+		// Act:
+		// - Call findSchedulableNode() for the pod against remaining nodes
+
+		// Assert:
+		// - Verify MatchesNodeSelector returns false for remaining node
+		// - Verify findSchedulableNode returns (false, nil)
+		// - Verify canPodsBeRescheduled returns (false, reason, nil)
+
+		// Verification items:
+		// - MatchesNodeSelector(remainingNode, pod) == false
+		// - canPodsBeRescheduled returns (false, "pod X cannot be rescheduled: no suitable node found", nil)
+
+		t.Skip("Skeleton: Implementation required - findSchedulableNode function")
+	})
+
+	// AC2: NodeSelector Matching - ALLOWED scenario
+	// ROI: 68 | Business Value: 8 | Frequency: 6
+	// Behavior: Pod requires label → Remaining node has label → Scale-down ALLOWED
+	// @category: core-functionality
+	// @dependency: MatchesNodeSelector (existing), findSchedulableNode (new)
+	// @complexity: medium
+	t.Run("AC2: Scale-down allowed - remaining node has required label", func(t *testing.T) {
+		// Arrange:
+		// - Create pod with nodeSelector "disktype: ssd"
+		// - Create node with label "disktype=ssd" (to be removed)
+		// - Create remaining node WITH "disktype=ssd" label
+
+		// Act:
+		// - Call findSchedulableNode() for the pod against remaining nodes
+
+		// Assert:
+		// - Verify MatchesNodeSelector returns true for remaining node
+		// - Verify findSchedulableNode returns (true, remainingNode)
+
+		// Verification items:
+		// - MatchesNodeSelector(remainingNode, pod) == true
+		// - findSchedulableNode returns (true, remainingNode)
+
+		t.Skip("Skeleton: Implementation required - findSchedulableNode function")
+	})
+}
+
+// TestAntiAffinityVerification tests pod anti-affinity constraint checking.
+// AC3: "Pods with anti-affinity rules are checked for topology spread after removal"
+func TestAntiAffinityVerification(t *testing.T) {
+	// AC3: Anti-Affinity - BLOCKED scenario
+	// ROI: 56 | Business Value: 7 (prevents HA violation) | Frequency: 5
+	// Behavior: Pod has anti-affinity → Moving would violate constraint → Scale-down BLOCKED
+	// @category: core-functionality
+	// @dependency: hasPodAntiAffinityViolation (new), findSchedulableNode (new)
+	// @complexity: high
+	t.Run("AC3: Scale-down blocked - would violate pod anti-affinity", func(t *testing.T) {
+		// Arrange:
+		// - Create pod with required podAntiAffinity: labelSelector {app: web}, topologyKey: hostname
+		// - Create node (to be removed) running the pod
+		// - Create remaining node already running another pod with label "app=web"
+
+		// Act:
+		// - Call hasPodAntiAffinityViolation() for the pod against remaining node
+
+		// Assert:
+		// - Verify hasPodAntiAffinityViolation returns true (violation detected)
+		// - Verify findSchedulableNode returns (false, nil)
+		// - Verify canPodsBeRescheduled returns (false, reason, nil)
+
+		// Verification items:
+		// - hasPodAntiAffinityViolation(pod, remainingNode, existingPods) == true
+		// - Reason message mentions "anti-affinity"
+
+		t.Skip("Skeleton: Implementation required - hasPodAntiAffinityViolation function")
+	})
+
+	// AC3: Anti-Affinity - ALLOWED scenario (no violation)
+	// ROI: 56 | Business Value: 7 | Frequency: 5
+	// Behavior: Pod has anti-affinity → Moving would NOT violate → Scale-down ALLOWED
+	// @category: core-functionality
+	// @dependency: hasPodAntiAffinityViolation (new)
+	// @complexity: high
+	t.Run("AC3: Scale-down allowed - anti-affinity not violated", func(t *testing.T) {
+		// Arrange:
+		// - Create pod with required podAntiAffinity: labelSelector {app: web}, topologyKey: hostname
+		// - Create node (to be removed) running the pod
+		// - Create remaining node NOT running any pod with label "app=web"
+
+		// Act:
+		// - Call hasPodAntiAffinityViolation() for the pod against remaining node
+
+		// Assert:
+		// - Verify hasPodAntiAffinityViolation returns false (no violation)
+		// - Verify findSchedulableNode returns (true, remainingNode)
+
+		// Verification items:
+		// - hasPodAntiAffinityViolation(pod, remainingNode, existingPods) == false
+
+		t.Skip("Skeleton: Implementation required - hasPodAntiAffinityViolation function")
+	})
+}
+
+// TestClearBlockingMessages tests that scale-down blocking messages are informative.
+// AC4: "Scale-down is blocked with clear log message when pods cannot be rescheduled"
+func TestClearBlockingMessages(t *testing.T) {
+	// AC4: Clear Blocking Messages
+	// ROI: 54 | Business Value: 6 (debugging/operations) | Frequency: 8
+	// Behavior: Scale-down blocked → Reason message includes pod name, constraint type, specific constraint
+	// @category: ux
+	// @dependency: canPodsBeRescheduled, findSchedulableNode
+	// @complexity: low
+	t.Run("AC4: Blocking message includes pod name and constraint type", func(t *testing.T) {
+		// Arrange:
+		// - Create pod "myapp/web-abc123" with nodeSelector "zone: us-east-1"
+		// - Create remaining nodes without the required label
+
+		// Act:
+		// - Call canPodsBeRescheduled() which should return a blocking reason
+
+		// Assert:
+		// - Verify reason contains "myapp/web-abc123" (pod namespace/name)
+		// - Verify reason contains constraint type identifier (e.g., "nodeSelector" or "no suitable node")
+		// - Verify reason is actionable (operator can understand what to fix)
+
+		// Verification items:
+		// - strings.Contains(reason, "myapp/web-abc123") == true
+		// - reason describes the constraint that failed
+
+		t.Skip("Skeleton: Implementation required - canPodsBeRescheduled reason formatting")
+	})
+}
+
+// TestBackwardCompatibility tests that existing scale-down behavior is preserved.
+// AC6: "Existing clusters continue to work (nodes without special constraints scale down normally)"
+func TestBackwardCompatibility(t *testing.T) {
+	ctx := context.Background()
+	logger := zaptest.NewLogger(t)
+
+	// AC6: Backward Compatibility - Simple pods
+	// ROI: 111 | Business Value: 10 (regression prevention) | Frequency: 10 (all users)
+	// Behavior: Pods without constraints → Scale-down proceeds as before
+	// @category: core-functionality
+	// @dependency: IsSafeToRemove, canPodsBeRescheduled
+	// @complexity: low
+	t.Run("AC6: Scale-down works for simple pods without constraints", func(t *testing.T) {
+		// Arrange:
+		// - Create node to be removed with simple pod (no tolerations, nodeSelector, affinity)
+		// - Create remaining node with sufficient capacity
+		// - Both nodes without any taints or special labels
+
+		nodeToRemove := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-remove",
+				Labels: map[string]string{
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		remainingNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-keep",
+				Labels: map[string]string{
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		simplePod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "simple-app",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{
+				// No tolerations
+				// No nodeSelector
+				// No affinity
+				Containers: []corev1.Container{
+					{
+						Name: "app",
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("128Mi"),
+							},
+						},
+					},
+				},
+			},
+		}
+
+		fakeClient := fake.NewSimpleClientset(nodeToRemove, remainingNode)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Act:
+		safe, reason, err := manager.IsSafeToRemove(ctx, nodeToRemove, []*corev1.Pod{simplePod})
+
+		// Assert:
+		// - Verify IsSafeToRemove returns (true, "safe to remove", nil)
+		// - Verify no constraint-related blocking
+		require.NoError(t, err, "IsSafeToRemove should not return error for simple pods")
+		assert.True(t, safe, "Scale-down should be safe for simple pods without constraints")
+		assert.Equal(t, "safe to remove", reason, "Expected 'safe to remove' reason for simple pods")
+
+		// Verification items:
+		// - safe == true
+		// - reason == "safe to remove"
+		// - err == nil
+	})
+}
