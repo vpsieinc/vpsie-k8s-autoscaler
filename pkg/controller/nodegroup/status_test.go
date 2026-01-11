@@ -106,7 +106,7 @@ func TestValidateNodeGroupSpec(t *testing.T) {
 			errMsg:  "at least one offeringID is required",
 		},
 		{
-			name: "empty osImageID",
+			name: "empty osImageID is valid (optional field)",
 			ng: &v1alpha1.NodeGroup{
 				Spec: v1alpha1.NodeGroupSpec{
 					MinNodes:          2,
@@ -117,8 +117,7 @@ func TestValidateNodeGroupSpec(t *testing.T) {
 					KubernetesVersion: "v1.28.0",
 				},
 			},
-			wantErr: true,
-			errMsg:  "osImageID is required",
+			wantErr: false, // OSImageID is optional - VPSie API will automatically select an appropriate OS image
 		},
 	}
 

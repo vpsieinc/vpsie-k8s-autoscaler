@@ -1329,22 +1329,95 @@ func TestNodeSelectorInCanPodsBeRescheduled(t *testing.T) {
 	// @dependency: MatchesNodeSelector (existing), findSchedulableNode (new)
 	// @complexity: medium
 	t.Run("AC2: Scale-down blocked - no remaining node has required label", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
 		// Arrange:
-		// - Create pod with nodeSelector "disktype: ssd"
-		// - Create node with label "disktype=ssd" (to be removed)
-		// - Create remaining node WITHOUT "disktype=ssd" label
+		nodeToRemove := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "ssd-node-to-remove",
+				Labels: map[string]string{
+					"disktype":                       "ssd",
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		remainingNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "hdd-node",
+				Labels: map[string]string{
+					"disktype":                       "hdd", // DOES NOT match required "ssd"
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "ssd-app",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{
+				NodeSelector: map[string]string{
+					"disktype": "ssd",
+				},
+				Containers: []corev1.Container{
+					{
+						Name: "app",
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("128Mi"),
+							},
+						},
+					},
+				},
+			},
+		}
+
+		fakeClient := fake.NewSimpleClientset(nodeToRemove, remainingNode)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Verify nodeSelector does not match remaining node
+		nodeSelectorMatches := MatchesNodeSelector(remainingNode, pod)
+		assert.False(t, nodeSelectorMatches, "Remaining node should NOT match pod's nodeSelector")
 
 		// Act:
-		// - Call findSchedulableNode() for the pod against remaining nodes
+		// canSchedule, reason, err := manager.canPodsBeRescheduled(ctx, []*corev1.Pod{pod})
 
 		// Assert:
-		// - Verify MatchesNodeSelector returns false for remaining node
-		// - Verify findSchedulableNode returns (false, nil)
-		// - Verify canPodsBeRescheduled returns (false, reason, nil)
+		// require.NoError(t, err)
+		// assert.False(t, canSchedule, "Scale-down should be blocked - no SSD node available")
+		// assert.Contains(t, reason, "ssd-app", "Reason should contain pod name")
 
-		// Verification items:
-		// - MatchesNodeSelector(remainingNode, pod) == false
-		// - canPodsBeRescheduled returns (false, "pod X cannot be rescheduled: no suitable node found", nil)
+		// Suppress unused variable warnings
+		_ = ctx
+		_ = manager
 
 		t.Skip("Skeleton: Implementation required - findSchedulableNode function")
 	})
@@ -1356,21 +1429,94 @@ func TestNodeSelectorInCanPodsBeRescheduled(t *testing.T) {
 	// @dependency: MatchesNodeSelector (existing), findSchedulableNode (new)
 	// @complexity: medium
 	t.Run("AC2: Scale-down allowed - remaining node has required label", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
 		// Arrange:
-		// - Create pod with nodeSelector "disktype: ssd"
-		// - Create node with label "disktype=ssd" (to be removed)
-		// - Create remaining node WITH "disktype=ssd" label
+		nodeToRemove := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "ssd-node-to-remove",
+				Labels: map[string]string{
+					"disktype":                       "ssd",
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		remainingNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "ssd-node-2",
+				Labels: map[string]string{
+					"disktype":                       "ssd", // MATCHES required "ssd"
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "ssd-app",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{
+				NodeSelector: map[string]string{
+					"disktype": "ssd",
+				},
+				Containers: []corev1.Container{
+					{
+						Name: "app",
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("128Mi"),
+							},
+						},
+					},
+				},
+			},
+		}
+
+		fakeClient := fake.NewSimpleClientset(nodeToRemove, remainingNode)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Verify nodeSelector matches remaining node
+		nodeSelectorMatches := MatchesNodeSelector(remainingNode, pod)
+		assert.True(t, nodeSelectorMatches, "Remaining node SHOULD match pod's nodeSelector")
 
 		// Act:
-		// - Call findSchedulableNode() for the pod against remaining nodes
+		// canSchedule, reason, err := manager.canPodsBeRescheduled(ctx, []*corev1.Pod{pod})
 
 		// Assert:
-		// - Verify MatchesNodeSelector returns true for remaining node
-		// - Verify findSchedulableNode returns (true, remainingNode)
+		// require.NoError(t, err)
+		// assert.True(t, canSchedule, "Scale-down should be allowed - SSD node available")
 
-		// Verification items:
-		// - MatchesNodeSelector(remainingNode, pod) == true
-		// - findSchedulableNode returns (true, remainingNode)
+		// Suppress unused variable warnings
+		_ = ctx
+		_ = manager
 
 		t.Skip("Skeleton: Implementation required - findSchedulableNode function")
 	})
@@ -1386,22 +1532,132 @@ func TestAntiAffinityVerification(t *testing.T) {
 	// @dependency: hasPodAntiAffinityViolation (new), findSchedulableNode (new)
 	// @complexity: high
 	t.Run("AC3: Scale-down blocked - would violate pod anti-affinity", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
 		// Arrange:
-		// - Create pod with required podAntiAffinity: labelSelector {app: web}, topologyKey: hostname
-		// - Create node (to be removed) running the pod
-		// - Create remaining node already running another pod with label "app=web"
+		// Pod to be moved has anti-affinity: cannot colocate with other "app=web" pods
+		podToMove := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-to-remove",
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: &corev1.PodAntiAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+							{
+								LabelSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"app": "web",
+									},
+								},
+								TopologyKey: "kubernetes.io/hostname",
+							},
+						},
+					},
+				},
+				Containers: []corev1.Container{
+					{
+						Name: "web",
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("128Mi"),
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Node to be removed
+		nodeToRemove := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-to-remove",
+				Labels: map[string]string{
+					"kubernetes.io/hostname":         "worker-to-remove",
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		// Remaining node already has another web replica - anti-affinity would be violated
+		remainingNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname":         "worker-1",
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		// Existing pod on remaining node with label "app=web" - violates anti-affinity
+		existingPodOnRemainingNode := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-2",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web", // Matches anti-affinity selector
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+				Containers: []corev1.Container{
+					{
+						Name: "web",
+					},
+				},
+			},
+		}
+
+		fakeClient := fake.NewSimpleClientset(nodeToRemove, remainingNode, podToMove, existingPodOnRemainingNode)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
 
 		// Act:
-		// - Call hasPodAntiAffinityViolation() for the pod against remaining node
+		// violation := hasPodAntiAffinityViolation(podToMove, remainingNode, []*corev1.Pod{existingPodOnRemainingNode})
 
 		// Assert:
-		// - Verify hasPodAntiAffinityViolation returns true (violation detected)
-		// - Verify findSchedulableNode returns (false, nil)
-		// - Verify canPodsBeRescheduled returns (false, reason, nil)
+		// assert.True(t, violation, "Should detect anti-affinity violation")
+		// canSchedule, reason, err := manager.canPodsBeRescheduled(ctx, []*corev1.Pod{podToMove})
+		// require.NoError(t, err)
+		// assert.False(t, canSchedule, "Scale-down should be blocked - anti-affinity violation")
+		// assert.Contains(t, reason, "anti-affinity", "Reason should mention anti-affinity")
 
-		// Verification items:
-		// - hasPodAntiAffinityViolation(pod, remainingNode, existingPods) == true
-		// - Reason message mentions "anti-affinity"
+		// Suppress unused variable warnings
+		_ = ctx
+		_ = manager
+		_ = existingPodOnRemainingNode
+		_ = remainingNode
 
 		t.Skip("Skeleton: Implementation required - hasPodAntiAffinityViolation function")
 	})
@@ -1413,20 +1669,131 @@ func TestAntiAffinityVerification(t *testing.T) {
 	// @dependency: hasPodAntiAffinityViolation (new)
 	// @complexity: high
 	t.Run("AC3: Scale-down allowed - anti-affinity not violated", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
 		// Arrange:
-		// - Create pod with required podAntiAffinity: labelSelector {app: web}, topologyKey: hostname
-		// - Create node (to be removed) running the pod
-		// - Create remaining node NOT running any pod with label "app=web"
+		// Pod to be moved has anti-affinity: cannot colocate with other "app=web" pods
+		podToMove := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-to-remove",
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: &corev1.PodAntiAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+							{
+								LabelSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"app": "web",
+									},
+								},
+								TopologyKey: "kubernetes.io/hostname",
+							},
+						},
+					},
+				},
+				Containers: []corev1.Container{
+					{
+						Name: "web",
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("128Mi"),
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Node to be removed
+		nodeToRemove := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-to-remove",
+				Labels: map[string]string{
+					"kubernetes.io/hostname":         "worker-to-remove",
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		// Remaining node does NOT have any "app=web" pod - no anti-affinity violation
+		remainingNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname":         "worker-1",
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		// Existing pod on remaining node with DIFFERENT label - no anti-affinity violation
+		existingPodOnRemainingNode := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "db-pod",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "database", // Different label - does NOT match anti-affinity selector
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+				Containers: []corev1.Container{
+					{
+						Name: "db",
+					},
+				},
+			},
+		}
+
+		fakeClient := fake.NewSimpleClientset(nodeToRemove, remainingNode, podToMove, existingPodOnRemainingNode)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
 
 		// Act:
-		// - Call hasPodAntiAffinityViolation() for the pod against remaining node
+		// violation := hasPodAntiAffinityViolation(podToMove, remainingNode, []*corev1.Pod{existingPodOnRemainingNode})
 
 		// Assert:
-		// - Verify hasPodAntiAffinityViolation returns false (no violation)
-		// - Verify findSchedulableNode returns (true, remainingNode)
+		// assert.False(t, violation, "Should NOT detect anti-affinity violation")
+		// canSchedule, _, err := manager.canPodsBeRescheduled(ctx, []*corev1.Pod{podToMove})
+		// require.NoError(t, err)
+		// assert.True(t, canSchedule, "Scale-down should be allowed - no anti-affinity violation")
 
-		// Verification items:
-		// - hasPodAntiAffinityViolation(pod, remainingNode, existingPods) == false
+		// Suppress unused variable warnings
+		_ = ctx
+		_ = manager
+		_ = existingPodOnRemainingNode
+		_ = remainingNode
 
 		t.Skip("Skeleton: Implementation required - hasPodAntiAffinityViolation function")
 	})
@@ -1442,21 +1809,98 @@ func TestClearBlockingMessages(t *testing.T) {
 	// @dependency: canPodsBeRescheduled, findSchedulableNode
 	// @complexity: low
 	t.Run("AC4: Blocking message includes pod name and constraint type", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
 		// Arrange:
-		// - Create pod "myapp/web-abc123" with nodeSelector "zone: us-east-1"
-		// - Create remaining nodes without the required label
+		// Pod with nodeSelector that won't match any remaining node
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-abc123",
+				Namespace: "myapp",
+			},
+			Spec: corev1.PodSpec{
+				NodeSelector: map[string]string{
+					"zone": "us-east-1",
+				},
+				Containers: []corev1.Container{
+					{
+						Name: "web",
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("128Mi"),
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Node to be removed - has the required label
+		nodeToRemove := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "us-east-1-node",
+				Labels: map[string]string{
+					"zone":                           "us-east-1",
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		// Remaining node - does NOT have the required label
+		remainingNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "us-west-1-node",
+				Labels: map[string]string{
+					"zone":                           "us-west-1", // Wrong zone
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		fakeClient := fake.NewSimpleClientset(nodeToRemove, remainingNode)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
 
 		// Act:
-		// - Call canPodsBeRescheduled() which should return a blocking reason
+		// canSchedule, reason, err := manager.canPodsBeRescheduled(ctx, []*corev1.Pod{pod})
 
 		// Assert:
-		// - Verify reason contains "myapp/web-abc123" (pod namespace/name)
-		// - Verify reason contains constraint type identifier (e.g., "nodeSelector" or "no suitable node")
-		// - Verify reason is actionable (operator can understand what to fix)
+		// require.NoError(t, err)
+		// assert.False(t, canSchedule, "Scale-down should be blocked")
+		// assert.Contains(t, reason, "myapp/web-abc123", "Reason should contain pod namespace/name")
+		// // The reason should indicate what constraint failed (e.g., "no suitable node", "nodeSelector", etc.)
+		// assert.True(t, strings.Contains(reason, "no suitable node") || strings.Contains(reason, "nodeSelector"),
+		//     "Reason should describe the constraint that failed")
 
-		// Verification items:
-		// - strings.Contains(reason, "myapp/web-abc123") == true
-		// - reason describes the constraint that failed
+		// Suppress unused variable warnings
+		_ = ctx
+		_ = manager
+		_ = pod
 
 		t.Skip("Skeleton: Implementation required - canPodsBeRescheduled reason formatting")
 	})
