@@ -197,7 +197,9 @@ spec:
                 minItems: 1
                 type: array
               osImageID:
-                description: OSImageID is the VPSie OS image ID to use for new nodes
+                description: |-
+                  OSImageID is the VPSie OS image ID to use for new nodes
+                  Optional: VPSie API will automatically select an appropriate OS image if not specified
                 type: string
               preferredInstanceType:
                 description: PreferredInstanceType is the preferred offering ID to
@@ -378,7 +380,6 @@ spec:
             - maxNodes
             - minNodes
             - offeringIDs
-            - osImageID
             - project
             - resourceIdentifier
             type: object

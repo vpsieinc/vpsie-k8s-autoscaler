@@ -114,6 +114,8 @@ func addFlags(cmd *cobra.Command, opts *controller.Options) {
 		"VPSie Kubernetes cluster identifier for dynamic NodeGroup creation")
 	flags.StringVar(&opts.KubernetesVersion, "kubernetes-version", opts.KubernetesVersion,
 		"Kubernetes version for dynamic NodeGroups (e.g., v1.34.1)")
+	flags.IntVar(&opts.KubeSizeID, "kube-size-id", opts.KubeSizeID,
+		"VPSie Kubernetes size/package ID for dynamic NodeGroups (from k8s/offers API)")
 
 	// Logging configuration
 	flags.StringVar(&opts.LogLevel, "log-level", opts.LogLevel,

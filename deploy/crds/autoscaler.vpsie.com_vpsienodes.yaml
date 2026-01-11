@@ -97,7 +97,9 @@ spec:
                   If not specified, it will be automatically generated
                 type: string
               osImageID:
-                description: OSImageID is the VPSie OS image ID to use for this node
+                description: |-
+                  OSImageID is the VPSie OS image ID to use for this node
+                  Optional: VPSie API will automatically select an appropriate OS image if not specified
                 type: string
               project:
                 description: Project is the VPSie project ID
@@ -124,7 +126,6 @@ spec:
             - instanceType
             - kubernetesVersion
             - nodeGroupName
-            - osImageID
             - project
             - resourceIdentifier
             - vpsieInstanceID

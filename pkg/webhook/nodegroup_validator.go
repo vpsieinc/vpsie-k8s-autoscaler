@@ -213,13 +213,14 @@ func (v *NodeGroupValidator) validateKubernetesVersion(ng *autoscalerv1alpha1.No
 	return nil
 }
 
-// validateOSImage validates the OS image ID
+// validateOSImage validates the OS image ID format if provided
 func (v *NodeGroupValidator) validateOSImage(ng *autoscalerv1alpha1.NodeGroup) error {
+	// OSImageID is optional - VPSie API will automatically select an appropriate OS image
 	if ng.Spec.OSImageID == "" {
-		return fmt.Errorf("spec.osImageId is required and cannot be empty")
+		return nil
 	}
 
-	// Basic format validation
+	// Basic format validation if provided
 	if !validOSImageRegex.MatchString(ng.Spec.OSImageID) {
 		return fmt.Errorf("spec.osImageId '%s' contains invalid characters", ng.Spec.OSImageID)
 	}

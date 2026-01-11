@@ -197,9 +197,7 @@ func ValidateNodeGroupSpec(ng *v1alpha1.NodeGroup) error {
 		return fmt.Errorf("at least one offeringID is required")
 	}
 
-	if ng.Spec.OSImageID == "" {
-		return fmt.Errorf("osImageID is required")
-	}
+	// OSImageID is optional - VPSie API will automatically select an appropriate OS image
 
 	if ng.Spec.KubernetesVersion == "" {
 		return fmt.Errorf("kubernetesVersion is required")

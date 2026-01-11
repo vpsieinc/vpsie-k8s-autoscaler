@@ -28,7 +28,7 @@ spec:
       - name: ghcr-secret
       containers:
       - name: controller
-        image: ghcr.io/vpsieinc/vpsie-k8s-autoscaler:0.7.3
+        image: ghcr.io/vpsieinc/vpsie-k8s-autoscaler:0.7.8
         imagePullPolicy: Always
         command:
         - /vpsie-autoscaler
@@ -41,6 +41,7 @@ spec:
         - --default-offering-ids=360a7d29-7ca9-11ee-8bba-0050569c68dc,3af1b942-7ca9-11ee-8bba-0050569c68dc
         - --resource-identifier=567ee954-3b83-4912-8d74-ba47601f1cf6
         - --kubernetes-version=v1.34.1
+        # Note: --kube-size-id is now optional - KubeSizeID is dynamically selected based on pod resources
         ports:
         - name: metrics
           containerPort: 8080

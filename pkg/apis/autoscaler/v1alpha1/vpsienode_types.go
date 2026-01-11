@@ -31,8 +31,9 @@ type VPSieNodeSpec struct {
 	Project string `json:"project"`
 
 	// OSImageID is the VPSie OS image ID to use for this node
-	// +kubebuilder:validation:Required
-	OSImageID string `json:"osImageID"`
+	// Optional: VPSie API will automatically select an appropriate OS image if not specified
+	// +kubebuilder:validation:Optional
+	OSImageID string `json:"osImageID,omitempty"`
 
 	// KubernetesVersion is the Kubernetes version to install on this node (e.g., "v1.28.0")
 	// +kubebuilder:validation:Pattern=`^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`
