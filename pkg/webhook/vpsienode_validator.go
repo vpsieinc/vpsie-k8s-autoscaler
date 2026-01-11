@@ -172,13 +172,14 @@ func (v *VPSieNodeValidator) validateKubernetesVersion(vn *autoscalerv1alpha1.VP
 	return nil
 }
 
-// validateOSImage validates the OS image ID
+// validateOSImage validates the OS image ID format if provided
 func (v *VPSieNodeValidator) validateOSImage(vn *autoscalerv1alpha1.VPSieNode) error {
+	// OSImageID is optional - VPSie API will automatically select an appropriate OS image
 	if vn.Spec.OSImageID == "" {
-		return fmt.Errorf("spec.osImageId is required and cannot be empty")
+		return nil
 	}
 
-	// Basic format validation
+	// Basic format validation if provided
 	if !validVPSieNodeOSImageRegex.MatchString(vn.Spec.OSImageID) {
 		return fmt.Errorf("spec.osImageId '%s' contains invalid characters", vn.Spec.OSImageID)
 	}

@@ -38,8 +38,9 @@ type NodeGroupSpec struct {
 	OfferingIDs []string `json:"offeringIDs"`
 
 	// OSImageID is the VPSie OS image ID to use for new nodes
-	// +kubebuilder:validation:Required
-	OSImageID string `json:"osImageID"`
+	// Optional: VPSie API will automatically select an appropriate OS image if not specified
+	// +kubebuilder:validation:Optional
+	OSImageID string `json:"osImageID,omitempty"`
 
 	// KubernetesVersion is the Kubernetes version to install on new nodes (e.g., "v1.28.0", "v1.29.1")
 	// Must be within ±1 minor version of the control plane

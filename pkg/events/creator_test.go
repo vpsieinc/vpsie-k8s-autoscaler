@@ -21,7 +21,7 @@ func TestNewDynamicNodeGroupCreator(t *testing.T) {
 	logger := zap.NewNop()
 
 	t.Run("Creates with default template", func(t *testing.T) {
-		creator := NewDynamicNodeGroupCreator(fakeClient, logger, nil)
+		creator := NewDynamicNodeGroupCreator(fakeClient, nil, logger, nil)
 		if creator == nil {
 			t.Fatal("Expected creator to be created")
 			return
@@ -44,7 +44,7 @@ func TestNewDynamicNodeGroupCreator(t *testing.T) {
 			MaxNodes:            20,
 			DefaultDatacenterID: "dc-1",
 		}
-		creator := NewDynamicNodeGroupCreator(fakeClient, logger, template)
+		creator := NewDynamicNodeGroupCreator(fakeClient, nil, logger, template)
 		if creator.template.MinNodes != 2 {
 			t.Errorf("Expected MinNodes=2, got %d", creator.template.MinNodes)
 		}
@@ -59,7 +59,7 @@ func TestFindSuitableNodeGroup(t *testing.T) {
 	_ = v1alpha1.AddToScheme(scheme)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	logger := zap.NewNop()
-	creator := NewDynamicNodeGroupCreator(fakeClient, logger, nil)
+	creator := NewDynamicNodeGroupCreator(fakeClient, nil, logger, nil)
 	ctx := context.Background()
 
 	t.Run("Returns nil when no NodeGroups exist", func(t *testing.T) {
@@ -263,8 +263,9 @@ func TestCreateNodeGroupForPod(t *testing.T) {
 			DefaultDatacenterID: "dc-test",
 			DefaultOfferingIDs:  []string{"offering-1"},
 			ResourceIdentifier:  "test-cluster",
+			KubeSizeID:          1, // Static fallback for testing without VPSie client
 		}
-		creator := NewDynamicNodeGroupCreator(fakeClient, logger, template)
+		creator := NewDynamicNodeGroupCreator(fakeClient, nil, logger, template)
 
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-pod"},
@@ -303,8 +304,9 @@ func TestCreateNodeGroupForPod(t *testing.T) {
 			DefaultDatacenterID: "dc-default",
 			DefaultOfferingIDs:  []string{"offering-1"},
 			ResourceIdentifier:  "test-cluster",
+			KubeSizeID:          1, // Static fallback for testing without VPSie client
 		}
-		creator := NewDynamicNodeGroupCreator(fakeClient, logger, template)
+		creator := NewDynamicNodeGroupCreator(fakeClient, nil, logger, template)
 
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-pod"},
@@ -339,8 +341,9 @@ func TestCreateNodeGroupForPod(t *testing.T) {
 			DefaultDatacenterID: "dc-default",
 			DefaultOfferingIDs:  []string{"offering-1"},
 			ResourceIdentifier:  "test-cluster",
+			KubeSizeID:          1, // Static fallback for testing without VPSie client
 		}
-		creator := NewDynamicNodeGroupCreator(fakeClient, logger, template)
+		creator := NewDynamicNodeGroupCreator(fakeClient, nil, logger, template)
 
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-pod"},
@@ -391,7 +394,7 @@ func TestGenerateNodeGroupName(t *testing.T) {
 		template := &NodeGroupTemplate{
 			DefaultDatacenterID: "us-east-1",
 		}
-		creator := NewDynamicNodeGroupCreator(fakeClient, logger, template)
+		creator := NewDynamicNodeGroupCreator(fakeClient, nil, logger, template)
 
 		name := creator.generateNodeGroupName()
 		if !strings.HasPrefix(name, "auto-us-east-1-") {
@@ -403,7 +406,7 @@ func TestGenerateNodeGroupName(t *testing.T) {
 		template := &NodeGroupTemplate{
 			DefaultDatacenterID: "",
 		}
-		creator := NewDynamicNodeGroupCreator(fakeClient, logger, template)
+		creator := NewDynamicNodeGroupCreator(fakeClient, nil, logger, template)
 
 		name := creator.generateNodeGroupName()
 		if !strings.HasPrefix(name, "auto-default-") {
@@ -447,7 +450,7 @@ func TestValidateTemplate(t *testing.T) {
 			DefaultOfferingIDs:  []string{"offering-1"},
 			ResourceIdentifier:  "test-cluster",
 		}
-		creator := NewDynamicNodeGroupCreator(fakeClient, logger, template)
+		creator := NewDynamicNodeGroupCreator(fakeClient, nil, logger, template)
 
 		err := creator.ValidateTemplate()
 		if err != nil {
@@ -460,7 +463,7 @@ func TestValidateTemplate(t *testing.T) {
 			DefaultOfferingIDs: []string{"offering-1"},
 			ResourceIdentifier: "test-cluster",
 		}
-		creator := NewDynamicNodeGroupCreator(fakeClient, logger, template)
+		creator := NewDynamicNodeGroupCreator(fakeClient, nil, logger, template)
 
 		err := creator.ValidateTemplate()
 		if err == nil {
@@ -473,7 +476,7 @@ func TestValidateTemplate(t *testing.T) {
 			DefaultDatacenterID: "dc-1",
 			ResourceIdentifier:  "test-cluster",
 		}
-		creator := NewDynamicNodeGroupCreator(fakeClient, logger, template)
+		creator := NewDynamicNodeGroupCreator(fakeClient, nil, logger, template)
 
 		err := creator.ValidateTemplate()
 		if err == nil {
@@ -486,7 +489,7 @@ func TestValidateTemplate(t *testing.T) {
 			DefaultDatacenterID: "dc-1",
 			DefaultOfferingIDs:  []string{"offering-1"},
 		}
-		creator := NewDynamicNodeGroupCreator(fakeClient, logger, template)
+		creator := NewDynamicNodeGroupCreator(fakeClient, nil, logger, template)
 
 		err := creator.ValidateTemplate()
 		if err == nil {

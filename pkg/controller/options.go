@@ -63,6 +63,10 @@ type Options struct {
 
 	// KubernetesVersion is the Kubernetes version for dynamic NodeGroups (e.g., "v1.34.1")
 	KubernetesVersion string
+
+	// KubeSizeID is the VPSie Kubernetes size/package ID for dynamic NodeGroups
+	// Get available IDs from the k8s/offers API endpoint
+	KubeSizeID int
 }
 
 // NewDefaultOptions returns Options with default values
@@ -85,6 +89,7 @@ func NewDefaultOptions() *Options {
 		DefaultOfferingIDs:      nil, // Must be set for dynamic NodeGroup creation
 		ResourceIdentifier:      "",  // Must be set for dynamic NodeGroup creation
 		KubernetesVersion:       "",  // Must be set for dynamic NodeGroup creation
+		KubeSizeID:              0,   // Must be set for dynamic NodeGroup creation
 	}
 }
 

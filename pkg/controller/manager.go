@@ -155,6 +155,7 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 
 	// Create DynamicNodeGroupCreator for automatic NodeGroup provisioning
 	// Template is configured via controller options (CLI flags)
+	// KubeSizeID is now optional - it's dynamically selected based on pod resource requirements
 	var nodeGroupTemplate *events.NodeGroupTemplate
 	if opts.DefaultDatacenterID != "" && len(opts.DefaultOfferingIDs) > 0 && opts.ResourceIdentifier != "" && opts.KubernetesVersion != "" {
 		nodeGroupTemplate = &events.NodeGroupTemplate{
@@ -165,12 +166,15 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 			DefaultOfferingIDs:  opts.DefaultOfferingIDs,
 			ResourceIdentifier:  opts.ResourceIdentifier,
 			KubernetesVersion:   opts.KubernetesVersion,
+			KubeSizeID:          opts.KubeSizeID, // Optional fallback, 0 means dynamic selection
 		}
 		logger.Info("Dynamic NodeGroup creation enabled",
 			zap.String("datacenterID", opts.DefaultDatacenterID),
 			zap.Strings("offeringIDs", opts.DefaultOfferingIDs),
 			zap.String("resourceIdentifier", opts.ResourceIdentifier),
 			zap.String("kubernetesVersion", opts.KubernetesVersion),
+			zap.Int("kubeSizeID", opts.KubeSizeID),
+			zap.Bool("dynamicKubeSizeSelection", opts.KubeSizeID == 0),
 		)
 	} else {
 		logger.Warn("Dynamic NodeGroup creation disabled - missing required configuration",
@@ -182,6 +186,7 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 	}
 	dynamicCreator := events.NewDynamicNodeGroupCreator(
 		mgr.GetClient(),
+		vpsieClient,
 		logger,
 		nodeGroupTemplate,
 	)
