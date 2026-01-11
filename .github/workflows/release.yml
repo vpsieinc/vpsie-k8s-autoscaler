@@ -114,17 +114,20 @@ jobs:
           sed -i "s/^appVersion:.*/appVersion: \"${{ steps.version.outputs.version }}\"/" deploy/helm/vpsie-autoscaler/Chart.yaml
 
       - name: Package Helm chart
+        id: helm-package
         run: |
-          mkdir -p .helm-releases
-          helm package deploy/helm/vpsie-autoscaler --destination .helm-releases
-          echo "Packaged files:"
-          ls -la .helm-releases/
+          mkdir -p helm-releases
+          helm package deploy/helm/vpsie-autoscaler --destination helm-releases
+          CHART_FILE=$(ls helm-releases/*.tgz)
+          echo "chart_file=$CHART_FILE" >> $GITHUB_OUTPUT
+          echo "Packaged chart: $CHART_FILE"
+          ls -la helm-releases/
 
       - name: Upload Helm chart artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: helm-chart
-          path: .helm-releases/*.tgz
+          path: ${{ steps.helm-package.outputs.chart_file }}
           if-no-files-found: error
           retention-days: 90
 
@@ -158,7 +161,7 @@ jobs:
           cd dist && sha256sum * > checksums.txt
 
       - name: Download Helm chart artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: helm-chart
           path: dist/
