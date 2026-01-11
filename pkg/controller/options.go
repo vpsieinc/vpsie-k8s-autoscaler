@@ -60,6 +60,9 @@ type Options struct {
 
 	// ResourceIdentifier is the VPSie Kubernetes cluster identifier
 	ResourceIdentifier string
+
+	// KubernetesVersion is the Kubernetes version for dynamic NodeGroups (e.g., "v1.34.1")
+	KubernetesVersion string
 }
 
 // NewDefaultOptions returns Options with default values
@@ -81,6 +84,7 @@ func NewDefaultOptions() *Options {
 		DefaultDatacenterID:     "",  // Must be set for dynamic NodeGroup creation
 		DefaultOfferingIDs:      nil, // Must be set for dynamic NodeGroup creation
 		ResourceIdentifier:      "",  // Must be set for dynamic NodeGroup creation
+		KubernetesVersion:       "",  // Must be set for dynamic NodeGroup creation
 	}
 }
 

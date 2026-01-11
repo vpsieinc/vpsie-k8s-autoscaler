@@ -156,7 +156,7 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 	// Create DynamicNodeGroupCreator for automatic NodeGroup provisioning
 	// Template is configured via controller options (CLI flags)
 	var nodeGroupTemplate *events.NodeGroupTemplate
-	if opts.DefaultDatacenterID != "" && len(opts.DefaultOfferingIDs) > 0 && opts.ResourceIdentifier != "" {
+	if opts.DefaultDatacenterID != "" && len(opts.DefaultOfferingIDs) > 0 && opts.ResourceIdentifier != "" && opts.KubernetesVersion != "" {
 		nodeGroupTemplate = &events.NodeGroupTemplate{
 			Namespace:           "kube-system",
 			MinNodes:            1,
@@ -164,17 +164,20 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 			DefaultDatacenterID: opts.DefaultDatacenterID,
 			DefaultOfferingIDs:  opts.DefaultOfferingIDs,
 			ResourceIdentifier:  opts.ResourceIdentifier,
+			KubernetesVersion:   opts.KubernetesVersion,
 		}
 		logger.Info("Dynamic NodeGroup creation enabled",
 			zap.String("datacenterID", opts.DefaultDatacenterID),
 			zap.Strings("offeringIDs", opts.DefaultOfferingIDs),
 			zap.String("resourceIdentifier", opts.ResourceIdentifier),
+			zap.String("kubernetesVersion", opts.KubernetesVersion),
 		)
 	} else {
 		logger.Warn("Dynamic NodeGroup creation disabled - missing required configuration",
 			zap.String("datacenterID", opts.DefaultDatacenterID),
 			zap.Int("offeringIDsCount", len(opts.DefaultOfferingIDs)),
 			zap.String("resourceIdentifier", opts.ResourceIdentifier),
+			zap.String("kubernetesVersion", opts.KubernetesVersion),
 		)
 	}
 	dynamicCreator := events.NewDynamicNodeGroupCreator(

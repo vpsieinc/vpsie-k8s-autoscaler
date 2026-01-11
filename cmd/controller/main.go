@@ -112,6 +112,8 @@ func addFlags(cmd *cobra.Command, opts *controller.Options) {
 		"Comma-separated VPSie offering IDs for dynamic NodeGroup creation")
 	flags.StringVar(&opts.ResourceIdentifier, "resource-identifier", opts.ResourceIdentifier,
 		"VPSie Kubernetes cluster identifier for dynamic NodeGroup creation")
+	flags.StringVar(&opts.KubernetesVersion, "kubernetes-version", opts.KubernetesVersion,
+		"Kubernetes version for dynamic NodeGroups (e.g., v1.34.1)")
 
 	// Logging configuration
 	flags.StringVar(&opts.LogLevel, "log-level", opts.LogLevel,
