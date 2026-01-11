@@ -1146,36 +1146,36 @@ func TestTolerationMatching(t *testing.T) {
 			},
 		}
 
-		// Create remaining node WITHOUT the gpu taint
+		// Create remaining node WITHOUT the gpu taint but WITH a different NoSchedule taint
+		// The pod does NOT tolerate this taint, so it cannot be scheduled there
 		remainingNode := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "worker-no-gpu",
 			},
 			Spec: corev1.NodeSpec{
-				// No taints - this node does NOT have gpu taint
-				Taints: []corev1.Taint{},
+				// This node has a different taint that the pod doesn't tolerate
+				Taints: []corev1.Taint{
+					{
+						Key:    "special",
+						Value:  "reserved",
+						Effect: corev1.TaintEffectNoSchedule,
+					},
+				},
 			},
 		}
 
 		// Act: Check if pod can be scheduled on remaining node
-		// result := tolerationsTolerateTaints(pod.Spec.Tolerations, remainingNode.Spec.Taints)
+		// tolerationsTolerateTaints returns true if tolerations cover all NoSchedule/NoExecute taints
+		result := tolerationsTolerateTaints(pod.Spec.Tolerations, remainingNode.Spec.Taints)
 
 		// Assert: Pod should NOT be able to schedule on remaining node because:
-		// - The remaining node has no taints, but the pod specifically tolerates gpu=true:NoSchedule
-		// - The real check is whether remainingNode has NoSchedule/NoExecute taints that pod doesn't tolerate
-		// - Since remainingNode has no blocking taints, pod CAN schedule there (tolerations are permissive)
-		// - BUT the safety check is: if nodeToRemove has taints the pod tolerates,
-		//   we need at least one remaining node with those same taints for workload affinity
-		_ = pod
+		// - The remaining node has a "special=reserved:NoSchedule" taint
+		// - The pod only tolerates "gpu=true:NoSchedule"
+		// - The pod's tolerations do NOT cover the remaining node's taints
+		// - Therefore scale-down should be BLOCKED
 		_ = nodeToRemove
-		_ = remainingNode
 
-		// Verification items:
-		// - Pod requires a node with gpu=true taint (by virtue of tolerating it on current node)
-		// - No remaining node has the gpu taint
-		// - Scale-down should be BLOCKED to preserve workload placement intent
-
-		t.Skip("Skeleton: Implementation required - tolerationsTolerateTaints function")
+		assert.False(t, result, "Pod's tolerations should NOT cover remaining node's taints")
 	})
 
 	// AC1: Toleration Matching - ALLOWED scenario
@@ -1236,22 +1236,16 @@ func TestTolerationMatching(t *testing.T) {
 		}
 
 		// Act: Check if pod can be scheduled on remaining node
-		// result := tolerationsTolerateTaints(pod.Spec.Tolerations, remainingNode.Spec.Taints)
+		// tolerationsTolerateTaints returns true if tolerations cover all NoSchedule/NoExecute taints
+		result := tolerationsTolerateTaints(pod.Spec.Tolerations, remainingNode.Spec.Taints)
 
 		// Assert: Pod SHOULD be able to schedule on remaining node because:
 		// - Pod tolerates gpu=true:NoSchedule
 		// - Remaining node has gpu=true:NoSchedule taint
 		// - Pod's toleration matches the taint, so scheduling is allowed
-		_ = pod
 		_ = nodeToRemove
-		_ = remainingNode
 
-		// Verification items:
-		// - tolerationsTolerateTaints(pod.Spec.Tolerations, remainingNode.Spec.Taints) == true
-		// - findSchedulableNode returns (true, remainingNode)
-		// - Scale-down should be ALLOWED
-
-		t.Skip("Skeleton: Implementation required - tolerationsTolerateTaints function")
+		assert.True(t, result, "Pod's tolerations should cover remaining node's taints")
 	})
 
 	// AC1: Wildcard toleration - ALLOWED scenario

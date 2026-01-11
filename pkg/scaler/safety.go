@@ -544,3 +544,24 @@ func tolerationMatchesTaint(tolerations []corev1.Toleration, taint *corev1.Taint
 	}
 	return false
 }
+
+// tolerationsTolerateTaints checks if tolerations cover all taints with NoSchedule/NoExecute effect.
+// Only hard constraints (NoSchedule, NoExecute) are checked.
+// PreferNoSchedule is a soft constraint and is ignored.
+// Returns true if all hard-constraint taints are tolerated, false otherwise.
+func tolerationsTolerateTaints(tolerations []corev1.Toleration, taints []corev1.Taint) bool {
+	for _, taint := range taints {
+		// Only check hard constraints (NoSchedule, NoExecute)
+		// PreferNoSchedule is soft - ignored for hard scheduling decisions
+		if taint.Effect != corev1.TaintEffectNoSchedule &&
+			taint.Effect != corev1.TaintEffectNoExecute {
+			continue
+		}
+
+		// Check if any toleration matches this taint
+		if !tolerationMatchesTaint(tolerations, &taint) {
+			return false
+		}
+	}
+	return true
+}
