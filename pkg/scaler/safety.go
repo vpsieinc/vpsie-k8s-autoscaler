@@ -565,3 +565,120 @@ func tolerationsTolerateTaints(tolerations []corev1.Toleration, taints []corev1.
 	}
 	return true
 }
+
+// matchNodeSelectorRequirement checks if a node satisfies a single node selector requirement.
+// Supports operators: In, NotIn, Exists, DoesNotExist
+// Note: Gt and Lt operators are not implemented as they are alpha features.
+func matchNodeSelectorRequirement(node *corev1.Node, req *corev1.NodeSelectorRequirement) bool {
+	// Handle nil labels
+	if node.Labels == nil {
+		// For operators that check label absence, nil labels means absent
+		switch req.Operator {
+		case corev1.NodeSelectorOpDoesNotExist:
+			return true
+		case corev1.NodeSelectorOpNotIn:
+			return true
+		default:
+			return false
+		}
+	}
+
+	value, exists := node.Labels[req.Key]
+
+	switch req.Operator {
+	case corev1.NodeSelectorOpIn:
+		// Node label value must be in the requirement values list
+		if !exists {
+			return false
+		}
+		for _, v := range req.Values {
+			if value == v {
+				return true
+			}
+		}
+		return false
+
+	case corev1.NodeSelectorOpNotIn:
+		// Node label value must NOT be in the requirement values list
+		// If label doesn't exist, it's considered "not in" the values
+		if !exists {
+			return true
+		}
+		for _, v := range req.Values {
+			if value == v {
+				return false
+			}
+		}
+		return true
+
+	case corev1.NodeSelectorOpExists:
+		// Node must have the label key (value doesn't matter)
+		return exists
+
+	case corev1.NodeSelectorOpDoesNotExist:
+		// Node must NOT have the label key
+		return !exists
+
+	default:
+		// Gt and Lt are not supported (alpha feature)
+		return false
+	}
+}
+
+// matchesNodeSelectorTerms checks if a node matches any of the node selector terms.
+// Terms are ORed - matching any term is sufficient.
+// Within a term, MatchExpressions are ANDed - all must match.
+func matchesNodeSelectorTerms(node *corev1.Node, terms []corev1.NodeSelectorTerm) bool {
+	// Empty terms matches any node
+	if len(terms) == 0 {
+		return true
+	}
+
+	// Terms are ORed - matching any term is sufficient
+	for _, term := range terms {
+		if matchesNodeSelectorTerm(node, &term) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesNodeSelectorTerm checks if a node matches a single node selector term.
+// MatchExpressions within a term are ANDed - all must match.
+func matchesNodeSelectorTerm(node *corev1.Node, term *corev1.NodeSelectorTerm) bool {
+	// Empty MatchExpressions matches any node
+	if len(term.MatchExpressions) == 0 {
+		return true
+	}
+
+	// MatchExpressions are ANDed - all must match
+	for i := range term.MatchExpressions {
+		if !matchNodeSelectorRequirement(node, &term.MatchExpressions[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// matchesNodeAffinity checks if a pod's node affinity requirements are satisfied by a node.
+// Only checks RequiredDuringSchedulingIgnoredDuringExecution (hard constraint).
+// Preferred constraints are ignored for scale-down decisions - they express preferences, not requirements.
+func matchesNodeAffinity(pod *corev1.Pod, node *corev1.Node) bool {
+	// No affinity requirements means matches any node
+	if pod.Spec.Affinity == nil || pod.Spec.Affinity.NodeAffinity == nil {
+		return true
+	}
+
+	nodeAffinity := pod.Spec.Affinity.NodeAffinity
+
+	// Check required (hard) constraints
+	if nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
+		if !matchesNodeSelectorTerms(node, nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms) {
+			return false
+		}
+	}
+
+	// Preferred (soft) constraints are NOT checked for scale-down decisions
+	// They express preferences, not requirements
+	return true
+}

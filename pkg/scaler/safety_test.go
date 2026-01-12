@@ -2128,3 +2128,721 @@ func TestBackwardCompatibility(t *testing.T) {
 		// - err == nil
 	})
 }
+
+// =============================================================================
+// ESDS-005: Node Affinity Matching Tests
+// Tests for matchNodeSelectorRequirement, matchesNodeSelectorTerms, matchesNodeAffinity
+// =============================================================================
+
+// TestMatchNodeSelectorRequirement tests the matchNodeSelectorRequirement function
+// for all supported operators: In, NotIn, Exists, DoesNotExist
+func TestMatchNodeSelectorRequirement(t *testing.T) {
+	t.Run("In operator with matching value", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone": "us-east-1a",
+				},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "zone",
+			Operator: corev1.NodeSelectorOpIn,
+			Values:   []string{"us-east-1a", "us-east-1b"},
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.True(t, result, "In operator should match when node label value is in values list")
+	})
+
+	t.Run("In operator with non-matching value", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone": "us-west-1a",
+				},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "zone",
+			Operator: corev1.NodeSelectorOpIn,
+			Values:   []string{"us-east-1a", "us-east-1b"},
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.False(t, result, "In operator should not match when node label value is not in values list")
+	})
+
+	t.Run("In operator with missing label", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "test-node",
+				Labels: map[string]string{},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "zone",
+			Operator: corev1.NodeSelectorOpIn,
+			Values:   []string{"us-east-1a"},
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.False(t, result, "In operator should not match when node is missing the label")
+	})
+
+	t.Run("NotIn operator with matching value (should not match)", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"env": "production",
+				},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "env",
+			Operator: corev1.NodeSelectorOpNotIn,
+			Values:   []string{"production", "staging"},
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.False(t, result, "NotIn operator should not match when node label value is in values list")
+	})
+
+	t.Run("NotIn operator with non-matching value (should match)", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"env": "development",
+				},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "env",
+			Operator: corev1.NodeSelectorOpNotIn,
+			Values:   []string{"production", "staging"},
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.True(t, result, "NotIn operator should match when node label value is not in values list")
+	})
+
+	t.Run("NotIn operator with missing label (should match)", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "test-node",
+				Labels: map[string]string{},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "env",
+			Operator: corev1.NodeSelectorOpNotIn,
+			Values:   []string{"production"},
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.True(t, result, "NotIn operator should match when node is missing the label")
+	})
+
+	t.Run("Exists operator with key present", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"gpu": "nvidia-v100",
+				},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "gpu",
+			Operator: corev1.NodeSelectorOpExists,
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.True(t, result, "Exists operator should match when node has the label key")
+	})
+
+	t.Run("Exists operator with key absent", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "test-node",
+				Labels: map[string]string{},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "gpu",
+			Operator: corev1.NodeSelectorOpExists,
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.False(t, result, "Exists operator should not match when node is missing the label key")
+	})
+
+	t.Run("DoesNotExist operator with key absent", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"other": "value",
+				},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "gpu",
+			Operator: corev1.NodeSelectorOpDoesNotExist,
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.True(t, result, "DoesNotExist operator should match when node is missing the label key")
+	})
+
+	t.Run("DoesNotExist operator with key present", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"gpu": "nvidia",
+				},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "gpu",
+			Operator: corev1.NodeSelectorOpDoesNotExist,
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.False(t, result, "DoesNotExist operator should not match when node has the label key")
+	})
+
+	t.Run("Node with nil labels", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "zone",
+			Operator: corev1.NodeSelectorOpIn,
+			Values:   []string{"us-east-1a"},
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.False(t, result, "Should handle nil labels gracefully")
+	})
+}
+
+// TestMatchesNodeSelectorTerms tests the matchesNodeSelectorTerms function
+// Terms are ORed - matching any term is sufficient
+// Within a term, expressions are ANDed - all must match
+func TestMatchesNodeSelectorTerms(t *testing.T) {
+	t.Run("Empty terms matches any node", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone": "us-east-1a",
+				},
+			},
+		}
+		terms := []corev1.NodeSelectorTerm{}
+
+		result := matchesNodeSelectorTerms(node, terms)
+		assert.True(t, result, "Empty terms should match any node")
+	})
+
+	t.Run("Single term with single matching expression", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone": "us-east-1a",
+				},
+			},
+		}
+		terms := []corev1.NodeSelectorTerm{
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      "zone",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"us-east-1a", "us-east-1b"},
+					},
+				},
+			},
+		}
+
+		result := matchesNodeSelectorTerms(node, terms)
+		assert.True(t, result, "Should match when single term matches")
+	})
+
+	t.Run("Single term with multiple expressions - all match (AND)", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone":     "us-east-1a",
+					"disktype": "ssd",
+				},
+			},
+		}
+		terms := []corev1.NodeSelectorTerm{
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      "zone",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"us-east-1a"},
+					},
+					{
+						Key:      "disktype",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"ssd"},
+					},
+				},
+			},
+		}
+
+		result := matchesNodeSelectorTerms(node, terms)
+		assert.True(t, result, "Should match when all expressions in term match (AND)")
+	})
+
+	t.Run("Single term with multiple expressions - one fails (AND)", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone":     "us-east-1a",
+					"disktype": "hdd", // Does not match ssd
+				},
+			},
+		}
+		terms := []corev1.NodeSelectorTerm{
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      "zone",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"us-east-1a"},
+					},
+					{
+						Key:      "disktype",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"ssd"},
+					},
+				},
+			},
+		}
+
+		result := matchesNodeSelectorTerms(node, terms)
+		assert.False(t, result, "Should not match when any expression in term fails (AND)")
+	})
+
+	t.Run("Multiple terms - first matches (OR)", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone": "us-east-1a",
+				},
+			},
+		}
+		terms := []corev1.NodeSelectorTerm{
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      "zone",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"us-east-1a"},
+					},
+				},
+			},
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      "zone",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"us-west-1a"},
+					},
+				},
+			},
+		}
+
+		result := matchesNodeSelectorTerms(node, terms)
+		assert.True(t, result, "Should match when any term matches (OR)")
+	})
+
+	t.Run("Multiple terms - second matches (OR)", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone": "us-west-1a",
+				},
+			},
+		}
+		terms := []corev1.NodeSelectorTerm{
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      "zone",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"us-east-1a"},
+					},
+				},
+			},
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      "zone",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"us-west-1a"},
+					},
+				},
+			},
+		}
+
+		result := matchesNodeSelectorTerms(node, terms)
+		assert.True(t, result, "Should match when any term matches (OR)")
+	})
+
+	t.Run("Multiple terms - none match", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone": "eu-west-1a",
+				},
+			},
+		}
+		terms := []corev1.NodeSelectorTerm{
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      "zone",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"us-east-1a"},
+					},
+				},
+			},
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      "zone",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"us-west-1a"},
+					},
+				},
+			},
+		}
+
+		result := matchesNodeSelectorTerms(node, terms)
+		assert.False(t, result, "Should not match when no terms match")
+	})
+
+	t.Run("Term with empty MatchExpressions matches any node", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone": "us-east-1a",
+				},
+			},
+		}
+		terms := []corev1.NodeSelectorTerm{
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{},
+			},
+		}
+
+		result := matchesNodeSelectorTerms(node, terms)
+		assert.True(t, result, "Term with empty MatchExpressions should match any node")
+	})
+}
+
+// TestMatchesNodeAffinity tests the matchesNodeAffinity function
+func TestMatchesNodeAffinity(t *testing.T) {
+	t.Run("Pod with no affinity matches any node", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{},
+		}
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"zone": "us-east-1a"},
+			},
+		}
+
+		result := matchesNodeAffinity(pod, node)
+		assert.True(t, result, "Pod with no affinity should match any node")
+	})
+
+	t.Run("Pod with nil Affinity matches any node", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Affinity: nil,
+			},
+		}
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"zone": "us-east-1a"},
+			},
+		}
+
+		result := matchesNodeAffinity(pod, node)
+		assert.True(t, result, "Pod with nil Affinity should match any node")
+	})
+
+	t.Run("Pod with nil NodeAffinity matches any node", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					NodeAffinity: nil,
+				},
+			},
+		}
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"zone": "us-east-1a"},
+			},
+		}
+
+		result := matchesNodeAffinity(pod, node)
+		assert.True(t, result, "Pod with nil NodeAffinity should match any node")
+	})
+
+	t.Run("Pod with required affinity matching node labels", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					NodeAffinity: &corev1.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{
+								{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "zone",
+											Operator: corev1.NodeSelectorOpIn,
+											Values:   []string{"us-east-1a", "us-east-1b"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"zone": "us-east-1a"},
+			},
+		}
+
+		result := matchesNodeAffinity(pod, node)
+		assert.True(t, result, "Pod with required affinity should match node with correct label")
+	})
+
+	t.Run("Pod with required affinity NOT matching node labels", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					NodeAffinity: &corev1.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{
+								{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "zone",
+											Operator: corev1.NodeSelectorOpIn,
+											Values:   []string{"us-east-1a", "us-east-1b"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"zone": "us-west-1a"},
+			},
+		}
+
+		result := matchesNodeAffinity(pod, node)
+		assert.False(t, result, "Pod with required affinity should not match node with wrong label")
+	})
+
+	t.Run("Pod with only preferred affinity matches any node (soft constraint ignored)", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					NodeAffinity: &corev1.NodeAffinity{
+						PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{
+							{
+								Weight: 100,
+								Preference: corev1.NodeSelectorTerm{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "zone",
+											Operator: corev1.NodeSelectorOpIn,
+											Values:   []string{"us-east-1a"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"zone": "us-west-1a"}, // Does not match preferred
+			},
+		}
+
+		result := matchesNodeAffinity(pod, node)
+		assert.True(t, result, "Pod with only preferred affinity should match any node (soft constraint)")
+	})
+
+	t.Run("Pod with both required and preferred affinity", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					NodeAffinity: &corev1.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{
+								{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "disktype",
+											Operator: corev1.NodeSelectorOpIn,
+											Values:   []string{"ssd"},
+										},
+									},
+								},
+							},
+						},
+						PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{
+							{
+								Weight: 100,
+								Preference: corev1.NodeSelectorTerm{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "zone",
+											Operator: corev1.NodeSelectorOpIn,
+											Values:   []string{"us-east-1a"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{
+					"disktype": "ssd",        // Matches required
+					"zone":     "us-west-1a", // Does NOT match preferred
+				},
+			},
+		}
+
+		result := matchesNodeAffinity(pod, node)
+		assert.True(t, result, "Pod should match when required affinity matches (preferred is ignored)")
+	})
+
+	t.Run("Pod with required affinity using Exists operator", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					NodeAffinity: &corev1.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{
+								{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "gpu",
+											Operator: corev1.NodeSelectorOpExists,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		nodeWithGPU := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"gpu": "nvidia-v100"},
+			},
+		}
+		nodeWithoutGPU := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"cpu": "intel"},
+			},
+		}
+
+		assert.True(t, matchesNodeAffinity(pod, nodeWithGPU), "Should match node with gpu label")
+		assert.False(t, matchesNodeAffinity(pod, nodeWithoutGPU), "Should not match node without gpu label")
+	})
+
+	t.Run("Pod with multiple OR terms in required affinity", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					NodeAffinity: &corev1.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{
+								{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "zone",
+											Operator: corev1.NodeSelectorOpIn,
+											Values:   []string{"us-east-1a"},
+										},
+									},
+								},
+								{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "zone",
+											Operator: corev1.NodeSelectorOpIn,
+											Values:   []string{"us-west-1a"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		nodeEast := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"zone": "us-east-1a"},
+			},
+		}
+		nodeWest := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"zone": "us-west-1a"},
+			},
+		}
+		nodeEurope := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"zone": "eu-west-1a"},
+			},
+		}
+
+		assert.True(t, matchesNodeAffinity(pod, nodeEast), "Should match first OR term")
+		assert.True(t, matchesNodeAffinity(pod, nodeWest), "Should match second OR term")
+		assert.False(t, matchesNodeAffinity(pod, nodeEurope), "Should not match when no terms match")
+	})
+}
