@@ -2,6 +2,7 @@ package scaler
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -3473,246 +3474,42 @@ func TestHasPodAntiAffinityViolation(t *testing.T) {
 // Tests for Anti-Affinity Integration in canPodsBeRescheduled
 // =============================================================================
 
-// TestCountPodsRequiringUniqueNodes tests the helper function that counts pods
-// with hostname-based anti-affinity (each requires its own unique node).
-func TestCountPodsRequiringUniqueNodes(t *testing.T) {
-	t.Run("No pods - returns 0", func(t *testing.T) {
-		pods := []*corev1.Pod{}
-		count := countPodsRequiringUniqueNodes(pods)
-		assert.Equal(t, 0, count)
-	})
-
-	t.Run("Pods without anti-affinity - returns 0", func(t *testing.T) {
-		pods := []*corev1.Pod{
-			{
-				ObjectMeta: metav1.ObjectMeta{Name: "pod1", Namespace: "default"},
-				Spec:       corev1.PodSpec{},
-			},
-			{
-				ObjectMeta: metav1.ObjectMeta{Name: "pod2", Namespace: "default"},
-				Spec:       corev1.PodSpec{},
-			},
-		}
-		count := countPodsRequiringUniqueNodes(pods)
-		assert.Equal(t, 0, count)
-	})
-
-	t.Run("5 pods with hostname anti-affinity - returns 5", func(t *testing.T) {
-		// Simulate nginx deployment with 5 replicas, each needing unique node
-		pods := make([]*corev1.Pod, 5)
-		for i := 0; i < 5; i++ {
-			pods[i] = &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "nginx-" + string(rune('a'+i)),
-					Namespace: "default",
-					Labels:    map[string]string{"app": "nginx"},
-				},
-				Spec: corev1.PodSpec{
-					Affinity: &corev1.Affinity{
-						PodAntiAffinity: &corev1.PodAntiAffinity{
-							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
-								{
-									LabelSelector: &metav1.LabelSelector{
-										MatchLabels: map[string]string{"app": "nginx"},
-									},
-									TopologyKey: "kubernetes.io/hostname",
-								},
-							},
-						},
-					},
-				},
-			}
-		}
-		count := countPodsRequiringUniqueNodes(pods)
-		assert.Equal(t, 5, count)
-	})
-
-	t.Run("Pods with zone anti-affinity only - returns 0 (not hostname based)", func(t *testing.T) {
-		pods := []*corev1.Pod{
-			{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "pod1",
-					Namespace: "default",
-					Labels:    map[string]string{"app": "web"},
-				},
-				Spec: corev1.PodSpec{
-					Affinity: &corev1.Affinity{
-						PodAntiAffinity: &corev1.PodAntiAffinity{
-							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
-								{
-									LabelSelector: &metav1.LabelSelector{
-										MatchLabels: map[string]string{"app": "web"},
-									},
-									TopologyKey: "topology.kubernetes.io/zone", // Not hostname
-								},
-							},
-						},
-					},
-				},
-			},
-		}
-		count := countPodsRequiringUniqueNodes(pods)
-		assert.Equal(t, 0, count)
-	})
-
-	t.Run("Preferred anti-affinity only - returns 0 (soft constraint)", func(t *testing.T) {
-		pods := []*corev1.Pod{
-			{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "pod1",
-					Namespace: "default",
-					Labels:    map[string]string{"app": "web"},
-				},
-				Spec: corev1.PodSpec{
-					Affinity: &corev1.Affinity{
-						PodAntiAffinity: &corev1.PodAntiAffinity{
-							PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
-								{
-									Weight: 100,
-									PodAffinityTerm: corev1.PodAffinityTerm{
-										LabelSelector: &metav1.LabelSelector{
-											MatchLabels: map[string]string{"app": "web"},
-										},
-										TopologyKey: "kubernetes.io/hostname",
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		}
-		count := countPodsRequiringUniqueNodes(pods)
-		assert.Equal(t, 0, count)
-	})
-
-	t.Run("Mixed pods - counts only those with hostname anti-affinity", func(t *testing.T) {
-		pods := []*corev1.Pod{
-			// Pod with hostname anti-affinity (should count)
-			{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "nginx-1",
-					Namespace: "default",
-					Labels:    map[string]string{"app": "nginx"},
-				},
-				Spec: corev1.PodSpec{
-					Affinity: &corev1.Affinity{
-						PodAntiAffinity: &corev1.PodAntiAffinity{
-							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
-								{
-									LabelSelector: &metav1.LabelSelector{
-										MatchLabels: map[string]string{"app": "nginx"},
-									},
-									TopologyKey: "kubernetes.io/hostname",
-								},
-							},
-						},
-					},
-				},
-			},
-			// Pod without anti-affinity (should NOT count)
-			{
-				ObjectMeta: metav1.ObjectMeta{Name: "simple-pod", Namespace: "default"},
-				Spec:       corev1.PodSpec{},
-			},
-			// Another pod with hostname anti-affinity (should count)
-			{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "nginx-2",
-					Namespace: "default",
-					Labels:    map[string]string{"app": "nginx"},
-				},
-				Spec: corev1.PodSpec{
-					Affinity: &corev1.Affinity{
-						PodAntiAffinity: &corev1.PodAntiAffinity{
-							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
-								{
-									LabelSelector: &metav1.LabelSelector{
-										MatchLabels: map[string]string{"app": "nginx"},
-									},
-									TopologyKey: "kubernetes.io/hostname",
-								},
-							},
-						},
-					},
-				},
-			},
-		}
-		count := countPodsRequiringUniqueNodes(pods)
-		assert.Equal(t, 2, count)
-	})
-}
-
-// TestCanPodsBeRescheduledAntiAffinity tests that canPodsBeRescheduled properly
+// TestCheckAntiAffinityTermBlocksScaleDown tests that checkAntiAffinityTerm properly
 // blocks scale-down when there aren't enough nodes to satisfy anti-affinity.
-func TestCanPodsBeRescheduledAntiAffinity(t *testing.T) {
-	t.Run("5 pods with anti-affinity, only 3 nodes available - should block", func(t *testing.T) {
+// Note: The anti-affinity check is done in hasAntiAffinityViolations, not canPodsBeRescheduled.
+func TestCheckAntiAffinityTermBlocksScaleDown(t *testing.T) {
+	t.Run("5 pods with anti-affinity, only 4 remaining nodes - should block", func(t *testing.T) {
 		ctx := context.Background()
 		logger := zaptest.NewLogger(t)
 
-		// Create 3 available nodes (one will be removed, leaving 2)
-		nodes := []runtime.Object{
-			&corev1.Node{
+		// Create 5 ready nodes (one will be removed, leaving 4)
+		nodes := []runtime.Object{}
+		for i := 1; i <= 5; i++ {
+			nodes = append(nodes, &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:   "node-1",
-					Labels: map[string]string{"kubernetes.io/hostname": "node-1"},
+					Name:   fmt.Sprintf("node-%d", i),
+					Labels: map[string]string{"kubernetes.io/hostname": fmt.Sprintf("node-%d", i)},
 				},
 				Spec: corev1.NodeSpec{Unschedulable: false},
 				Status: corev1.NodeStatus{
 					Conditions: []corev1.NodeCondition{
 						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
 					},
-					Allocatable: corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse("4"),
-						corev1.ResourceMemory: resource.MustParse("8Gi"),
-					},
 				},
-			},
-			&corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:   "node-2",
-					Labels: map[string]string{"kubernetes.io/hostname": "node-2"},
-				},
-				Spec: corev1.NodeSpec{Unschedulable: false},
-				Status: corev1.NodeStatus{
-					Conditions: []corev1.NodeCondition{
-						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
-					},
-					Allocatable: corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse("4"),
-						corev1.ResourceMemory: resource.MustParse("8Gi"),
-					},
-				},
-			},
-			&corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:   "node-3",
-					Labels: map[string]string{"kubernetes.io/hostname": "node-3"},
-				},
-				Spec: corev1.NodeSpec{Unschedulable: false},
-				Status: corev1.NodeStatus{
-					Conditions: []corev1.NodeCondition{
-						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
-					},
-					Allocatable: corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse("4"),
-						corev1.ResourceMemory: resource.MustParse("8Gi"),
-					},
-				},
-			},
+			})
 		}
 
 		// Create 5 nginx pods with hostname anti-affinity (each needs unique node)
-		pods := make([]*corev1.Pod, 5)
+		pods := []runtime.Object{}
 		for i := 0; i < 5; i++ {
-			pods[i] = &corev1.Pod{
+			pods = append(pods, &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "nginx-" + string(rune('a'+i)),
+					Name:      fmt.Sprintf("nginx-%d", i),
 					Namespace: "default",
 					Labels:    map[string]string{"app": "nginx"},
 				},
 				Spec: corev1.PodSpec{
-					NodeName: "node-1", // All on node being considered for removal
+					NodeName: fmt.Sprintf("node-%d", i+1),
 					Affinity: &corev1.Affinity{
 						PodAntiAffinity: &corev1.PodAntiAffinity{
 							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
@@ -3725,37 +3522,36 @@ func TestCanPodsBeRescheduledAntiAffinity(t *testing.T) {
 							},
 						},
 					},
-					Containers: []corev1.Container{
-						{
-							Name: "nginx",
-							Resources: corev1.ResourceRequirements{
-								Requests: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse("100m"),
-									corev1.ResourceMemory: resource.MustParse("128Mi"),
-								},
-							},
-						},
-					},
 				},
-			}
+			})
 		}
 
-		fakeClient := fake.NewSimpleClientset(nodes...)
+		allObjects := append(nodes, pods...)
+		fakeClient := fake.NewSimpleClientset(allObjects...)
 		manager := &ScaleDownManager{
 			client: fakeClient,
 			logger: logger.Sugar(),
 			config: DefaultConfig(),
 		}
 
-		// Act
-		canSchedule, reason, err := manager.canPodsBeRescheduled(ctx, pods)
+		// Get pods on node-1 (the node being considered for removal)
+		podList, _ := fakeClient.CoreV1().Pods("default").List(ctx, metav1.ListOptions{})
+		var podsToCheck []*corev1.Pod
+		for i := range podList.Items {
+			if podList.Items[i].Spec.NodeName == "node-1" {
+				podsToCheck = append(podsToCheck, &podList.Items[i])
+			}
+		}
+
+		// Act - call hasAntiAffinityViolations which calls checkAntiAffinityTerm
+		hasViolation, reason, err := manager.hasAntiAffinityViolations(ctx, podsToCheck)
 
 		// Assert
 		require.NoError(t, err)
-		assert.False(t, canSchedule, "Scale-down should be blocked - need 5 nodes for anti-affinity but only 3 available")
+		assert.True(t, hasViolation, "Scale-down should be blocked - 5 pods need 5 nodes but only 4 remain after removal")
 		assert.Contains(t, reason, "anti-affinity", "Reason should mention anti-affinity")
-		assert.Contains(t, reason, "5", "Reason should mention required count")
-		assert.Contains(t, reason, "3", "Reason should mention available count")
+		assert.Contains(t, reason, "5", "Reason should mention 5 pods")
+		assert.Contains(t, reason, "4", "Reason should mention 4 remaining nodes")
 	})
 
 	t.Run("3 pods with anti-affinity, 5 nodes available - should allow", func(t *testing.T) {
@@ -3763,38 +3559,33 @@ func TestCanPodsBeRescheduledAntiAffinity(t *testing.T) {
 		logger := zaptest.NewLogger(t)
 
 		// Create 5 available nodes
-		nodes := make([]runtime.Object, 5)
-		for i := 0; i < 5; i++ {
-			nodeName := "node-" + string(rune('1'+i))
-			nodes[i] = &corev1.Node{
+		nodes := []runtime.Object{}
+		for i := 1; i <= 5; i++ {
+			nodes = append(nodes, &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:   nodeName,
-					Labels: map[string]string{"kubernetes.io/hostname": nodeName},
+					Name:   fmt.Sprintf("node-%d", i),
+					Labels: map[string]string{"kubernetes.io/hostname": fmt.Sprintf("node-%d", i)},
 				},
 				Spec: corev1.NodeSpec{Unschedulable: false},
 				Status: corev1.NodeStatus{
 					Conditions: []corev1.NodeCondition{
 						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
 					},
-					Allocatable: corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse("4"),
-						corev1.ResourceMemory: resource.MustParse("8Gi"),
-					},
 				},
-			}
+			})
 		}
 
-		// Create 3 nginx pods with hostname anti-affinity
-		pods := make([]*corev1.Pod, 3)
+		// Create 3 nginx pods with hostname anti-affinity (on 3 different nodes)
+		pods := []runtime.Object{}
 		for i := 0; i < 3; i++ {
-			pods[i] = &corev1.Pod{
+			pods = append(pods, &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "nginx-" + string(rune('a'+i)),
+					Name:      fmt.Sprintf("nginx-%d", i),
 					Namespace: "default",
 					Labels:    map[string]string{"app": "nginx"},
 				},
 				Spec: corev1.PodSpec{
-					NodeName: "node-1",
+					NodeName: fmt.Sprintf("node-%d", i+1),
 					Affinity: &corev1.Affinity{
 						PodAntiAffinity: &corev1.PodAntiAffinity{
 							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
@@ -3807,34 +3598,33 @@ func TestCanPodsBeRescheduledAntiAffinity(t *testing.T) {
 							},
 						},
 					},
-					Containers: []corev1.Container{
-						{
-							Name: "nginx",
-							Resources: corev1.ResourceRequirements{
-								Requests: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse("100m"),
-									corev1.ResourceMemory: resource.MustParse("128Mi"),
-								},
-							},
-						},
-					},
 				},
-			}
+			})
 		}
 
-		fakeClient := fake.NewSimpleClientset(nodes...)
+		allObjects := append(nodes, pods...)
+		fakeClient := fake.NewSimpleClientset(allObjects...)
 		manager := &ScaleDownManager{
 			client: fakeClient,
 			logger: logger.Sugar(),
 			config: DefaultConfig(),
 		}
 
-		// Act
-		canSchedule, _, err := manager.canPodsBeRescheduled(ctx, pods)
+		// Get pods on node-1 (the node being considered for removal)
+		podList, _ := fakeClient.CoreV1().Pods("default").List(ctx, metav1.ListOptions{})
+		var podsToCheck []*corev1.Pod
+		for i := range podList.Items {
+			if podList.Items[i].Spec.NodeName == "node-1" {
+				podsToCheck = append(podsToCheck, &podList.Items[i])
+			}
+		}
 
-		// Assert
+		// Act - call hasAntiAffinityViolations
+		hasViolation, _, err := manager.hasAntiAffinityViolations(ctx, podsToCheck)
+
+		// Assert - 3 pods need 3 nodes, after removing 1 we have 4 nodes, so it should be allowed
 		require.NoError(t, err)
-		assert.True(t, canSchedule, "Scale-down should be allowed - 5 nodes available for 3 pods with anti-affinity")
+		assert.False(t, hasViolation, "Scale-down should be allowed - 4 remaining nodes for 3 pods with anti-affinity")
 	})
 
 	t.Run("Pods without anti-affinity - resource check only", func(t *testing.T) {

@@ -271,13 +271,8 @@ func (s *ScaleDownManager) canPodsBeRescheduled(ctx context.Context, pods []*cor
 			requiredMem, totalAvailableMem), nil
 	}
 
-	// Check anti-affinity node requirements
-	// Count pods that need unique nodes due to hostname-based anti-affinity
-	requiredUniqueNodes := countPodsRequiringUniqueNodes(pods)
-	if requiredUniqueNodes > 0 && len(availableNodes) < requiredUniqueNodes {
-		return false, fmt.Sprintf("insufficient nodes for pod anti-affinity (need %d unique nodes, have %d available)",
-			requiredUniqueNodes, len(availableNodes)), nil
-	}
+	// Note: Pod anti-affinity checks are handled by hasAntiAffinityViolations
+	// which looks at ALL matching pods across the cluster, not just pods being moved
 
 	return true, "", nil
 }
@@ -377,9 +372,12 @@ func (s *ScaleDownManager) checkAntiAffinityTerm(
 			}
 		}
 
-		// If we only have 2 ready nodes and we're removing one, anti-affinity might be violated
-		if readyNodes <= 2 {
-			return true, fmt.Sprintf("insufficient nodes to satisfy anti-affinity for pod %s/%s", pod.Namespace, pod.Name), nil
+		// After removing this node, we need at least as many nodes as matching pods
+		// For hostname-based anti-affinity, each pod needs a unique node
+		remainingNodes := readyNodes - 1
+		if len(matchingPods.Items) > remainingNodes {
+			return true, fmt.Sprintf("insufficient nodes for anti-affinity: %d pods require unique nodes but only %d nodes remain after removal",
+				len(matchingPods.Items), remainingNodes), nil
 		}
 	}
 
@@ -734,35 +732,6 @@ func matchesPodAffinityTerm(existingPod *corev1.Pod, term *corev1.PodAffinityTer
 	// 3. Compare with the target node's topology value
 	// Without the ability to look up the existing pod's node, we cannot verify
 	// the topology match. For safety, return false (no match assumed).
-	return false
-}
-
-// countPodsRequiringUniqueNodes counts pods that have hostname-based anti-affinity
-// (RequiredDuringSchedulingIgnoredDuringExecution with kubernetes.io/hostname topology key).
-// Each such pod requires its own unique node to satisfy the anti-affinity constraint.
-// This function is used to determine the minimum number of nodes needed for rescheduling.
-func countPodsRequiringUniqueNodes(pods []*corev1.Pod) int {
-	count := 0
-	for _, pod := range pods {
-		if hasHostnameAntiAffinity(pod) {
-			count++
-		}
-	}
-	return count
-}
-
-// hasHostnameAntiAffinity checks if a pod has RequiredDuringSchedulingIgnoredDuringExecution
-// anti-affinity with kubernetes.io/hostname topology key.
-func hasHostnameAntiAffinity(pod *corev1.Pod) bool {
-	if pod.Spec.Affinity == nil || pod.Spec.Affinity.PodAntiAffinity == nil {
-		return false
-	}
-
-	for _, term := range pod.Spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution {
-		if term.TopologyKey == "kubernetes.io/hostname" {
-			return true
-		}
-	}
 	return false
 }
 
