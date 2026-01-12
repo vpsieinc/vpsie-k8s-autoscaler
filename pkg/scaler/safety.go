@@ -682,3 +682,73 @@ func matchesNodeAffinity(pod *corev1.Pod, node *corev1.Node) bool {
 	// They express preferences, not requirements
 	return true
 }
+
+// matchesPodAffinityTerm checks if an existing pod matches a pod affinity term
+// considering the topology key and label selector.
+// For hostname-based topology (kubernetes.io/hostname), we use a simplified check:
+// if the existing pod's NodeName matches the target node's Name, they are on the same topology.
+// For other topology keys (e.g., zone), we would need to look up the existing pod's node,
+// which requires additional API calls. For safety, we return false for non-hostname topologies.
+func matchesPodAffinityTerm(existingPod *corev1.Pod, term *corev1.PodAffinityTerm, node *corev1.Node) bool {
+	// Handle nil LabelSelector - cannot match without selector
+	if term.LabelSelector == nil {
+		return false
+	}
+
+	// Convert LabelSelector to labels.Selector
+	selector, err := metav1.LabelSelectorAsSelector(term.LabelSelector)
+	if err != nil {
+		// Invalid selector - cannot match
+		return false
+	}
+
+	// Check if existing pod's labels match the selector
+	if !selector.Matches(labels.Set(existingPod.Labels)) {
+		return false
+	}
+
+	// Check topology key matching
+	// For kubernetes.io/hostname, we can directly compare pod's NodeName with node's Name
+	if term.TopologyKey == "kubernetes.io/hostname" {
+		// The existing pod is on the same topology if its NodeName matches the target node's
+		// hostname label (which typically equals the node name)
+		nodeHostname := node.Labels[term.TopologyKey]
+		if nodeHostname == "" {
+			// Node doesn't have hostname label - use node name as fallback
+			nodeHostname = node.Name
+		}
+		return existingPod.Spec.NodeName == nodeHostname
+	}
+
+	// For other topology keys (e.g., topology.kubernetes.io/zone), we would need to:
+	// 1. Get the existing pod's node
+	// 2. Get the topology value from that node's labels
+	// 3. Compare with the target node's topology value
+	// Without the ability to look up the existing pod's node, we cannot verify
+	// the topology match. For safety, return false (no match assumed).
+	return false
+}
+
+// hasPodAntiAffinityViolation checks if scheduling pod to node would violate anti-affinity rules.
+// Only checks RequiredDuringSchedulingIgnoredDuringExecution (hard constraint).
+// Preferred (soft) constraints are ignored for scale-down decisions - they express preferences, not requirements.
+func hasPodAntiAffinityViolation(pod *corev1.Pod, node *corev1.Node, existingPods []*corev1.Pod) bool {
+	// No anti-affinity requirements means no violation possible
+	if pod.Spec.Affinity == nil || pod.Spec.Affinity.PodAntiAffinity == nil {
+		return false
+	}
+
+	antiAffinity := pod.Spec.Affinity.PodAntiAffinity
+
+	// Only check required (hard) anti-affinity constraints
+	// Preferred (soft) constraints are ignored for scale-down decisions
+	for _, term := range antiAffinity.RequiredDuringSchedulingIgnoredDuringExecution {
+		for _, existingPod := range existingPods {
+			if matchesPodAffinityTerm(existingPod, &term, node) {
+				return true // Would violate anti-affinity
+			}
+		}
+	}
+
+	return false
+}

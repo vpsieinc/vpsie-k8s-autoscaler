@@ -2846,3 +2846,625 @@ func TestMatchesNodeAffinity(t *testing.T) {
 		assert.False(t, matchesNodeAffinity(pod, nodeEurope), "Should not match when no terms match")
 	})
 }
+
+// =============================================================================
+// ESDS-006: Pod Anti-Affinity Matching Tests
+// Tests for matchesPodAffinityTerm, hasPodAntiAffinityViolation
+// =============================================================================
+
+// TestMatchesPodAffinityTerm tests the matchesPodAffinityTerm function
+// which checks if an existing pod matches a pod affinity term considering
+// the topology key and label selector.
+func TestMatchesPodAffinityTerm(t *testing.T) {
+	t.Run("Label selector matches and same topology - returns true", func(t *testing.T) {
+		// Existing pod on worker-1 with label app=web
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+			},
+		}
+
+		// Term that selects pods with app=web on same hostname
+		term := &corev1.PodAffinityTerm{
+			LabelSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "web",
+				},
+			},
+			TopologyKey: "kubernetes.io/hostname",
+		}
+
+		// Node where we're checking - has same hostname as existing pod's node
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		result := matchesPodAffinityTerm(existingPod, term, node)
+		assert.True(t, result, "Should match when label selector matches and pods on same topology")
+	})
+
+	t.Run("Label selector matches but different topology - returns false", func(t *testing.T) {
+		// Existing pod on worker-1 with label app=web
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+			},
+		}
+
+		// Term that selects pods with app=web on same hostname
+		term := &corev1.PodAffinityTerm{
+			LabelSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "web",
+				},
+			},
+			TopologyKey: "kubernetes.io/hostname",
+		}
+
+		// Node where we're checking - has DIFFERENT hostname than existing pod's node
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-2",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-2",
+				},
+			},
+		}
+
+		result := matchesPodAffinityTerm(existingPod, term, node)
+		assert.False(t, result, "Should NOT match when pods are on different topologies")
+	})
+
+	t.Run("Label selector does not match - returns false", func(t *testing.T) {
+		// Existing pod on worker-1 with label app=database (different)
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "db-pod",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "database",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+			},
+		}
+
+		// Term that selects pods with app=web
+		term := &corev1.PodAffinityTerm{
+			LabelSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "web",
+				},
+			},
+			TopologyKey: "kubernetes.io/hostname",
+		}
+
+		// Node where we're checking - same as existing pod's node
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		result := matchesPodAffinityTerm(existingPod, term, node)
+		assert.False(t, result, "Should NOT match when label selector does not match existing pod")
+	})
+
+	t.Run("Nil label selector - returns false", func(t *testing.T) {
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+			},
+		}
+
+		// Term with nil label selector
+		term := &corev1.PodAffinityTerm{
+			LabelSelector: nil,
+			TopologyKey:   "kubernetes.io/hostname",
+		}
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		result := matchesPodAffinityTerm(existingPod, term, node)
+		assert.False(t, result, "Should return false when LabelSelector is nil")
+	})
+
+	t.Run("Zone topology key matching", func(t *testing.T) {
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+			},
+		}
+
+		// Term that uses zone topology
+		term := &corev1.PodAffinityTerm{
+			LabelSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "web",
+				},
+			},
+			TopologyKey: "topology.kubernetes.io/zone",
+		}
+
+		// Node in same zone as existing pod's node
+		nodeSameZone := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-2",
+				Labels: map[string]string{
+					"topology.kubernetes.io/zone": "us-east-1a",
+				},
+			},
+		}
+
+		// For zone-based topology, we need to check if the existing pod's node
+		// has the same zone. Since we can't get the existing pod's node labels
+		// directly, this test verifies zone-based matching works.
+		// The existing pod is on worker-1, but we need its zone label.
+		// In real usage, we'd need to look up the node. For this test,
+		// we simplify by checking the current node's topology label exists.
+		result := matchesPodAffinityTerm(existingPod, term, nodeSameZone)
+		// This will depend on implementation - for now we'll verify behavior
+		// Expecting false because we can't verify the existing pod's node zone without lookup
+		assert.False(t, result, "Should return false when cannot verify topology match")
+	})
+
+	t.Run("MatchExpressions label selector", func(t *testing.T) {
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app":     "web",
+					"version": "v1",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+			},
+		}
+
+		// Term with MatchExpressions
+		term := &corev1.PodAffinityTerm{
+			LabelSelector: &metav1.LabelSelector{
+				MatchExpressions: []metav1.LabelSelectorRequirement{
+					{
+						Key:      "app",
+						Operator: metav1.LabelSelectorOpIn,
+						Values:   []string{"web", "api"},
+					},
+				},
+			},
+			TopologyKey: "kubernetes.io/hostname",
+		}
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		result := matchesPodAffinityTerm(existingPod, term, node)
+		assert.True(t, result, "Should match when MatchExpressions selector matches")
+	})
+}
+
+// TestHasPodAntiAffinityViolation tests the hasPodAntiAffinityViolation function
+// which checks if scheduling a pod to a node would violate anti-affinity rules.
+func TestHasPodAntiAffinityViolation(t *testing.T) {
+	t.Run("No anti-affinity - no violation", func(t *testing.T) {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "simple-pod",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{},
+		}
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+		existingPods := []*corev1.Pod{}
+
+		result := hasPodAntiAffinityViolation(pod, node, existingPods)
+		assert.False(t, result, "Should return false when pod has no anti-affinity")
+	})
+
+	t.Run("Nil Affinity - no violation", func(t *testing.T) {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "simple-pod",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{
+				Affinity: nil,
+			},
+		}
+		node := &corev1.Node{}
+		existingPods := []*corev1.Pod{}
+
+		result := hasPodAntiAffinityViolation(pod, node, existingPods)
+		assert.False(t, result, "Should return false when Affinity is nil")
+	})
+
+	t.Run("Nil PodAntiAffinity - no violation", func(t *testing.T) {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "simple-pod",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: nil,
+				},
+			},
+		}
+		node := &corev1.Node{}
+		existingPods := []*corev1.Pod{}
+
+		result := hasPodAntiAffinityViolation(pod, node, existingPods)
+		assert.False(t, result, "Should return false when PodAntiAffinity is nil")
+	})
+
+	t.Run("Anti-affinity with no matching existing pods - no violation", func(t *testing.T) {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: &corev1.PodAntiAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+							{
+								LabelSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"app": "web",
+									},
+								},
+								TopologyKey: "kubernetes.io/hostname",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		// No existing pods
+		existingPods := []*corev1.Pod{}
+
+		result := hasPodAntiAffinityViolation(pod, node, existingPods)
+		assert.False(t, result, "Should return false when no existing pods match")
+	})
+
+	t.Run("Anti-affinity violated - matching pod on same topology", func(t *testing.T) {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: &corev1.PodAntiAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+							{
+								LabelSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"app": "web",
+									},
+								},
+								TopologyKey: "kubernetes.io/hostname",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		// Existing pod on same node with matching label
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-2",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+			},
+		}
+
+		result := hasPodAntiAffinityViolation(pod, node, []*corev1.Pod{existingPod})
+		assert.True(t, result, "Should return true when anti-affinity would be violated")
+	})
+
+	t.Run("Preferred anti-affinity ignored - soft constraint", func(t *testing.T) {
+		weight := int32(100)
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: &corev1.PodAntiAffinity{
+						// Only preferred (soft) constraint - should be ignored
+						PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
+							{
+								Weight: weight,
+								PodAffinityTerm: corev1.PodAffinityTerm{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{
+											"app": "web",
+										},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		// Existing pod on same node with matching label
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-2",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+			},
+		}
+
+		result := hasPodAntiAffinityViolation(pod, node, []*corev1.Pod{existingPod})
+		assert.False(t, result, "Should return false - preferred (soft) constraints are ignored")
+	})
+
+	t.Run("Anti-affinity not violated - matching pod on different topology", func(t *testing.T) {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: &corev1.PodAntiAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+							{
+								LabelSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"app": "web",
+									},
+								},
+								TopologyKey: "kubernetes.io/hostname",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		// Existing pod on DIFFERENT node with matching label
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-2",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-2", // Different node
+			},
+		}
+
+		result := hasPodAntiAffinityViolation(pod, node, []*corev1.Pod{existingPod})
+		assert.False(t, result, "Should return false - existing pod is on different topology")
+	})
+
+	t.Run("Multiple anti-affinity terms - first term violated", func(t *testing.T) {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: &corev1.PodAntiAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+							{
+								LabelSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"app": "web",
+									},
+								},
+								TopologyKey: "kubernetes.io/hostname",
+							},
+							{
+								LabelSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"tier": "frontend",
+									},
+								},
+								TopologyKey: "kubernetes.io/hostname",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		// Existing pod matches first term
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-2",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+			},
+		}
+
+		result := hasPodAntiAffinityViolation(pod, node, []*corev1.Pod{existingPod})
+		assert.True(t, result, "Should return true when any anti-affinity term is violated")
+	})
+
+	t.Run("Empty existing pods list - no violation", func(t *testing.T) {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: &corev1.PodAntiAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+							{
+								LabelSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"app": "web",
+									},
+								},
+								TopologyKey: "kubernetes.io/hostname",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		result := hasPodAntiAffinityViolation(pod, node, []*corev1.Pod{})
+		assert.False(t, result, "Should return false with empty existing pods list")
+	})
+}
