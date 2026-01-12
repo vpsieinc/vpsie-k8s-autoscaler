@@ -321,19 +321,25 @@ func TestSameNodeGroupProtection(t *testing.T) {
 		}
 
 		// Act:
-		// result, err := executor.executeRollingBatch(context.TODO(), plan, &plan.Batches[0], state)
+		result, err := executor.executeRollingBatch(context.TODO(), plan, &plan.Batches[0], state)
 
 		// Assert:
-		// require.NoError(t, err)
-		// assert.Equal(t, int32(0), result.NodesFailed, "No nodes should fail - operation skipped")
-		// assert.Equal(t, int32(0), result.NodesRebalanced, "No nodes should be rebalanced - operation skipped")
-		// Verify VPSie API not called (mock verification)
-		// Verify log contains "Skipping termination: same nodegroup"
-
-		_ = executor
-		_ = plan
-		_ = state
-		t.Skip("Skeleton: Implementation required - same-nodegroup guard clause in executeRollingBatch")
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+		if result.NodesFailed != 0 {
+			t.Errorf("Expected NodesFailed=0 (operation skipped), got %d", result.NodesFailed)
+		}
+		if result.NodesRebalanced != 0 {
+			t.Errorf("Expected NodesRebalanced=0 (operation skipped), got %d", result.NodesRebalanced)
+		}
+		// Verify no nodes were added to failed or completed lists
+		if len(result.FailedNodes) != 0 {
+			t.Errorf("Expected no failed nodes, got %d", len(result.FailedNodes))
+		}
+		if len(result.CompletedNodes) != 0 {
+			t.Errorf("Expected no completed nodes, got %d", len(result.CompletedNodes))
+		}
 	})
 
 	// AC5: Different-NodeGroup - PROCEED scenario
@@ -397,19 +403,24 @@ func TestSameNodeGroupProtection(t *testing.T) {
 		}
 
 		// Act:
-		// result, err := executor.executeRollingBatch(context.TODO(), plan, &plan.Batches[0], state)
+		result, err := executor.executeRollingBatch(context.TODO(), plan, &plan.Batches[0], state)
 
 		// Assert:
 		// The execution should proceed (and fail at provisioning since it's not implemented)
 		// This verifies the guard clause does NOT block different-nodegroup operations
-		// require.NoError(t, err)
-		// assert.Equal(t, int32(1), result.NodesFailed, "Should fail at provisioning")
+		if err != nil {
+			t.Fatalf("Expected no error from executeRollingBatch, got: %v", err)
+		}
+		if result.NodesFailed != 1 {
+			t.Errorf("Expected NodesFailed=1 (should fail at provisioning), got %d", result.NodesFailed)
+		}
 		// Verify the failure is at "provision" stage, not blocked by same-nodegroup check
-
-		_ = executor
-		_ = plan
-		_ = state
-		t.Skip("Skeleton: Implementation required - same-nodegroup guard clause in executeRollingBatch")
+		if len(result.FailedNodes) != 1 {
+			t.Fatalf("Expected 1 failed node, got %d", len(result.FailedNodes))
+		}
+		if result.FailedNodes[0].Operation != "provision" {
+			t.Errorf("Expected failure at 'provision' stage, got '%s'", result.FailedNodes[0].Operation)
+		}
 	})
 
 	// AC5: Same NodeGroup but Different Offering - PROCEED scenario
@@ -473,18 +484,23 @@ func TestSameNodeGroupProtection(t *testing.T) {
 		}
 
 		// Act:
-		// result, err := executor.executeRollingBatch(context.TODO(), plan, &plan.Batches[0], state)
+		result, err := executor.executeRollingBatch(context.TODO(), plan, &plan.Batches[0], state)
 
 		// Assert:
 		// - Verify normal rebalance flow is attempted (this is a valid right-sizing operation)
 		// - Verify the guard clause does NOT block execution
-		// require.NoError(t, err)
-		// assert.Equal(t, int32(1), result.NodesFailed, "Should fail at provisioning")
-		// Verify provisionNewNode is called with TargetOffering "offering-standard-2-4"
-
-		_ = executor
-		_ = plan
-		_ = state
-		t.Skip("Skeleton: Implementation required - same-nodegroup guard clause in executeRollingBatch")
+		if err != nil {
+			t.Fatalf("Expected no error from executeRollingBatch, got: %v", err)
+		}
+		if result.NodesFailed != 1 {
+			t.Errorf("Expected NodesFailed=1 (should fail at provisioning), got %d", result.NodesFailed)
+		}
+		// Verify the failure is at "provision" stage, not blocked by same-nodegroup check
+		if len(result.FailedNodes) != 1 {
+			t.Fatalf("Expected 1 failed node, got %d", len(result.FailedNodes))
+		}
+		if result.FailedNodes[0].Operation != "provision" {
+			t.Errorf("Expected failure at 'provision' stage, got '%s'", result.FailedNodes[0].Operation)
+		}
 	})
 }

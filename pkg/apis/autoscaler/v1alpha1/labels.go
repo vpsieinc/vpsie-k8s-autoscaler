@@ -30,6 +30,23 @@ const (
 
 	// CreationRequestedAnnotation is the annotation key to trigger async VPS discovery.
 	CreationRequestedAnnotation = "autoscaler.vpsie.com/creation-requested"
+
+	// CreationReasonAnnotationKey is the annotation key for tracking why a node was created.
+	// Values: "metrics" (scale-up due to resource metrics), "manual" (manually created),
+	// "rebalance" (created during rebalancing), "initial" (initial nodegroup setup)
+	CreationReasonAnnotationKey = "autoscaler.vpsie.com/creation-reason"
+
+	// CreationReasonMetrics indicates the node was created due to metrics-based scale-up
+	CreationReasonMetrics = "metrics"
+
+	// CreationReasonManual indicates the node was manually created or pre-existing
+	CreationReasonManual = "manual"
+
+	// CreationReasonRebalance indicates the node was created during rebalancing
+	CreationReasonRebalance = "rebalance"
+
+	// CreationReasonInitial indicates the node was created during initial nodegroup setup
+	CreationReasonInitial = "initial"
 )
 
 // IsManagedNodeGroup checks if the NodeGroup has the managed label set to "true".

@@ -160,6 +160,17 @@ func (e *Executor) executeRollingBatch(ctx context.Context, plan *RebalancePlan,
 			"currentOffering", candidate.CurrentOffering,
 			"targetOffering", candidate.TargetOffering)
 
+		// Same-nodegroup protection: Skip termination if target nodegroup == current nodegroup
+		// and offering is the same (no actual change needed)
+		currentNodeGroup := e.getNodeGroupFromNode(ctx, candidate.NodeName)
+		if currentNodeGroup == plan.NodeGroupName && candidate.CurrentOffering == candidate.TargetOffering {
+			logger.Info("Skipping termination: same nodegroup and offering",
+				"nodeName", candidate.NodeName,
+				"nodeGroup", plan.NodeGroupName,
+				"offering", candidate.CurrentOffering)
+			continue
+		}
+
 		// Step 1: Provision new node
 		newNode, err := e.provisionNewNode(ctx, plan, &candidate)
 		if err != nil || newNode == nil {
@@ -245,11 +256,30 @@ func (e *Executor) executeSurgeBatch(ctx context.Context, plan *RebalancePlan, b
 		FailedNodes:    make([]NodeFailure, 0),
 	}
 
+	// Same-nodegroup protection: Filter out candidates that don't need rebalancing
+	var candidatesToProcess []CandidateNode
+	for _, candidate := range batch.Nodes {
+		currentNodeGroup := e.getNodeGroupFromNode(ctx, candidate.NodeName)
+		if currentNodeGroup == plan.NodeGroupName && candidate.CurrentOffering == candidate.TargetOffering {
+			logger.Info("Skipping termination: same nodegroup and offering",
+				"nodeName", candidate.NodeName,
+				"nodeGroup", plan.NodeGroupName,
+				"offering", candidate.CurrentOffering)
+			continue
+		}
+		candidatesToProcess = append(candidatesToProcess, candidate)
+	}
+
+	if len(candidatesToProcess) == 0 {
+		logger.Info("No candidates to process after same-nodegroup filtering")
+		return result, nil
+	}
+
 	newNodes := make([]*Node, 0)
 
 	// Phase 1: Provision all new nodes
-	logger.Info("Surge strategy: provisioning all new nodes", "count", len(batch.Nodes))
-	for _, candidate := range batch.Nodes {
+	logger.Info("Surge strategy: provisioning all new nodes", "count", len(candidatesToProcess))
+	for _, candidate := range candidatesToProcess {
 		newNode, err := e.provisionNewNode(ctx, plan, &candidate)
 		if err != nil || newNode == nil {
 			// Handle both provisioning errors and nil node pointer
@@ -283,8 +313,8 @@ func (e *Executor) executeSurgeBatch(ctx context.Context, plan *RebalancePlan, b
 	}
 
 	// Phase 2: Drain and terminate all old nodes
-	logger.Info("Surge strategy: draining all old nodes", "count", len(batch.Nodes))
-	for _, candidate := range batch.Nodes {
+	logger.Info("Surge strategy: draining all old nodes", "count", len(candidatesToProcess))
+	for _, candidate := range candidatesToProcess {
 		oldNode := &Node{Name: candidate.NodeName}
 
 		err := e.DrainNode(ctx, oldNode)
@@ -666,4 +696,14 @@ type batchResult struct {
 	NodesFailed     int32
 	CompletedNodes  []string
 	FailedNodes     []NodeFailure
+}
+
+// getNodeGroupFromNode retrieves the nodegroup label from a node.
+// Returns empty string on error (fail-safe - allows operation to proceed).
+func (e *Executor) getNodeGroupFromNode(ctx context.Context, nodeName string) string {
+	node, err := e.kubeClient.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		return ""
+	}
+	return node.Labels["autoscaler.vpsie.com/nodegroup"]
 }

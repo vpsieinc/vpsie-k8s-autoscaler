@@ -189,6 +189,17 @@ func (s *ScaleDownManager) IdentifyUnderutilizedNodes(
 			continue
 		}
 
+		// Skip nodes not created due to metrics-based scaling
+		// Only scale down nodes that were created by the autoscaler due to resource metrics
+		creationReason := node.Annotations[autoscalerv1alpha1.CreationReasonAnnotationKey]
+		if creationReason != "" && creationReason != autoscalerv1alpha1.CreationReasonMetrics {
+			s.logger.Info("skipping node not created due to metrics",
+				"node", node.Name,
+				"nodeGroup", nodeGroup.Name,
+				"creationReason", creationReason)
+			continue
+		}
+
 		// Get utilization data and create a safe copy
 		// CRITICAL: We perform a DEEP COPY of the utilization data to prevent race conditions.
 		//
