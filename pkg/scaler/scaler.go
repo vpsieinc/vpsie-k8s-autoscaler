@@ -141,7 +141,7 @@ func DefaultConfig() *Config {
 		MemoryThreshold:           DefaultMemoryThreshold,
 		ObservationWindow:         DefaultObservationWindow,
 		CooldownPeriod:            DefaultCooldownPeriod,
-		MaxNodesPerScaleDown:      5,
+		MaxNodesPerScaleDown:      1, // Safety: only remove one node at a time
 		EnablePodDisruptionBudget: true,
 		DrainTimeout:              5 * time.Minute,
 		EvictionGracePeriod:       30,

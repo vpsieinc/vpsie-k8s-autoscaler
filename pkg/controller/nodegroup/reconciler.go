@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 	vpsieclient "github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/client"
 )
 
@@ -307,20 +308,60 @@ func (r *NodeGroupReconciler) reconcileIntelligentScaleDown(
 	// After successful drain, delete the corresponding VPSieNode CRs
 	// The VPSieNode controller will handle VM termination and K8s node deletion
 
-	// Build map for O(1) lookup instead of O(n*m) nested loops
+	// Build maps for O(1) lookup instead of O(n*m) nested loops
+	// Map by Status.NodeName (set when node joins K8s cluster)
 	vpsieNodeByNodeName := make(map[string]*v1alpha1.VPSieNode)
+	// Fallback map by Spec.NodeName (hostname from VPSie)
+	vpsieNodeBySpecName := make(map[string]*v1alpha1.VPSieNode)
+	// Fallback map by Status.Hostname (VPSie hostname)
+	vpsieNodeByHostname := make(map[string]*v1alpha1.VPSieNode)
+
 	for i := range vpsieNodes {
-		if nodeName := vpsieNodes[i].Status.NodeName; nodeName != "" {
-			vpsieNodeByNodeName[nodeName] = &vpsieNodes[i]
+		vn := &vpsieNodes[i]
+		if vn.Status.NodeName != "" {
+			vpsieNodeByNodeName[vn.Status.NodeName] = vn
+		}
+		if vn.Spec.NodeName != "" {
+			vpsieNodeBySpecName[vn.Spec.NodeName] = vn
+		}
+		if vn.Status.Hostname != "" {
+			vpsieNodeByHostname[vn.Status.Hostname] = vn
 		}
 	}
+
+	logger.Debug("Built VPSieNode lookup maps",
+		zap.Int("byNodeName", len(vpsieNodeByNodeName)),
+		zap.Int("bySpecName", len(vpsieNodeBySpecName)),
+		zap.Int("byHostname", len(vpsieNodeByHostname)),
+	)
 
 	deletedCount := 0
 	var deletionErrors []error
 	for _, candidate := range candidates {
-		// Find the VPSieNode CR for this node using map lookup
-		vn, ok := vpsieNodeByNodeName[candidate.Node.Name]
+		nodeName := candidate.Node.Name
+
+		// Find the VPSieNode CR for this node using multiple lookup strategies
+		vn, ok := vpsieNodeByNodeName[nodeName]
 		if !ok {
+			// Fallback: try Spec.NodeName
+			vn, ok = vpsieNodeBySpecName[nodeName]
+		}
+		if !ok {
+			// Fallback: try Status.Hostname
+			vn, ok = vpsieNodeByHostname[nodeName]
+		}
+		if !ok {
+			// CRITICAL: Log when we can't find a VPSieNode for a drained node
+			logger.Error("CRITICAL: Cannot find VPSieNode for drained node - VPS will NOT be deleted!",
+				zap.String("drainedNodeName", nodeName),
+				zap.Int("totalVPSieNodes", len(vpsieNodes)),
+			)
+			// Record metric for this failure
+			metrics.ScaleDownErrorsTotal.WithLabelValues(
+				ng.Name,
+				ng.Namespace,
+				"vpsienode_not_found",
+			).Inc()
 			continue
 		}
 
