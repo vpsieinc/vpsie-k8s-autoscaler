@@ -67,6 +67,10 @@ type Options struct {
 	// KubeSizeID is the VPSie Kubernetes size/package ID for dynamic NodeGroups
 	// Get available IDs from the k8s/offers API endpoint
 	KubeSizeID int
+
+	// FailedVPSieNodeTTL is the duration after which failed VPSieNodes are automatically deleted
+	// Set to 0 to disable automatic cleanup
+	FailedVPSieNodeTTL time.Duration
 }
 
 // NewDefaultOptions returns Options with default values
@@ -90,6 +94,7 @@ func NewDefaultOptions() *Options {
 		ResourceIdentifier:      "",  // Must be set for dynamic NodeGroup creation
 		KubernetesVersion:       "",  // Must be set for dynamic NodeGroup creation
 		KubeSizeID:              0,   // Must be set for dynamic NodeGroup creation
+		FailedVPSieNodeTTL:      30 * time.Minute,
 	}
 }
 
@@ -146,6 +151,11 @@ func (o *Options) Validate() error {
 	}
 	if !validLogFormats[o.LogFormat] {
 		return fmt.Errorf("invalid log format '%s', must be one of: json, console", o.LogFormat)
+	}
+
+	// Validate FailedVPSieNodeTTL (0 is valid, meaning disabled)
+	if o.FailedVPSieNodeTTL < 0 {
+		return fmt.Errorf("failed VPSieNode TTL cannot be negative")
 	}
 
 	return nil

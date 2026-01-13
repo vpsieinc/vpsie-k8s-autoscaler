@@ -57,7 +57,7 @@ func TestPendingPhaseTransition(t *testing.T) {
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
-	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator)
+	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator, 24*time.Hour, client)
 	reconciler.provisioner = provisioner
 	reconciler.joiner = joiner
 
@@ -120,7 +120,7 @@ func TestProvisioningPhaseTransition(t *testing.T) {
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
-	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator)
+	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator, 24*time.Hour, client)
 	reconciler.provisioner = provisioner
 	reconciler.joiner = joiner
 
@@ -213,7 +213,7 @@ func TestProvisioningPhaseWithExistingVPS(t *testing.T) {
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
-	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator)
+	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator, 24*time.Hour, client)
 	reconciler.provisioner = provisioner
 	reconciler.joiner = joiner
 
@@ -278,7 +278,7 @@ func TestProvisionedPhaseTransition(t *testing.T) {
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
-	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator)
+	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator, 24*time.Hour, client)
 	reconciler.provisioner = provisioner
 	reconciler.joiner = joiner
 
@@ -363,7 +363,7 @@ func TestJoiningPhaseTransitionWithNode(t *testing.T) {
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
-	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator)
+	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator, 24*time.Hour, client)
 	reconciler.provisioner = provisioner
 	reconciler.joiner = joiner
 
@@ -434,7 +434,7 @@ func TestJoiningPhaseWaitingForNode(t *testing.T) {
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
-	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator)
+	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator, 24*time.Hour, client)
 	reconciler.provisioner = provisioner
 	reconciler.joiner = joiner
 
@@ -507,7 +507,7 @@ func TestProvisioningTimeout(t *testing.T) {
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
-	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator)
+	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator, 24*time.Hour, client)
 	reconciler.provisioner = provisioner
 	reconciler.joiner = joiner
 
@@ -574,7 +574,7 @@ func TestJoiningTimeout(t *testing.T) {
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
-	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator)
+	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator, 24*time.Hour, client)
 	reconciler.provisioner = provisioner
 	reconciler.joiner = joiner
 
@@ -636,7 +636,7 @@ func TestVPSNotFoundError(t *testing.T) {
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
-	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator)
+	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator, 24*time.Hour, client)
 	reconciler.provisioner = provisioner
 	reconciler.joiner = joiner
 

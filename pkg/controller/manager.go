@@ -277,6 +277,7 @@ func (cm *ControllerManager) setupControllers() error {
 		cm.vpsieClient,
 		cm.logger,
 		cm.options.SSHKeyIDs,
+		cm.options.FailedVPSieNodeTTL,
 	)
 
 	if err := vpsieNodeReconciler.SetupWithManager(cm.mgr); err != nil {

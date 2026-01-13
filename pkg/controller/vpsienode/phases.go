@@ -8,8 +8,10 @@ import (
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 )
 
 const (
@@ -49,6 +51,8 @@ func NewStateMachine(
 	provisioner *Provisioner,
 	joiner *Joiner,
 	terminator *Terminator,
+	failedNodeTTL time.Duration,
+	k8sClient client.Client,
 ) *StateMachine {
 	sm := &StateMachine{
 		handlers: make(map[v1alpha1.VPSieNodePhase]PhaseHandler),
@@ -62,7 +66,7 @@ func NewStateMachine(
 	sm.handlers[v1alpha1.VPSieNodePhaseReady] = &ReadyPhaseHandler{joiner: joiner}
 	sm.handlers[v1alpha1.VPSieNodePhaseTerminating] = &TerminatingPhaseHandler{terminator: terminator}
 	sm.handlers[v1alpha1.VPSieNodePhaseDeleting] = &DeletingPhaseHandler{terminator: terminator}
-	sm.handlers[v1alpha1.VPSieNodePhaseFailed] = &FailedPhaseHandler{}
+	sm.handlers[v1alpha1.VPSieNodePhaseFailed] = &FailedPhaseHandler{ttl: failedNodeTTL, client: k8sClient}
 
 	return sm
 }
@@ -281,15 +285,82 @@ func (h *DeletingPhaseHandler) Handle(ctx context.Context, vn *v1alpha1.VPSieNod
 }
 
 // FailedPhaseHandler handles the Failed phase
-// Node remains in Failed state until manually intervened
-type FailedPhaseHandler struct{}
+// Node remains in Failed state until TTL expires or manually deleted
+type FailedPhaseHandler struct {
+	ttl    time.Duration
+	client client.Client
+}
 
 // Handle implements PhaseHandler
 func (h *FailedPhaseHandler) Handle(ctx context.Context, vn *v1alpha1.VPSieNode, logger *zap.Logger) (ctrl.Result, error) {
 	logger.Info("Handling Failed phase", zap.String("vpsienode", vn.Name))
 
-	// Node is in failed state, no action to take
-	// User must delete and recreate the node
+	// If TTL is disabled (0), do nothing - node remains in Failed state
+	if h.ttl <= 0 {
+		logger.Debug("TTL-based cleanup disabled for failed VPSieNodes")
+		return ctrl.Result{}, nil
+	}
+
+	// Determine when the node entered Failed state
+	// Use Error condition's LastTransitionTime, or fall back to creation timestamp
+	var failedAt time.Time
+	errorCond := GetCondition(vn, v1alpha1.VPSieNodeConditionError)
+	if errorCond != nil && !errorCond.LastTransitionTime.IsZero() {
+		failedAt = errorCond.LastTransitionTime.Time
+	} else {
+		// Fall back to creation time if no Error condition exists
+		failedAt = vn.CreationTimestamp.Time
+	}
+
+	elapsed := time.Since(failedAt)
+	remaining := h.ttl - elapsed
+
+	logger.Debug("Checking TTL for failed VPSieNode",
+		zap.String("vpsienode", vn.Name),
+		zap.Duration("ttl", h.ttl),
+		zap.Duration("elapsed", elapsed),
+		zap.Duration("remaining", remaining),
+	)
+
+	// If TTL has not expired, requeue after the remaining time
+	if remaining > 0 {
+		logger.Info("VPSieNode TTL not expired, will check again",
+			zap.String("vpsienode", vn.Name),
+			zap.Duration("checkAfter", remaining),
+		)
+		return ctrl.Result{RequeueAfter: remaining}, nil
+	}
+
+	// TTL expired - delete the VPSieNode
+	logger.Warn("VPSieNode TTL expired, initiating deletion",
+		zap.String("vpsienode", vn.Name),
+		zap.Duration("ttl", h.ttl),
+		zap.Duration("inFailedState", elapsed),
+		zap.String("lastError", vn.Status.LastError),
+	)
+
+	// Record metric for TTL-based deletion
+	nodeGroupName := vn.Labels["autoscaler.vpsie.com/nodegroup"]
+	if nodeGroupName == "" {
+		nodeGroupName = "unknown"
+	}
+	metrics.VPSieNodeTTLDeletionsTotal.WithLabelValues(nodeGroupName, vn.Namespace).Inc()
+
+	// Delete the VPSieNode CR - the finalizer will handle VPS cleanup
+	if err := h.client.Delete(ctx, vn); err != nil {
+		logger.Error("Failed to delete VPSieNode after TTL expiration",
+			zap.String("vpsienode", vn.Name),
+			zap.Error(err),
+		)
+		// Requeue to retry deletion
+		return ctrl.Result{RequeueAfter: DefaultRequeueAfter}, err
+	}
+
+	logger.Info("VPSieNode deleted due to TTL expiration",
+		zap.String("vpsienode", vn.Name),
+	)
+
+	// No requeue needed - the delete will trigger a new reconciliation via the watch
 	return ctrl.Result{}, nil
 }
 

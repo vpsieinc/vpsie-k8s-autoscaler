@@ -53,6 +53,9 @@ const (
 
 	// ReasonVPSDeleteFailed indicates VPS deletion failed
 	ReasonVPSDeleteFailed = "VPSDeleteFailed"
+
+	// ReasonTTLExpired indicates the VPSieNode was deleted due to TTL expiration
+	ReasonTTLExpired = "TTLExpired"
 )
 
 // SetCondition sets or updates a condition on the VPSieNode

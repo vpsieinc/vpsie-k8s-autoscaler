@@ -124,6 +124,10 @@ func addFlags(cmd *cobra.Command, opts *controller.Options) {
 		"Log format (json, console)")
 	flags.BoolVar(&opts.DevelopmentMode, "development", opts.DevelopmentMode,
 		"Enable development mode with verbose logging")
+
+	// VPSieNode garbage collection
+	flags.DurationVar(&opts.FailedVPSieNodeTTL, "failed-vpsienode-ttl", opts.FailedVPSieNodeTTL,
+		"Duration after which failed VPSieNodes are automatically deleted (0 to disable)")
 }
 
 // run starts the controller manager

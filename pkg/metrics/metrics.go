@@ -620,6 +620,18 @@ var (
 		// namespace: the rejected namespace
 	)
 
+	// VPSieNode TTL Garbage Collection Metrics
+
+	// VPSieNodeTTLDeletionsTotal tracks the number of VPSieNodes deleted due to TTL expiration
+	VPSieNodeTTLDeletionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "vpsienode_ttl_deletions_total",
+			Help:      "Total number of VPSieNodes deleted due to TTL expiration in Failed phase",
+		},
+		[]string{"nodegroup", "namespace"},
+	)
+
 	// VPSieNode Discovery Metrics
 
 	// VPSieNodeDiscoveryDuration tracks the duration of VPSieNode discovery operations
@@ -722,6 +734,8 @@ func RegisterMetrics() {
 		ScaleUpDecisionNodesRequested,
 		// Webhook Metrics
 		WebhookNamespaceValidationRejectionsTotal,
+		// VPSieNode TTL Garbage Collection Metrics
+		VPSieNodeTTLDeletionsTotal,
 		// VPSieNode Discovery Metrics
 		VPSieNodeDiscoveryDuration,
 		VPSieNodeDiscoveryStrategyUsed,
@@ -782,6 +796,8 @@ func ResetMetrics() {
 	ScaleUpDecisionNodesRequested.Reset()
 	// Webhook Metrics
 	WebhookNamespaceValidationRejectionsTotal.Reset()
+	// VPSieNode TTL Garbage Collection Metrics
+	VPSieNodeTTLDeletionsTotal.Reset()
 	// VPSieNode Discovery Metrics
 	VPSieNodeDiscoveryStrategyUsed.Reset()
 	VPSieNodeDiscoveryFailuresTotal.Reset()
