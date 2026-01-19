@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/utils"
 
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -228,7 +229,7 @@ func (s *ScaleDownManager) canPodsBeRescheduled(ctx context.Context, pods []*cor
 		}
 
 		// Skip nodes with issues
-		if !isNodeReady(node) {
+		if !utils.IsNodeReady(node) {
 			continue
 		}
 
@@ -348,18 +349,27 @@ func (s *ScaleDownManager) checkAntiAffinityTerm(
 		return false, "", fmt.Errorf("invalid label selector: %w", err)
 	}
 
-	// Check if rescheduling this pod would violate the anti-affinity rule
-	// This is a simplified check - full scheduling simulation would be more accurate
-	matchingPods, err := s.client.CoreV1().Pods(pod.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: selector.String(),
-	})
+	// Resolve target namespaces according to Kubernetes semantics
+	targetNamespaces, err := s.resolveTargetNamespaces(ctx, term, pod.Namespace)
 	if err != nil {
-		return false, "", fmt.Errorf("failed to list pods: %w", err)
+		return false, "", fmt.Errorf("failed to resolve target namespaces: %w", err)
+	}
+
+	// Collect matching pods from all target namespaces
+	var allMatchingPods []corev1.Pod
+	for _, ns := range targetNamespaces {
+		matchingPods, err := s.client.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
+			LabelSelector: selector.String(),
+		})
+		if err != nil {
+			return false, "", fmt.Errorf("failed to list pods in namespace %s: %w", ns, err)
+		}
+		allMatchingPods = append(allMatchingPods, matchingPods.Items...)
 	}
 
 	// If there are matching pods and topology key is node hostname,
 	// we need at least 2 nodes to satisfy anti-affinity
-	if len(matchingPods.Items) > 0 && term.TopologyKey == "kubernetes.io/hostname" {
+	if len(allMatchingPods) > 0 && term.TopologyKey == "kubernetes.io/hostname" {
 		nodes, err := s.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 		if err != nil {
 			return false, "", fmt.Errorf("failed to list nodes: %w", err)
@@ -367,7 +377,7 @@ func (s *ScaleDownManager) checkAntiAffinityTerm(
 
 		readyNodes := 0
 		for i := range nodes.Items {
-			if isNodeReady(&nodes.Items[i]) && !nodes.Items[i].Spec.Unschedulable {
+			if utils.IsNodeReady(&nodes.Items[i]) && !nodes.Items[i].Spec.Unschedulable {
 				readyNodes++
 			}
 		}
@@ -375,13 +385,76 @@ func (s *ScaleDownManager) checkAntiAffinityTerm(
 		// After removing this node, we need at least as many nodes as matching pods
 		// For hostname-based anti-affinity, each pod needs a unique node
 		remainingNodes := readyNodes - 1
-		if len(matchingPods.Items) > remainingNodes {
+		if len(allMatchingPods) > remainingNodes {
 			return true, fmt.Sprintf("insufficient nodes for anti-affinity: %d pods require unique nodes but only %d nodes remain after removal",
-				len(matchingPods.Items), remainingNodes), nil
+				len(allMatchingPods), remainingNodes), nil
 		}
 	}
 
 	return false, "", nil
+}
+
+// resolveTargetNamespaces determines which namespaces to search for matching pods
+// based on the PodAffinityTerm's Namespaces and NamespaceSelector fields.
+// Follows Kubernetes semantics:
+// 1. If Namespaces is non-empty: use those namespaces
+// 2. If NamespaceSelector is non-nil: list namespaces matching selector
+// 3. If both are specified: use intersection
+// 4. If both are empty/nil: use podNamespace only (default behavior)
+func (s *ScaleDownManager) resolveTargetNamespaces(
+	ctx context.Context,
+	term *corev1.PodAffinityTerm,
+	podNamespace string,
+) ([]string, error) {
+	hasNamespaces := len(term.Namespaces) > 0
+	hasNamespaceSelector := term.NamespaceSelector != nil
+
+	// Case 4: Both empty/nil - use pod's namespace only (backward compatible)
+	if !hasNamespaces && !hasNamespaceSelector {
+		return []string{podNamespace}, nil
+	}
+
+	// Case 1: Only Namespaces specified
+	if hasNamespaces && !hasNamespaceSelector {
+		return term.Namespaces, nil
+	}
+
+	// Get namespaces matching the selector (for Cases 2 and 3)
+	nsSelector, err := metav1.LabelSelectorAsSelector(term.NamespaceSelector)
+	if err != nil {
+		return nil, fmt.Errorf("invalid namespace selector: %w", err)
+	}
+
+	namespaceList, err := s.client.CoreV1().Namespaces().List(ctx, metav1.ListOptions{
+		LabelSelector: nsSelector.String(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list namespaces: %w", err)
+	}
+
+	// Build set of namespaces matching the selector
+	selectorMatches := make(map[string]bool)
+	for _, ns := range namespaceList.Items {
+		selectorMatches[ns.Name] = true
+	}
+
+	// Case 2: Only NamespaceSelector specified
+	if !hasNamespaces && hasNamespaceSelector {
+		result := make([]string, 0, len(selectorMatches))
+		for ns := range selectorMatches {
+			result = append(result, ns)
+		}
+		return result, nil
+	}
+
+	// Case 3: Both specified - use intersection
+	result := make([]string, 0)
+	for _, ns := range term.Namespaces {
+		if selectorMatches[ns] {
+			result = append(result, ns)
+		}
+	}
+	return result, nil
 }
 
 // hasInsufficientCapacity checks if cluster would have insufficient capacity after removal
@@ -431,15 +504,6 @@ func (s *ScaleDownManager) hasInsufficientCapacity(
 }
 
 // Helper functions
-
-func isNodeReady(node *corev1.Node) bool {
-	for _, condition := range node.Status.Conditions {
-		if condition.Type == corev1.NodeReady {
-			return condition.Status == corev1.ConditionTrue
-		}
-	}
-	return false
-}
 
 // HasPersistentVolumes checks if any pods have persistent volumes
 func HasPersistentVolumes(pod *corev1.Pod) bool {

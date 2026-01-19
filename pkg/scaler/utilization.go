@@ -190,18 +190,7 @@ func (s *ScaleDownManager) GetNodeUtilization(nodeName string) (*NodeUtilization
 		return nil, false
 	}
 
-	// Return deep copy to prevent external modification
-	copy := &NodeUtilization{
-		NodeName:          util.NodeName,
-		CPUUtilization:    util.CPUUtilization,
-		MemoryUtilization: util.MemoryUtilization,
-		IsUnderutilized:   util.IsUnderutilized,
-		LastUpdated:       util.LastUpdated,
-		Samples:           make([]UtilizationSample, len(util.Samples)),
-	}
-	copySlice(copy.Samples, util.Samples)
-
-	return copy, true
+	return util.DeepCopy(), true
 }
 
 // GetUnderutilizedNodes returns deep copies of all nodes currently marked as underutilized
@@ -213,26 +202,29 @@ func (s *ScaleDownManager) GetUnderutilizedNodes() []*NodeUtilization {
 	var underutilized []*NodeUtilization
 	for _, util := range s.nodeUtilization {
 		if util.IsUnderutilized {
-			// Create deep copy
-			copy := &NodeUtilization{
-				NodeName:          util.NodeName,
-				CPUUtilization:    util.CPUUtilization,
-				MemoryUtilization: util.MemoryUtilization,
-				IsUnderutilized:   util.IsUnderutilized,
-				LastUpdated:       util.LastUpdated,
-				Samples:           make([]UtilizationSample, len(util.Samples)),
-			}
-			copySlice(copy.Samples, util.Samples)
-			underutilized = append(underutilized, copy)
+			underutilized = append(underutilized, util.DeepCopy())
 		}
 	}
 
 	return underutilized
 }
 
-// copySlice is a helper to copy UtilizationSample slices
-func copySlice(dst, src []UtilizationSample) {
-	copy(dst, src)
+// DeepCopy returns a deep copy of NodeUtilization to prevent external modification
+// of internal state and avoid race conditions with the Samples slice.
+func (n *NodeUtilization) DeepCopy() *NodeUtilization {
+	if n == nil {
+		return nil
+	}
+	cp := &NodeUtilization{
+		NodeName:          n.NodeName,
+		CPUUtilization:    n.CPUUtilization,
+		MemoryUtilization: n.MemoryUtilization,
+		IsUnderutilized:   n.IsUnderutilized,
+		LastUpdated:       n.LastUpdated,
+		Samples:           make([]UtilizationSample, len(n.Samples)),
+	}
+	copy(cp.Samples, n.Samples)
+	return cp
 }
 
 // CalculateResourceRequests calculates total resource requests for pods

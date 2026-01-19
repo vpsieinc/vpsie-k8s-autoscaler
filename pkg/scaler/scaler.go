@@ -201,44 +201,15 @@ func (s *ScaleDownManager) IdentifyUnderutilizedNodes(
 		}
 
 		// Get utilization data and create a safe copy
-		// CRITICAL: We perform a DEEP COPY of the utilization data to prevent race conditions.
-		//
-		// Race Condition Prevention:
-		// The nodeUtilization map stores pointers to NodeUtilization structs, which contain
-		// a Samples slice. If we only performed a shallow copy, the slice header would be
-		// copied but the underlying array would be shared. This creates a race condition:
-		//
-		// Thread A (IdentifyUnderutilizedNodes): Reads len(Samples) = 5
-		// Thread B (UpdateNodeUtilization):      Appends new sample, Samples now points to new array
-		// Thread A: Calls copy() on old array   -> DATA CORRUPTION or PANIC
-		//
-		// Solution: We hold the RLock during the ENTIRE copy operation, including:
-		// 1. Reading the struct fields
-		// 2. Creating the new Samples slice
-		// 3. Copying all sample values
-		//
-		// This ensures the data cannot change while we're copying it.
+		// We hold the RLock while calling DeepCopy() to prevent race conditions
+		// with concurrent updates to the utilization data.
 		s.utilizationLock.RLock()
 		utilization, exists := s.nodeUtilization[node.Name]
 		if !exists || !utilization.IsUnderutilized {
 			s.utilizationLock.RUnlock()
 			continue
 		}
-
-		// Create a deep copy while holding the lock to prevent races
-		// We must complete the entire copy atomically before releasing the lock
-		utilizationCopy := &NodeUtilization{
-			NodeName:          utilization.NodeName,
-			CPUUtilization:    utilization.CPUUtilization,
-			MemoryUtilization: utilization.MemoryUtilization,
-			IsUnderutilized:   utilization.IsUnderutilized,
-			LastUpdated:       utilization.LastUpdated,
-			Samples:           make([]UtilizationSample, len(utilization.Samples)),
-		}
-		// Copy all samples while still holding the lock
-		// This creates a new backing array, preventing shared references
-		copy(utilizationCopy.Samples, utilization.Samples)
-		// Only release lock after copy is complete
+		utilizationCopy := utilization.DeepCopy()
 		s.utilizationLock.RUnlock()
 
 		// Check if node has been underutilized for observation window

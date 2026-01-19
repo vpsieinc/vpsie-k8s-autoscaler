@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/utils"
 	"go.uber.org/zap/zaptest"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -92,7 +93,7 @@ func TestIsSingleInstanceSystemPod(t *testing.T) {
 	}
 }
 
-// TestIsNodeReady tests the isNodeReady helper function
+// TestIsNodeReady tests the utils.IsNodeReady helper function
 func TestIsNodeReady(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -171,7 +172,7 @@ func TestIsNodeReady(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isNodeReady(tt.node)
+			result := utils.IsNodeReady(tt.node)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -3701,5 +3702,721 @@ func TestCheckAntiAffinityTermBlocksScaleDown(t *testing.T) {
 		// Assert
 		require.NoError(t, err)
 		assert.True(t, canSchedule, "Scale-down should be allowed for pods without anti-affinity")
+	})
+}
+
+// TestCheckAntiAffinityTermEdgeCase_CurrentPodInMatchingSet tests the scenario where
+// the current pod being checked is itself in the matching pods set.
+// For hostname-based anti-affinity, all matching pods (including the current one) need
+// unique nodes, so the scale-down should be blocked if there aren't enough nodes.
+func TestCheckAntiAffinityTermEdgeCase_CurrentPodInMatchingSet(t *testing.T) {
+	t.Run("4 pods with anti-affinity, current pod in matching set, 4 nodes - should block", func(t *testing.T) {
+		// Scenario: 4 pods with app=nginx hostname anti-affinity, 4 nodes
+		// If we remove node-1, we have 3 remaining nodes but 4 pods still need unique nodes
+		// The current pod (nginx-0) still needs a node after being moved
+		// All 3 remaining nodes have nginx pods, so nginx-0 cannot be scheduled -> BLOCK
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Create 4 ready nodes
+		nodes := []runtime.Object{}
+		for i := 1; i <= 4; i++ {
+			nodes = append(nodes, &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   fmt.Sprintf("node-%d", i),
+					Labels: map[string]string{"kubernetes.io/hostname": fmt.Sprintf("node-%d", i)},
+				},
+				Spec: corev1.NodeSpec{Unschedulable: false},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+					},
+				},
+			})
+		}
+
+		// Create 4 nginx pods with hostname anti-affinity (each on a different node)
+		pods := []runtime.Object{}
+		for i := 0; i < 4; i++ {
+			pods = append(pods, &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("nginx-%d", i),
+					Namespace: "default",
+					Labels:    map[string]string{"app": "nginx"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: fmt.Sprintf("node-%d", i+1),
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "nginx"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+								},
+							},
+						},
+					},
+				},
+			})
+		}
+
+		allObjects := append(nodes, pods...)
+		fakeClient := fake.NewSimpleClientset(allObjects...)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Get pods on node-1 (the node being considered for removal)
+		// The pod on node-1 is nginx-0, which has app=nginx label
+		podList, _ := fakeClient.CoreV1().Pods("default").List(ctx, metav1.ListOptions{})
+		var podsToCheck []*corev1.Pod
+		for i := range podList.Items {
+			if podList.Items[i].Spec.NodeName == "node-1" {
+				podsToCheck = append(podsToCheck, &podList.Items[i])
+			}
+		}
+
+		// Act
+		hasViolation, reason, err := manager.hasAntiAffinityViolations(ctx, podsToCheck)
+
+		// Assert - 4 pods need 4 unique nodes for hostname anti-affinity
+		// After removing node-1, only 3 nodes remain, so 4 pods cannot fit
+		require.NoError(t, err)
+		assert.True(t, hasViolation, "Scale-down should be blocked - 4 pods need 4 unique nodes but only 3 remain")
+		assert.Contains(t, reason, "anti-affinity", "Reason should mention anti-affinity")
+		assert.Contains(t, reason, "4", "Reason should mention 4 pods")
+		assert.Contains(t, reason, "3", "Reason should mention 3 remaining nodes")
+	})
+
+	t.Run("4 pods with anti-affinity, 5 nodes, current pod in matching set - should allow", func(t *testing.T) {
+		// Scenario: 4 pods with hostname anti-affinity, 5 nodes
+		// If we remove node-1, we have 4 remaining nodes for 4 pods = exactly enough
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Create 5 ready nodes
+		nodes := []runtime.Object{}
+		for i := 1; i <= 5; i++ {
+			nodes = append(nodes, &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   fmt.Sprintf("node-%d", i),
+					Labels: map[string]string{"kubernetes.io/hostname": fmt.Sprintf("node-%d", i)},
+				},
+				Spec: corev1.NodeSpec{Unschedulable: false},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+					},
+				},
+			})
+		}
+
+		// Create 4 nginx pods with hostname anti-affinity (on nodes 1-4)
+		pods := []runtime.Object{}
+		for i := 0; i < 4; i++ {
+			pods = append(pods, &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("nginx-%d", i),
+					Namespace: "default",
+					Labels:    map[string]string{"app": "nginx"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: fmt.Sprintf("node-%d", i+1),
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "nginx"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+								},
+							},
+						},
+					},
+				},
+			})
+		}
+
+		allObjects := append(nodes, pods...)
+		fakeClient := fake.NewSimpleClientset(allObjects...)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Get pods on node-1
+		podList, _ := fakeClient.CoreV1().Pods("default").List(ctx, metav1.ListOptions{})
+		var podsToCheck []*corev1.Pod
+		for i := range podList.Items {
+			if podList.Items[i].Spec.NodeName == "node-1" {
+				podsToCheck = append(podsToCheck, &podList.Items[i])
+			}
+		}
+
+		// Act
+		hasViolation, _, err := manager.hasAntiAffinityViolations(ctx, podsToCheck)
+
+		// Assert - 4 pods can fit on 4 remaining nodes (nginx-0 can go to node-5)
+		require.NoError(t, err)
+		assert.False(t, hasViolation, "Scale-down should be allowed - 4 pods can fit on 4 remaining nodes")
+	})
+}
+
+// TestCheckAntiAffinityTermCrossNamespace tests namespace resolution for pod anti-affinity.
+// PodAffinityTerm has Namespaces and NamespaceSelector fields that should be respected.
+func TestCheckAntiAffinityTermCrossNamespace(t *testing.T) {
+	t.Run("anti-affinity with explicit Namespaces field", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Create 3 nodes
+		nodes := []runtime.Object{}
+		for i := 1; i <= 3; i++ {
+			nodes = append(nodes, &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   fmt.Sprintf("node-%d", i),
+					Labels: map[string]string{"kubernetes.io/hostname": fmt.Sprintf("node-%d", i)},
+				},
+				Spec: corev1.NodeSpec{Unschedulable: false},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+					},
+				},
+			})
+		}
+
+		// Create pods in different namespaces
+		pods := []runtime.Object{
+			// Pod in default namespace on node-1 with anti-affinity targeting team-a and team-b namespaces
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "frontend-0",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "frontend"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "node-1",
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "frontend"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+									Namespaces:  []string{"team-a", "team-b"},
+								},
+							},
+						},
+					},
+				},
+			},
+			// Pods with app=frontend in team-a namespace
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "frontend-a1",
+					Namespace: "team-a",
+					Labels:    map[string]string{"app": "frontend"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-2"},
+			},
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "frontend-a2",
+					Namespace: "team-a",
+					Labels:    map[string]string{"app": "frontend"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-3"},
+			},
+			// Pod with app=frontend in team-b namespace
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "frontend-b1",
+					Namespace: "team-b",
+					Labels:    map[string]string{"app": "frontend"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-3"},
+			},
+		}
+
+		// Create namespaces
+		namespaces := []runtime.Object{
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}},
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "team-a"}},
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "team-b"}},
+		}
+
+		allObjects := append(append(nodes, pods...), namespaces...)
+		fakeClient := fake.NewSimpleClientset(allObjects...)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Get pods on node-1
+		podsToCheck := []*corev1.Pod{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "frontend-0",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "frontend"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "node-1",
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "frontend"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+									Namespaces:  []string{"team-a", "team-b"},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Act
+		hasViolation, reason, err := manager.hasAntiAffinityViolations(ctx, podsToCheck)
+
+		// Assert - There are 3 matching pods in team-a and team-b, but only 2 remaining nodes
+		// So this should be a violation
+		require.NoError(t, err)
+		assert.True(t, hasViolation, "Scale-down should be blocked - 3 pods in team-a/team-b need unique nodes, only 2 remain")
+		assert.Contains(t, reason, "anti-affinity", "Reason should mention anti-affinity. Got: %s", reason)
+	})
+
+	t.Run("anti-affinity with NamespaceSelector", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Create 3 nodes
+		nodes := []runtime.Object{}
+		for i := 1; i <= 3; i++ {
+			nodes = append(nodes, &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   fmt.Sprintf("node-%d", i),
+					Labels: map[string]string{"kubernetes.io/hostname": fmt.Sprintf("node-%d", i)},
+				},
+				Spec: corev1.NodeSpec{Unschedulable: false},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+					},
+				},
+			})
+		}
+
+		// Create namespaces with labels
+		namespaces := []runtime.Object{
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "default",
+					Labels: map[string]string{"env": "default"},
+				},
+			},
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "production-a",
+					Labels: map[string]string{"env": "production"},
+				},
+			},
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "production-b",
+					Labels: map[string]string{"env": "production"},
+				},
+			},
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "staging",
+					Labels: map[string]string{"env": "staging"},
+				},
+			},
+		}
+
+		// Create pods
+		pods := []runtime.Object{
+			// Pod with anti-affinity using NamespaceSelector (matches env=production namespaces)
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "backend-0",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "backend"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "node-1",
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "backend"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+									NamespaceSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"env": "production"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			// Pods with app=backend in production namespaces
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "backend-prod-a",
+					Namespace: "production-a",
+					Labels:    map[string]string{"app": "backend"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-2"},
+			},
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "backend-prod-b",
+					Namespace: "production-b",
+					Labels:    map[string]string{"app": "backend"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-3"},
+			},
+			// Pod with app=backend in staging (should NOT be counted)
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "backend-staging",
+					Namespace: "staging",
+					Labels:    map[string]string{"app": "backend"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-3"},
+			},
+		}
+
+		allObjects := append(append(nodes, pods...), namespaces...)
+		fakeClient := fake.NewSimpleClientset(allObjects...)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Get pods on node-1
+		podsToCheck := []*corev1.Pod{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "backend-0",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "backend"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "node-1",
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "backend"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+									NamespaceSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"env": "production"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Act
+		hasViolation, _, err := manager.hasAntiAffinityViolations(ctx, podsToCheck)
+
+		// Assert - There are 2 matching pods in production namespaces, 2 remaining nodes after removal
+		// This should be allowed (2 pods can fit on 2 nodes)
+		require.NoError(t, err)
+		assert.False(t, hasViolation, "Scale-down should be allowed - 2 pods in production namespaces, 2 remaining nodes")
+	})
+
+	t.Run("anti-affinity with both Namespaces and NamespaceSelector (intersection)", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Create 3 nodes
+		nodes := []runtime.Object{}
+		for i := 1; i <= 3; i++ {
+			nodes = append(nodes, &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   fmt.Sprintf("node-%d", i),
+					Labels: map[string]string{"kubernetes.io/hostname": fmt.Sprintf("node-%d", i)},
+				},
+				Spec: corev1.NodeSpec{Unschedulable: false},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+					},
+				},
+			})
+		}
+
+		// Create namespaces
+		namespaces := []runtime.Object{
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{Name: "default"},
+			},
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "team-a",
+					Labels: map[string]string{"team": "alpha"},
+				},
+			},
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "team-b",
+					Labels: map[string]string{"team": "alpha"},
+				},
+			},
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "team-c",
+					Labels: map[string]string{"team": "beta"},
+				},
+			},
+		}
+
+		// Create pods
+		pods := []runtime.Object{
+			// Pod with anti-affinity using both Namespaces (team-a, team-b) AND NamespaceSelector (team=alpha)
+			// Intersection: only namespaces that are in the list AND match the selector
+			// team-a matches (in list AND has team=alpha)
+			// team-b matches (in list AND has team=alpha)
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "worker-0",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "worker"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "node-1",
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "worker"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+									Namespaces:  []string{"team-a", "team-b"},
+									NamespaceSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"team": "alpha"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			// Pod in team-a (should be counted - matches both Namespaces and NamespaceSelector)
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "worker-a",
+					Namespace: "team-a",
+					Labels:    map[string]string{"app": "worker"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-2"},
+			},
+			// Pod in team-b (should be counted - matches both)
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "worker-b",
+					Namespace: "team-b",
+					Labels:    map[string]string{"app": "worker"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-3"},
+			},
+			// Pod in team-c (should NOT be counted - not in Namespaces list even though it matches selector)
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "worker-c",
+					Namespace: "team-c",
+					Labels:    map[string]string{"app": "worker"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-3"},
+			},
+		}
+
+		allObjects := append(append(nodes, pods...), namespaces...)
+		fakeClient := fake.NewSimpleClientset(allObjects...)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Get pods on node-1
+		podsToCheck := []*corev1.Pod{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "worker-0",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "worker"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "node-1",
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "worker"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+									Namespaces:  []string{"team-a", "team-b"},
+									NamespaceSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"team": "alpha"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Act
+		hasViolation, _, err := manager.hasAntiAffinityViolations(ctx, podsToCheck)
+
+		// Assert - Only 2 matching pods (team-a and team-b), 2 remaining nodes
+		// team-c is excluded because it's not in the explicit Namespaces list
+		require.NoError(t, err)
+		assert.False(t, hasViolation, "Scale-down should be allowed - only 2 pods match intersection (team-a, team-b), 2 remaining nodes")
+	})
+
+	t.Run("anti-affinity with no Namespaces and no NamespaceSelector defaults to pod namespace", func(t *testing.T) {
+		// This is the backward compatibility test - when both are empty/nil, use pod.Namespace
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Create 3 nodes
+		nodes := []runtime.Object{}
+		for i := 1; i <= 3; i++ {
+			nodes = append(nodes, &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   fmt.Sprintf("node-%d", i),
+					Labels: map[string]string{"kubernetes.io/hostname": fmt.Sprintf("node-%d", i)},
+				},
+				Spec: corev1.NodeSpec{Unschedulable: false},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+					},
+				},
+			})
+		}
+
+		// Create pods in different namespaces
+		pods := []runtime.Object{
+			// Pod in default namespace with anti-affinity (no Namespaces, no NamespaceSelector)
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "cache-0",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "cache"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "node-1",
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "cache"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+									// Namespaces and NamespaceSelector are empty/nil
+								},
+							},
+						},
+					},
+				},
+			},
+			// Another cache pod in default namespace
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "cache-1",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "cache"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-2"},
+			},
+			// Cache pod in other namespace (should NOT be counted)
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "cache-other",
+					Namespace: "other",
+					Labels:    map[string]string{"app": "cache"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-3"},
+			},
+		}
+
+		namespaces := []runtime.Object{
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}},
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "other"}},
+		}
+
+		allObjects := append(append(nodes, pods...), namespaces...)
+		fakeClient := fake.NewSimpleClientset(allObjects...)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Get pods on node-1
+		podsToCheck := []*corev1.Pod{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "cache-0",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "cache"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "node-1",
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "cache"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Act
+		hasViolation, _, err := manager.hasAntiAffinityViolations(ctx, podsToCheck)
+
+		// Assert - Only 2 matching pods in default namespace (cache-0 and cache-1)
+		// cache-0 is the current pod, so it should be excluded from count = 1 other pod
+		// 1 pod needs 1 node, we have 2 remaining = allowed
+		require.NoError(t, err)
+		assert.False(t, hasViolation, "Scale-down should be allowed - only 1 other matching pod in default namespace, 2 remaining nodes")
 	})
 }
