@@ -131,10 +131,10 @@ func NewDefaultOptions() *Options {
 		WebhookCertDir:          "/var/run/webhook-certs",
 		WebhookCertFile:         "tls.crt",
 		WebhookKeyFile:          "tls.key",
-		SentryDSN:               "",    // Set via SENTRY_DSN env var or --sentry-dsn flag
-		SentryEnvironment:       "",    // Defaults to "development" if not set
-		SentryTracesSampleRate:  0.1,   // 10% of transactions
-		SentryErrorSampleRate:   1.0,   // 100% of errors
+		SentryDSN:               "",  // Set via SENTRY_DSN env var or --sentry-dsn flag
+		SentryEnvironment:       "",  // Defaults to "development" if not set
+		SentryTracesSampleRate:  0.1, // 10% of transactions
+		SentryErrorSampleRate:   1.0, // 100% of errors
 	}
 }
 
