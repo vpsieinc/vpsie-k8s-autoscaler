@@ -6,7 +6,7 @@ import (
 
 // VPS represents a Virtual Private Server instance from VPSie API
 type VPS struct {
-	ID           int       `json:"id"` // API returns numeric ID
+	ID           int       `json:"id"`                   // API returns numeric ID
 	Identifier   string    `json:"identifier,omitempty"` // VPSie UUID for K8s API operations
 	Name         string    `json:"name"`
 	Hostname     string    `json:"hostname"`
