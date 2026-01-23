@@ -121,6 +121,11 @@ spec:
               vpsieInstanceID:
                 description: VPSieInstanceID is the VPSie VPS instance ID
                 type: integer
+              vpsieNodeIdentifier:
+                description: |-
+                  VPSieNodeIdentifier is the VPSie node UUID used for K8s-specific API operations
+                  This identifier is required for deleting nodes via the K8s cluster API
+                type: string
             required:
             - datacenterID
             - instanceType

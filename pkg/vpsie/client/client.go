@@ -1513,15 +1513,17 @@ func (c *Client) AddK8sSlaveToGroup(ctx context.Context, clusterIdentifier strin
 
 	// Try to unmarshal data as an object first
 	var nodeData struct {
-		ID       int    `json:"id"`
-		Status   string `json:"status"`
-		Hostname string `json:"hostname"`
+		ID         int    `json:"id"`
+		Identifier string `json:"identifier"` // VPSie node UUID for K8s API operations
+		Status     string `json:"status"`
+		Hostname   string `json:"hostname"`
 	}
-	if err := json.Unmarshal(response.Data, &nodeData); err == nil && nodeData.ID != 0 {
+	if err := json.Unmarshal(response.Data, &nodeData); err == nil && (nodeData.ID != 0 || nodeData.Identifier != "") {
 		return &VPS{
-			ID:       nodeData.ID,
-			Hostname: nodeData.Hostname,
-			Status:   nodeData.Status,
+			ID:         nodeData.ID,
+			Identifier: nodeData.Identifier,
+			Hostname:   nodeData.Hostname,
+			Status:     nodeData.Status,
 		}, nil
 	}
 
@@ -1561,6 +1563,69 @@ func (c *Client) AddK8sSlave(ctx context.Context, clusterIdentifier string, grou
 
 	if response.Error {
 		return NewAPIError(response.Code, "AddK8sSlaveFailed", response.Message)
+	}
+
+	return nil
+}
+
+// DeleteK8sNode deletes a worker node from a VPSie managed Kubernetes cluster.
+// This uses the K8s-specific deletion API which properly removes the node from the cluster.
+//
+// The clusterIdentifier is the UUID of the VPSie K8s cluster.
+// The nodeIdentifier is the UUID of the specific node to delete.
+//
+// Example usage:
+//
+//	err := client.DeleteK8sNode(ctx, "cluster-uuid", "node-uuid")
+//	if err != nil {
+//	    log.Fatalf("failed to delete K8s node: %v", err)
+//	}
+func (c *Client) DeleteK8sNode(ctx context.Context, clusterIdentifier, nodeIdentifier string) error {
+	if clusterIdentifier == "" {
+		return NewConfigError("cluster_identifier", "Cluster identifier is required")
+	}
+	if nodeIdentifier == "" {
+		return NewConfigError("node_identifier", "Node identifier is required")
+	}
+
+	var response DeleteK8sNodeResponse
+
+	// DELETE /k8s/cluster/byId/{clusterIdentifier}/delete/slave
+	// with body {"identifier": "nodeIdentifier"}
+	endpoint := fmt.Sprintf("/k8s/cluster/byId/%s/delete/slave", clusterIdentifier)
+	reqBody := DeleteK8sNodeRequest{
+		Identifier: nodeIdentifier,
+	}
+
+	if err := c.deleteWithBody(ctx, endpoint, reqBody, &response); err != nil {
+		// If node not found, consider it already deleted
+		if IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to delete K8s node: %w", err)
+	}
+
+	if response.Error {
+		return NewAPIError(response.Code, "DeleteK8sNodeFailed", response.Message)
+	}
+
+	return nil
+}
+
+// deleteWithBody performs a DELETE request with a JSON body
+func (c *Client) deleteWithBody(ctx context.Context, path string, body, result interface{}) error {
+	resp, err := c.doRequest(ctx, http.MethodDelete, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if result != nil {
+		// Limit response body size to prevent DoS attacks
+		limitedReader := io.LimitReader(resp.Body, MaxResponseBodySize)
+		if err := json.NewDecoder(limitedReader).Decode(result); err != nil {
+			return fmt.Errorf("failed to decode response: %w", err)
+		}
 	}
 
 	return nil

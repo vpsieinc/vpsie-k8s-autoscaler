@@ -22,6 +22,9 @@ type VPSieClientInterface interface {
 	// Returns the node groups with their numeric IDs and node counts
 	// Used by Discoverer to find VPS nodes created via async provisioning
 	ListK8sNodeGroups(ctx context.Context, clusterIdentifier string) ([]vpsieclient.K8sNodeGroup, error)
+	// DeleteK8sNode deletes a node from a VPSie managed Kubernetes cluster
+	// Uses the K8s-specific deletion API: DELETE /k8s/cluster/byId/{clusterIdentifier}/delete/slave
+	DeleteK8sNode(ctx context.Context, clusterIdentifier, nodeIdentifier string) error
 }
 
 // Ensure vpsieclient.Client implements VPSieClientInterface

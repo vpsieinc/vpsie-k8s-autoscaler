@@ -165,11 +165,16 @@ func (p *Provisioner) createVPS(ctx context.Context, vn *v1alpha1.VPSieNode, log
 	if vps.ID == 0 {
 		logger.Info("Node creation requested but ID not yet assigned (async provisioning)",
 			zap.String("vpsienode", vn.Name),
+			zap.String("vpsieNodeIdentifier", vps.Identifier),
 		)
 		if vn.Annotations == nil {
 			vn.Annotations = make(map[string]string)
 		}
 		vn.Annotations[AnnotationCreationRequested] = "true"
+		// Store the VPSie node identifier if returned (for K8s API deletion)
+		if vps.Identifier != "" {
+			vn.Spec.VPSieNodeIdentifier = vps.Identifier
+		}
 		vn.Status.VPSieStatus = "provisioning"
 		SetVPSReadyCondition(vn, false, ReasonProvisioning, "Node creation requested, waiting for VPSie to provision")
 		now := metav1.Now()
@@ -181,6 +186,10 @@ func (p *Provisioner) createVPS(ctx context.Context, vn *v1alpha1.VPSieNode, log
 	vn.Spec.VPSieInstanceID = vps.ID
 	vn.Spec.IPAddress = vps.IPAddress
 	vn.Spec.IPv6Address = vps.IPv6Address
+	// Store the VPSie node identifier if returned (for K8s API deletion)
+	if vps.Identifier != "" {
+		vn.Spec.VPSieNodeIdentifier = vps.Identifier
+	}
 	if vn.Spec.NodeName == "" {
 		if vps.Hostname != "" {
 			vn.Spec.NodeName = vps.Hostname
@@ -280,20 +289,59 @@ func (p *Provisioner) checkVPSStatus(ctx context.Context, vn *v1alpha1.VPSieNode
 }
 
 // Delete deletes the VPS from VPSie
+// Uses the K8s-specific deletion API when ResourceIdentifier and VPSieNodeIdentifier are available
 func (p *Provisioner) Delete(ctx context.Context, vn *v1alpha1.VPSieNode, logger *zap.Logger) error {
+	// Try K8s-specific deletion API first if we have the required identifiers
+	if vn.Spec.ResourceIdentifier != "" && vn.Spec.VPSieNodeIdentifier != "" {
+		logger.Info("Deleting K8s node via cluster API",
+			zap.String("vpsienode", vn.Name),
+			zap.String("clusterIdentifier", vn.Spec.ResourceIdentifier),
+			zap.String("nodeIdentifier", vn.Spec.VPSieNodeIdentifier),
+		)
+
+		err := p.vpsieClient.DeleteK8sNode(ctx, vn.Spec.ResourceIdentifier, vn.Spec.VPSieNodeIdentifier)
+		if err != nil {
+			// If node not found, consider it already deleted
+			if vpsieclient.IsNotFound(err) {
+				logger.Info("K8s node not found, already deleted",
+					zap.String("vpsienode", vn.Name),
+					zap.String("nodeIdentifier", vn.Spec.VPSieNodeIdentifier),
+				)
+				return nil
+			}
+
+			logger.Error("Failed to delete K8s node via cluster API",
+				zap.String("vpsienode", vn.Name),
+				zap.String("nodeIdentifier", vn.Spec.VPSieNodeIdentifier),
+				zap.Error(err),
+			)
+			return fmt.Errorf("failed to delete K8s node: %w", err)
+		}
+
+		logger.Info("K8s node deleted successfully via cluster API",
+			zap.String("vpsienode", vn.Name),
+			zap.String("nodeIdentifier", vn.Spec.VPSieNodeIdentifier),
+		)
+
+		now := metav1.Now()
+		vn.Status.DeletedAt = &now
+		return nil
+	}
+
+	// Fallback to regular VM deletion if K8s identifiers are not available
 	if vn.Spec.VPSieInstanceID == 0 {
-		logger.Info("No VPS ID set, skipping deletion",
+		logger.Info("No VPS ID or K8s node identifier set, skipping deletion",
 			zap.String("vpsienode", vn.Name),
 		)
 		return nil
 	}
 
-	logger.Info("Deleting VPS",
+	logger.Info("Deleting VPS via VM API (fallback)",
 		zap.String("vpsienode", vn.Name),
 		zap.Int("vpsID", vn.Spec.VPSieInstanceID),
 	)
 
-	// Delete VPS via VPSie API
+	// Delete VPS via VPSie VM API
 	err := p.vpsieClient.DeleteVM(ctx, vn.Spec.VPSieInstanceID)
 	if err != nil {
 		// If VPS not found, consider it already deleted

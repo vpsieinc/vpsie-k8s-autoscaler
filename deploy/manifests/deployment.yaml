@@ -42,12 +42,19 @@ spec:
         - --resource-identifier=567ee954-3b83-4912-8d74-ba47601f1cf6
         - --kubernetes-version=v1.34.1
         # Note: --kube-size-id is now optional - KubeSizeID is dynamically selected based on pod resources
+        # Webhook configuration (enforces NodeGroups must be in kube-system namespace)
+        - --enable-webhook=true
+        - --webhook-addr=:9443
+        - --webhook-cert-dir=/var/run/webhook-certs
         ports:
         - name: metrics
           containerPort: 8080
           protocol: TCP
         - name: health
           containerPort: 8081
+          protocol: TCP
+        - name: webhook
+          containerPort: 9443
           protocol: TCP
         livenessProbe:
           httpGet:
@@ -111,6 +118,15 @@ spec:
             drop:
             - ALL
           readOnlyRootFilesystem: true
+        volumeMounts:
+        - name: webhook-certs
+          mountPath: /var/run/webhook-certs
+          readOnly: true
+      volumes:
+      - name: webhook-certs
+        secret:
+          secretName: vpsie-autoscaler-webhook-certs
+          defaultMode: 0400
       terminationGracePeriodSeconds: 30
       # Node selector for controller placement (optional)
       # nodeSelector:

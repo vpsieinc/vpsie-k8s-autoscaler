@@ -7,6 +7,7 @@ import (
 // VPS represents a Virtual Private Server instance from VPSie API
 type VPS struct {
 	ID           int       `json:"id"` // API returns numeric ID
+	Identifier   string    `json:"identifier,omitempty"` // VPSie UUID for K8s API operations
 	Name         string    `json:"name"`
 	Hostname     string    `json:"hostname"`
 	Status       string    `json:"status"`       // running, stopped, suspended, etc.
@@ -298,4 +299,17 @@ type ListK8sNodeGroupsResponse struct {
 	Code    int            `json:"code"`
 	Message string         `json:"message"`
 	Data    []K8sNodeGroup `json:"data,omitempty"`
+}
+
+// DeleteK8sNodeRequest represents a request to delete a node from a VPSie K8s cluster
+type DeleteK8sNodeRequest struct {
+	// Identifier is the VPSie node UUID to delete
+	Identifier string `json:"identifier"`
+}
+
+// DeleteK8sNodeResponse represents the response from deleting a K8s node
+type DeleteK8sNodeResponse struct {
+	Error   bool   `json:"error"`
+	Code    int    `json:"code"`
+	Message string `json:"message"`
 }

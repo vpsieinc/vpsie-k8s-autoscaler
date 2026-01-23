@@ -27,6 +27,7 @@ import (
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/scaler"
 	vpsieclient "github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/client"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/cost"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/webhook"
 )
 
 // ControllerManager manages the lifecycle of all controllers
@@ -43,6 +44,7 @@ type ControllerManager struct {
 	scheme            *runtime.Scheme
 	eventWatcher      *events.EventWatcher
 	scaleUpController *events.ScaleUpController
+	webhookServer     *webhook.Server
 }
 
 // NewManager creates a new ControllerManager
@@ -224,6 +226,13 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 		return nil, fmt.Errorf("failed to setup controllers: %w", err)
 	}
 
+	// Setup webhook server if enabled
+	if opts.EnableWebhook {
+		if err := cm.setupWebhook(); err != nil {
+			return nil, fmt.Errorf("failed to setup webhook: %w", err)
+		}
+	}
+
 	return cm, nil
 }
 
@@ -287,6 +296,51 @@ func (cm *ControllerManager) setupControllers() error {
 	cm.logger.Info("Successfully registered VPSieNode controller")
 
 	return nil
+}
+
+// setupWebhook configures the validating webhook server
+func (cm *ControllerManager) setupWebhook() error {
+	cm.logger.Info("Setting up validating webhook server",
+		zap.String("addr", cm.options.WebhookAddr),
+		zap.String("certDir", cm.options.WebhookCertDir),
+	)
+
+	server, err := webhook.NewServer(webhook.ServerConfig{
+		Port:   extractPort(cm.options.WebhookAddr),
+		Logger: cm.logger,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create webhook server: %w", err)
+	}
+
+	cm.webhookServer = server
+	cm.logger.Info("Webhook server configured successfully")
+
+	return nil
+}
+
+// extractPort extracts the port number from an address string like ":9443" or "0.0.0.0:9443"
+func extractPort(addr string) int {
+	// Default port if parsing fails
+	defaultPort := 9443
+
+	if addr == "" {
+		return defaultPort
+	}
+
+	// Find the last colon (for IPv6 compatibility)
+	for i := len(addr) - 1; i >= 0; i-- {
+		if addr[i] == ':' {
+			portStr := addr[i+1:]
+			var port int
+			if _, err := fmt.Sscanf(portStr, "%d", &port); err == nil {
+				return port
+			}
+			break
+		}
+	}
+
+	return defaultPort
 }
 
 // healthzCheck implements the liveness probe
@@ -357,6 +411,22 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 
 	// Start node utilization metrics collection
 	cm.startMetricsCollection(ctx)
+
+	// Start webhook server if enabled
+	if cm.webhookServer != nil {
+		certFile := fmt.Sprintf("%s/%s", cm.options.WebhookCertDir, cm.options.WebhookCertFile)
+		keyFile := fmt.Sprintf("%s/%s", cm.options.WebhookCertDir, cm.options.WebhookKeyFile)
+		cm.logger.Info("Starting webhook server",
+			zap.String("addr", cm.options.WebhookAddr),
+			zap.String("certFile", certFile),
+			zap.String("keyFile", keyFile),
+		)
+		go func() {
+			if err := cm.webhookServer.Start(ctx, certFile, keyFile); err != nil {
+				cm.logger.Error("Webhook server failed", zap.Error(err))
+			}
+		}()
+	}
 
 	// Start the manager (this blocks until context is cancelled)
 	cm.logger.Info("Starting controller-runtime manager")

@@ -128,6 +128,18 @@ func addFlags(cmd *cobra.Command, opts *controller.Options) {
 	// VPSieNode garbage collection
 	flags.DurationVar(&opts.FailedVPSieNodeTTL, "failed-vpsienode-ttl", opts.FailedVPSieNodeTTL,
 		"Duration after which failed VPSieNodes are automatically deleted (0 to disable)")
+
+	// Webhook configuration
+	flags.BoolVar(&opts.EnableWebhook, "enable-webhook", opts.EnableWebhook,
+		"Enable validating webhook server for namespace enforcement")
+	flags.StringVar(&opts.WebhookAddr, "webhook-addr", opts.WebhookAddr,
+		"Address for the webhook server to bind to")
+	flags.StringVar(&opts.WebhookCertDir, "webhook-cert-dir", opts.WebhookCertDir,
+		"Directory containing TLS certificates for the webhook")
+	flags.StringVar(&opts.WebhookCertFile, "webhook-cert-file", opts.WebhookCertFile,
+		"Name of the TLS certificate file")
+	flags.StringVar(&opts.WebhookKeyFile, "webhook-key-file", opts.WebhookKeyFile,
+		"Name of the TLS key file")
 }
 
 // run starts the controller manager
