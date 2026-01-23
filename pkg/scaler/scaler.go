@@ -10,6 +10,7 @@ import (
 
 	autoscalerv1alpha1 "github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/tracing"
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/internal/logging"
 	"go.uber.org/zap"
@@ -338,6 +339,14 @@ func (s *ScaleDownManager) ScaleDown(
 	nodeGroup *autoscalerv1alpha1.NodeGroup,
 	candidates []*ScaleDownCandidate,
 ) error {
+	// Start Sentry transaction for tracing
+	ctx, span := tracing.StartTransaction(ctx, "ScaleDownManager.ScaleDown", "scaler.scale_down")
+	if span != nil {
+		span.SetTag("nodegroup", nodeGroup.Name)
+		span.SetTag("candidates_count", fmt.Sprintf("%d", len(candidates)))
+		defer span.Finish()
+	}
+
 	// Limit number of nodes to scale down at once
 	maxNodes := s.config.MaxNodesPerScaleDown
 	if len(candidates) > maxNodes {

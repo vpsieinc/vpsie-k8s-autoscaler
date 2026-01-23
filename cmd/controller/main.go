@@ -140,6 +140,16 @@ func addFlags(cmd *cobra.Command, opts *controller.Options) {
 		"Name of the TLS certificate file")
 	flags.StringVar(&opts.WebhookKeyFile, "webhook-key-file", opts.WebhookKeyFile,
 		"Name of the TLS key file")
+
+	// Sentry tracing configuration
+	flags.StringVar(&opts.SentryDSN, "sentry-dsn", opts.SentryDSN,
+		"Sentry DSN for error tracking and performance monitoring (can also use SENTRY_DSN env var)")
+	flags.StringVar(&opts.SentryEnvironment, "sentry-environment", opts.SentryEnvironment,
+		"Sentry environment name (e.g., production, staging)")
+	flags.Float64Var(&opts.SentryTracesSampleRate, "sentry-traces-sample-rate", opts.SentryTracesSampleRate,
+		"Sample rate for Sentry performance traces (0.0 to 1.0)")
+	flags.Float64Var(&opts.SentryErrorSampleRate, "sentry-error-sample-rate", opts.SentryErrorSampleRate,
+		"Sample rate for Sentry error events (0.0 to 1.0)")
 }
 
 // run starts the controller manager

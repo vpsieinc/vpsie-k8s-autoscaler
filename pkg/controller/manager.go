@@ -25,6 +25,7 @@ import (
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/controller/vpsienode"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/events"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/scaler"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/tracing"
 	vpsieclient "github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/client"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/cost"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/webhook"
@@ -45,6 +46,7 @@ type ControllerManager struct {
 	eventWatcher      *events.EventWatcher
 	scaleUpController *events.ScaleUpController
 	webhookServer     *webhook.Server
+	tracer            *tracing.Tracer
 }
 
 // NewManager creates a new ControllerManager
@@ -119,12 +121,45 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 		return nil, fmt.Errorf("failed to create metrics client: %w", err)
 	}
 
-	// Create VPSie API client
+	// Initialize Sentry tracing
+	// DSN can come from flag or SENTRY_DSN environment variable
+	sentryDSN := opts.SentryDSN
+	if sentryDSN == "" {
+		sentryDSN = os.Getenv("SENTRY_DSN")
+	}
+	sentryEnv := opts.SentryEnvironment
+	if sentryEnv == "" {
+		sentryEnv = os.Getenv("SENTRY_ENVIRONMENT")
+		if sentryEnv == "" {
+			sentryEnv = "development"
+		}
+	}
+
+	tracer, err := tracing.NewTracer(&tracing.Config{
+		DSN:              sentryDSN,
+		Environment:      sentryEnv,
+		Release:          os.Getenv("VERSION"),
+		TracesSampleRate: opts.SentryTracesSampleRate,
+		ErrorSampleRate:  opts.SentryErrorSampleRate,
+		ServerName:       os.Getenv("POD_NAME"),
+	}, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize Sentry tracing: %w", err)
+	}
+	// Set global tracer for convenience functions
+	tracing.SetGlobalTracer(tracer)
+
+	// Create VPSie API client with tracing transport
 	ctx := context.Background()
-	vpsieClient, err := vpsieclient.NewClient(ctx, k8sClient, &vpsieclient.ClientOptions{
+	vpsieClientOpts := &vpsieclient.ClientOptions{
 		SecretName:      opts.VPSieSecretName,
 		SecretNamespace: opts.VPSieSecretNamespace,
-	})
+	}
+	// Add tracing HTTP transport if Sentry is enabled
+	if tracer.IsEnabled() {
+		vpsieClientOpts.HTTPTransport = tracing.NewHTTPTransport(tracer, nil)
+	}
+	vpsieClient, err := vpsieclient.NewClient(ctx, k8sClient, vpsieClientOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create VPSie client: %w", err)
 	}
@@ -153,6 +188,7 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 		healthChecker:    healthChecker,
 		logger:           logger,
 		scheme:           scheme,
+		tracer:           tracer,
 	}
 
 	// Create DynamicNodeGroupCreator for automatic NodeGroup provisioning

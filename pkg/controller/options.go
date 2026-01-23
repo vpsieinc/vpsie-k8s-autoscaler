@@ -88,6 +88,20 @@ type Options struct {
 
 	// WebhookKeyFile is the name of the TLS key file
 	WebhookKeyFile string
+
+	// Sentry configuration
+
+	// SentryDSN is the Sentry Data Source Name (can also be set via SENTRY_DSN env var)
+	SentryDSN string
+
+	// SentryEnvironment is the deployment environment (e.g., "production", "staging")
+	SentryEnvironment string
+
+	// SentryTracesSampleRate is the sample rate for performance traces (0.0 to 1.0)
+	SentryTracesSampleRate float64
+
+	// SentryErrorSampleRate is the sample rate for error events (0.0 to 1.0)
+	SentryErrorSampleRate float64
 }
 
 // NewDefaultOptions returns Options with default values
@@ -117,6 +131,10 @@ func NewDefaultOptions() *Options {
 		WebhookCertDir:          "/var/run/webhook-certs",
 		WebhookCertFile:         "tls.crt",
 		WebhookKeyFile:          "tls.key",
+		SentryDSN:               "",    // Set via SENTRY_DSN env var or --sentry-dsn flag
+		SentryEnvironment:       "",    // Defaults to "development" if not set
+		SentryTracesSampleRate:  0.1,   // 10% of transactions
+		SentryErrorSampleRate:   1.0,   // 100% of errors
 	}
 }
 

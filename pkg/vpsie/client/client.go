@@ -145,6 +145,10 @@ type ClientOptions struct {
 	// HTTPClient is a custom HTTP client to use (optional)
 	HTTPClient *http.Client
 
+	// HTTPTransport is a custom HTTP transport to use (optional)
+	// This is useful for adding tracing/monitoring middleware
+	HTTPTransport http.RoundTripper
+
 	// Timeout is the HTTP client timeout
 	Timeout time.Duration
 
@@ -273,27 +277,36 @@ func NewClient(ctx context.Context, clientset kubernetes.Interface, opts *Client
 	// Create HTTP client if not provided
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
-		httpClient = &http.Client{
-			Timeout: opts.Timeout,
-			Transport: &http.Transport{
-				// TLS configuration - enforce TLS 1.2+ with strong cipher suites
-				// This addresses Fix #9: TLS Validation
-				TLSClientConfig: &tls.Config{
-					MinVersion: tls.VersionTLS12, // Disables TLS 1.0 and 1.1
-					CipherSuites: []uint16{
-						// ECDHE provides forward secrecy, AES-GCM is authenticated encryption
-						tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-						tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-						tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-						tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-					},
-					PreferServerCipherSuites: true,
-					InsecureSkipVerify:       false, // Explicit for security audits
+		// Create base transport with TLS configuration
+		baseTransport := &http.Transport{
+			// TLS configuration - enforce TLS 1.2+ with strong cipher suites
+			// This addresses Fix #9: TLS Validation
+			TLSClientConfig: &tls.Config{
+				MinVersion: tls.VersionTLS12, // Disables TLS 1.0 and 1.1
+				CipherSuites: []uint16{
+					// ECDHE provides forward secrecy, AES-GCM is authenticated encryption
+					tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+					tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+					tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+					tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 				},
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     90 * time.Second,
+				PreferServerCipherSuites: true,
+				InsecureSkipVerify:       false, // Explicit for security audits
 			},
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+		}
+
+		// Use custom transport if provided (e.g., for tracing), wrapping the base transport
+		var transport http.RoundTripper = baseTransport
+		if opts.HTTPTransport != nil {
+			transport = opts.HTTPTransport
+		}
+
+		httpClient = &http.Client{
+			Timeout:   opts.Timeout,
+			Transport: transport,
 		}
 	}
 
@@ -394,27 +407,36 @@ func NewClientWithCredentialsAndContext(ctx context.Context, baseURL, clientID, 
 	// Create HTTP client if not provided
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
-		httpClient = &http.Client{
-			Timeout: opts.Timeout,
-			Transport: &http.Transport{
-				// TLS configuration - enforce TLS 1.2+ with strong cipher suites
-				// This addresses Fix #9: TLS Validation
-				TLSClientConfig: &tls.Config{
-					MinVersion: tls.VersionTLS12, // Disables TLS 1.0 and 1.1
-					CipherSuites: []uint16{
-						// ECDHE provides forward secrecy, AES-GCM is authenticated encryption
-						tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-						tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-						tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-						tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-					},
-					PreferServerCipherSuites: true,
-					InsecureSkipVerify:       false, // Explicit for security audits
+		// Create base transport with TLS configuration
+		baseTransport := &http.Transport{
+			// TLS configuration - enforce TLS 1.2+ with strong cipher suites
+			// This addresses Fix #9: TLS Validation
+			TLSClientConfig: &tls.Config{
+				MinVersion: tls.VersionTLS12, // Disables TLS 1.0 and 1.1
+				CipherSuites: []uint16{
+					// ECDHE provides forward secrecy, AES-GCM is authenticated encryption
+					tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+					tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+					tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+					tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 				},
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     90 * time.Second,
+				PreferServerCipherSuites: true,
+				InsecureSkipVerify:       false, // Explicit for security audits
 			},
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+		}
+
+		// Use custom transport if provided (e.g., for tracing), wrapping the base transport
+		var transport http.RoundTripper = baseTransport
+		if opts.HTTPTransport != nil {
+			transport = opts.HTTPTransport
+		}
+
+		httpClient = &http.Client{
+			Timeout:   opts.Timeout,
+			Transport: transport,
 		}
 	}
 

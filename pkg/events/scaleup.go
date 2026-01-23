@@ -11,6 +11,7 @@ import (
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/tracing"
 )
 
 // ScaleUpDecision represents a decision to scale up a NodeGroup
@@ -58,6 +59,13 @@ func (c *ScaleUpController) SetWatcher(watcher *EventWatcher) {
 
 // HandleScaleUp processes scheduling events and makes scale-up decisions
 func (c *ScaleUpController) HandleScaleUp(ctx context.Context, events []SchedulingEvent) error {
+	// Start Sentry transaction for tracing
+	ctx, span := tracing.StartTransaction(ctx, "ScaleUpController.HandleScaleUp", "scaler.scale_up")
+	if span != nil {
+		span.SetTag("event_count", fmt.Sprintf("%d", len(events)))
+		defer span.Finish()
+	}
+
 	c.logger.Info("Handling scale-up request",
 		zap.Int("eventCount", len(events)),
 	)

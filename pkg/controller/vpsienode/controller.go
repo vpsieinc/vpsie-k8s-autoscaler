@@ -16,6 +16,7 @@ import (
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/internal/logging"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/tracing"
 )
 
 const (
@@ -102,6 +103,15 @@ func (r *VPSieNodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 func (r *VPSieNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// Add correlation ID for request tracing
 	ctx = logging.WithRequestID(ctx)
+
+	// Start Sentry transaction for tracing
+	ctx, span := tracing.StartTransaction(ctx, "VPSieNodeReconciler.Reconcile", "controller.reconcile")
+	if span != nil {
+		span.SetTag("controller", ControllerName)
+		span.SetTag("resource.name", req.Name)
+		span.SetTag("resource.namespace", req.Namespace)
+		defer span.Finish()
+	}
 
 	logger := logging.WithRequestIDField(ctx, r.Logger.With(
 		zap.String("namespace", req.Namespace),
