@@ -212,9 +212,28 @@ func (c *ScaleUpController) makeScaleUpDecision(
 	// Estimate nodes needed
 	nodesNeeded := c.analyzer.EstimateNodesNeeded(match.Deficit, instanceInfo)
 
+	// Account for nodes already being provisioned (not yet ready)
+	// These nodes will accommodate some of the pending pods once ready
+	nodesBeingProvisioned := ng.Status.DesiredNodes - ng.Status.CurrentNodes
+	if nodesBeingProvisioned < 0 {
+		nodesBeingProvisioned = 0
+	}
+
+	// Only add nodes beyond what's already being provisioned
+	actualNodesNeeded := int32(nodesNeeded) - nodesBeingProvisioned
+	if actualNodesNeeded <= 0 {
+		c.logger.Debug("Nodes already being provisioned will satisfy demand",
+			zap.String("nodeGroup", ng.Name),
+			zap.Int("nodesNeeded", nodesNeeded),
+			zap.Int32("nodesBeingProvisioned", nodesBeingProvisioned),
+		)
+		metrics.ScaleUpDecisionsTotal.WithLabelValues(ng.Name, ng.Namespace, "skipped_provisioning").Inc()
+		return nil, nil
+	}
+
 	// Calculate actual nodes to add (respect max capacity)
 	availableCapacity := ng.Spec.MaxNodes - ng.Status.DesiredNodes
-	nodesToAdd := int32(nodesNeeded)
+	nodesToAdd := actualNodesNeeded
 	if nodesToAdd > availableCapacity {
 		nodesToAdd = availableCapacity
 	}
@@ -227,9 +246,10 @@ func (c *ScaleUpController) makeScaleUpDecision(
 
 	c.logger.Info("Scale-up decision made",
 		zap.String("nodeGroup", ng.Name),
-		zap.Int32("currentNodes", ng.Status.DesiredNodes),
+		zap.Int32("currentNodes", ng.Status.CurrentNodes),
 		zap.Int32("desiredNodes", desiredNodes),
 		zap.Int32("nodesToAdd", nodesToAdd),
+		zap.Int32("nodesBeingProvisioned", nodesBeingProvisioned),
 		zap.String("instanceType", instanceType),
 		zap.Int("matchingPods", len(match.MatchingPods)),
 	)
@@ -274,6 +294,10 @@ func (c *ScaleUpController) executeScaleUp(ctx context.Context, decision ScaleUp
 			zap.String("nodeGroup", ng.Name),
 			zap.Int32("currentDesired", ng.Status.DesiredNodes),
 		)
+		// Still record the scale event to prevent repeated scale-up attempts
+		// This is important when the NodeGroup reconciler sets DesiredNodes
+		// before our scale decision is executed
+		c.watcher.RecordScaleEvent(ng.Name)
 		return nil
 	}
 
