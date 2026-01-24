@@ -15,6 +15,8 @@ VPSie Kubernetes Node Autoscaler - An intelligent Kubernetes node autoscaler tha
 5. Maintain a documentation file that describes how the architecture of the app works inside and out.
 6. Never speculate about code you have not opened. If the user references a specific file, you MUST read the file before answering. Make sure to investigate and read relevant files BEFORE answering questions about the codebase.
 
+For detailed architecture diagrams (scale-up/down workflows, VPSieNode state machine, CRD relationships), see `docs/ARCHITECTURE.md`.
+
 ## Build and Development Commands
 
 ```bash
@@ -53,33 +55,39 @@ make kind-delete              # Delete kind cluster
 ```
 cmd/controller/       Main Kubernetes controller binary with CLI (cobra)
 pkg/
-├── apis/autoscaler/v1alpha1/  CRD definitions (NodeGroup, VPSieNode)
+├── apis/autoscaler/v1alpha1/  CRD definitions (NodeGroup, VPSieNode, labels)
 ├── controller/
 │   ├── nodegroup/    NodeGroup reconciler - main orchestration loop
 │   └── vpsienode/    VPSieNode controller - VPS lifecycle management
-├── scaler/           Scale-down logic (utilization analysis, draining)
+├── scaler/           Scale-down logic (utilization analysis, draining, 6 safety checks)
 ├── rebalancer/       Cost optimization (analyzer, planner, executor)
 ├── vpsie/
 │   ├── client/       VPSie API v2 client (OAuth, rate limiting, circuit breaker)
 │   └── cost/         Cost calculation and optimization
 ├── metrics/          Prometheus metrics with label sanitization
-├── events/           Kubernetes event management
-└── webhook/          Validation webhooks (TLS 1.3)
+├── events/           Kubernetes event management and scale-up triggers
+├── webhook/          Validation webhooks (TLS 1.3)
+├── tracing/          Sentry integration for error tracking and performance
+├── audit/            Audit logging for compliance
+└── utils/            Shared utilities (node helpers)
 ```
 
 ### Critical Data Flow
 
-1. **Scale-Up Path:** Unschedulable pods → NodeGroup reconciler → VPSie API (provision VM) → VPSieNode CR → Node joins cluster
+1. **Scale-Up Path:** Unschedulable pods → `EventWatcher` → `ScaleUpController` → `NodeGroupReconciler` → VPSie API (provision VM) → VPSieNode CR → Node joins cluster
 
-2. **Scale-Down Path:** `ScaleDownManager` identifies underutilized nodes → `PolicyEngine` validates safety → drains node → `NodeGroupReconciler` terminates VPSie VM
+2. **Scale-Down Path:** `ScaleDownManager` identifies underutilized nodes → `PolicyEngine` validates 6 safety checks → drains node → `NodeGroupReconciler` terminates VPSie VM
 
 3. **Rebalancing Path:** `Analyzer` (5 safety checks) → `Planner` (migration strategy) → `Executor` (cordon, drain, provision, rollback)
 
 ### Key Design Decisions
 
 - **Controller Separation:** ScaleDownManager handles node identification/draining, NodeGroupReconciler handles VM termination. This prevents race conditions.
-- **Rebalancer Safety:** 5 mandatory checks (cluster health, PDB, local storage, maintenance windows, cooldowns) before any migration
+- **Scale-Down Safety (6 checks):** No local storage pods, pods can be rescheduled, no critical system pods, no anti-affinity violations, cluster has capacity, node not protected by annotation
+- **Rebalancer Safety (5 checks):** Cluster health, PDB compliance, local storage detection, maintenance windows, cooldowns
 - **VPSie Client:** OAuth with auto-refresh, rate limiting (100 req/min default), circuit breaker for fault tolerance
+- **Max 1 node per scale-down operation:** Prevents aggressive scale-down
+- **TTL for Failed VPSieNodes:** Automatic cleanup of stuck resources (30min default)
 
 ## VPSie API Integration
 
@@ -131,12 +139,15 @@ go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
 | Task | Files |
 |------|-------|
 | Add NodeGroup field | `pkg/apis/autoscaler/v1alpha1/nodegroup_types.go`, then `make generate` |
-| Modify scaling logic | `pkg/scaler/scaler.go`, `pkg/scaler/policies.go` |
+| Add/modify labels | `pkg/apis/autoscaler/v1alpha1/labels.go` |
+| Modify scaling logic | `pkg/scaler/scaler.go`, `pkg/scaler/policies.go`, `pkg/scaler/safety.go` |
 | Modify rebalancing | `pkg/rebalancer/analyzer.go`, `planner.go`, `executor.go` |
 | Add metrics | `pkg/metrics/metrics.go` (use `sanitize.go` for labels) |
 | VPSie API changes | `pkg/vpsie/client/client.go`, `types.go`, `errors.go` |
-| Webhook validation | `pkg/webhook/server.go` |
-| Controller CLI flags | `cmd/controller/main.go` |
+| Webhook validation | `pkg/webhook/server.go`, `nodegroup_validator.go`, `vpsienode_validator.go` |
+| Controller CLI flags | `cmd/controller/main.go`, `pkg/controller/options.go` |
+| Error tracking | `pkg/tracing/sentry.go` |
+| Node utilities | `pkg/utils/node.go` |
 
 ## Deployment
 
@@ -155,8 +166,21 @@ kubectl apply -f deploy/crds/
 kubectl apply -f deploy/manifests/
 ```
 
+## Labels and Annotations
+
+Key labels/annotations defined in `pkg/apis/autoscaler/v1alpha1/labels.go`:
+
+| Key | Purpose |
+|-----|---------|
+| `autoscaler.vpsie.com/managed=true` | Required for NodeGroup to be managed |
+| `autoscaler.vpsie.com/nodegroup` | Associates VPSieNode/K8s node with parent NodeGroup |
+| `autoscaler.vpsie.com/vpsienode` | Associates K8s node with VPSieNode CR |
+| `autoscaler.vpsie.com/creation-reason` | Tracks why node was created: `metrics`, `manual`, `rebalance`, `initial` |
+| `autoscaler.vpsie.com/vps-id` (annotation) | VPSie VPS instance ID |
+
 ## Important Notes
 
 - **Metrics sanitization:** All Prometheus labels are sanitized via `pkg/metrics/sanitize.go` (max 100 chars, special chars → underscores)
 - **Cloud-init removed:** Node configuration handled by VPSie API via QEMU agent. Fields `spec.userData`, `spec.cloudInitTemplate*` no longer exist.
 - **TLS 1.3 required:** Webhook server enforces TLS 1.3 minimum
+- **Sentry integration:** Optional error tracking/tracing via `pkg/tracing/sentry.go`. Configure with `--sentry-dsn` or `SENTRY_DSN` env var.
