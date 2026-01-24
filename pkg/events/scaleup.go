@@ -212,44 +212,62 @@ func (c *ScaleUpController) makeScaleUpDecision(
 	// Estimate nodes needed
 	nodesNeeded := c.analyzer.EstimateNodesNeeded(match.Deficit, instanceInfo)
 
-	// Account for nodes already being provisioned (not yet ready)
-	// These nodes will accommodate some of the pending pods once ready
-	nodesBeingProvisioned := ng.Status.DesiredNodes - ng.Status.CurrentNodes
+	// Sequential scaling: check if any nodes are still being provisioned (not yet ready)
+	// If DesiredNodes > ReadyNodes, nodes are in transition - wait for them to be Ready
+	nodesBeingProvisioned := ng.Status.DesiredNodes - ng.Status.ReadyNodes
 	if nodesBeingProvisioned < 0 {
 		nodesBeingProvisioned = 0
 	}
 
-	// Only add nodes beyond what's already being provisioned
-	actualNodesNeeded := int32(nodesNeeded) - nodesBeingProvisioned
-	if actualNodesNeeded <= 0 {
-		c.logger.Debug("Nodes already being provisioned will satisfy demand",
+	// If there are nodes being provisioned, wait for them to be Ready first
+	// This prevents over-provisioning and respects cluster limits
+	if nodesBeingProvisioned > 0 {
+		c.logger.Debug("Waiting for nodes to be Ready before adding more (sequential scaling)",
 			zap.String("nodeGroup", ng.Name),
 			zap.Int("nodesNeeded", nodesNeeded),
 			zap.Int32("nodesBeingProvisioned", nodesBeingProvisioned),
+			zap.Int32("desiredNodes", ng.Status.DesiredNodes),
+			zap.Int32("readyNodes", ng.Status.ReadyNodes),
 		)
 		metrics.ScaleUpDecisionsTotal.WithLabelValues(ng.Name, ng.Namespace, "skipped_provisioning").Inc()
 		return nil, nil
 	}
 
-	// Calculate actual nodes to add (respect max capacity)
-	availableCapacity := ng.Spec.MaxNodes - ng.Status.DesiredNodes
-	nodesToAdd := actualNodesNeeded
-	if nodesToAdd > availableCapacity {
-		nodesToAdd = availableCapacity
-	}
-
-	if nodesToAdd <= 0 {
+	// Check if we actually need more nodes based on deficit
+	// nodesNeeded from EstimateNodesNeeded already represents the NEW nodes needed
+	// to satisfy the unschedulable pod deficit
+	if nodesNeeded <= 0 {
+		c.logger.Debug("No additional nodes needed based on deficit analysis",
+			zap.String("nodeGroup", ng.Name),
+			zap.Int("nodesNeeded", nodesNeeded),
+		)
 		return nil, nil
 	}
 
+	// Check available capacity
+	availableCapacity := ng.Spec.MaxNodes - ng.Status.DesiredNodes
+	if availableCapacity <= 0 {
+		c.logger.Debug("NodeGroup at max capacity",
+			zap.String("nodeGroup", ng.Name),
+			zap.Int32("desiredNodes", ng.Status.DesiredNodes),
+			zap.Int32("maxNodes", ng.Spec.MaxNodes),
+		)
+		return nil, nil
+	}
+
+	// Sequential scaling: only add ONE node at a time
+	// Wait for it to be Ready, then re-evaluate if more are needed
+	nodesToAdd := int32(1)
+
 	desiredNodes := ng.Status.DesiredNodes + nodesToAdd
 
-	c.logger.Info("Scale-up decision made",
+	c.logger.Info("Scale-up decision made (sequential scaling: 1 node at a time)",
 		zap.String("nodeGroup", ng.Name),
 		zap.Int32("currentNodes", ng.Status.CurrentNodes),
+		zap.Int32("readyNodes", ng.Status.ReadyNodes),
 		zap.Int32("desiredNodes", desiredNodes),
 		zap.Int32("nodesToAdd", nodesToAdd),
-		zap.Int32("nodesBeingProvisioned", nodesBeingProvisioned),
+		zap.Int("totalNodesNeeded", nodesNeeded),
 		zap.String("instanceType", instanceType),
 		zap.Int("matchingPods", len(match.MatchingPods)),
 	)
@@ -266,7 +284,7 @@ func (c *ScaleUpController) makeScaleUpDecision(
 		InstanceType: instanceType,
 		MatchingPods: len(match.MatchingPods),
 		Deficit:      match.Deficit,
-		Reason:       fmt.Sprintf("Scaling up to accommodate %d pending pods", len(match.MatchingPods)),
+		Reason:       fmt.Sprintf("Sequential scaling: adding 1 node for %d pending pods (estimated %d total needed)", len(match.MatchingPods), nodesNeeded),
 	}, nil
 }
 

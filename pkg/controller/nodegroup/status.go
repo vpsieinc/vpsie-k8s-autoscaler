@@ -257,3 +257,35 @@ func ShouldReconcile(ng *v1alpha1.NodeGroup) bool {
 
 	return false
 }
+
+// HasNodesInTransition checks if any VPSieNodes are in a transitional state
+// (not yet Ready or Failed). Returns true if there are nodes being provisioned
+// or joining the cluster.
+func HasNodesInTransition(vpsieNodes []v1alpha1.VPSieNode) bool {
+	for _, vn := range vpsieNodes {
+		switch vn.Status.Phase {
+		case v1alpha1.VPSieNodePhasePending,
+			v1alpha1.VPSieNodePhaseProvisioning,
+			v1alpha1.VPSieNodePhaseProvisioned,
+			v1alpha1.VPSieNodePhaseJoining:
+			// Node is in a transitional state - not yet Ready
+			return true
+		}
+	}
+	return false
+}
+
+// CountNodesInTransition returns the number of VPSieNodes in transitional states
+func CountNodesInTransition(vpsieNodes []v1alpha1.VPSieNode) int {
+	count := 0
+	for _, vn := range vpsieNodes {
+		switch vn.Status.Phase {
+		case v1alpha1.VPSieNodePhasePending,
+			v1alpha1.VPSieNodePhaseProvisioning,
+			v1alpha1.VPSieNodePhaseProvisioned,
+			v1alpha1.VPSieNodePhaseJoining:
+			count++
+		}
+	}
+	return count
+}

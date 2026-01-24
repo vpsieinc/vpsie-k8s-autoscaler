@@ -209,6 +209,8 @@ func (r *NodeGroupReconciler) reconcile(ctx context.Context, ng *v1alpha1.NodeGr
 }
 
 // reconcileScaleUp handles scaling up the NodeGroup
+// Uses sequential scaling: only creates one node at a time and waits for it to be Ready
+// before creating additional nodes. This prevents over-provisioning and respects cluster limits.
 func (r *NodeGroupReconciler) reconcileScaleUp(
 	ctx context.Context,
 	ng *v1alpha1.NodeGroup,
@@ -222,37 +224,55 @@ func (r *NodeGroupReconciler) reconcileScaleUp(
 		return ctrl.Result{RequeueAfter: DefaultRequeueAfter}, nil
 	}
 
-	logger.Info("Creating new VPSieNodes",
-		zap.Int32("count", nodesToAdd),
-	)
-
-	// Create VPSieNode resources
-	for i := int32(0); i < nodesToAdd; i++ {
-		vpsieNode := r.buildVPSieNode(ng)
-
-		// Set owner reference
-		if err := controllerutil.SetControllerReference(ng, vpsieNode, r.Scheme); err != nil {
-			logger.Error("Failed to set owner reference", zap.Error(err))
-			SetErrorCondition(ng, true, ReasonKubernetesAPIError, fmt.Sprintf("Failed to set owner reference: %v", err))
-			return ctrl.Result{}, err
-		}
-
-		// Create the VPSieNode
-		if err := r.Create(ctx, vpsieNode); err != nil {
-			logger.Error("Failed to create VPSieNode",
-				zap.String("vpsienode", vpsieNode.Name),
-				zap.Error(err),
-			)
-			SetErrorCondition(ng, true, ReasonNodeProvisioningFailed, fmt.Sprintf("Failed to create VPSieNode: %v", err))
-			return ctrl.Result{}, err
-		}
-
-		logger.Info("Created VPSieNode",
-			zap.String("vpsienode", vpsieNode.Name),
+	// Sequential scaling: check if any nodes are still in transition (not yet Ready)
+	// If so, wait for them to be Ready before creating more nodes
+	nodesInTransition := CountNodesInTransition(vpsieNodes)
+	if nodesInTransition > 0 {
+		logger.Info("Waiting for nodes in transition to be Ready before scaling up",
+			zap.Int("nodesInTransition", nodesInTransition),
+			zap.Int32("totalNodesToAdd", nodesToAdd),
+			zap.Int32("currentNodes", ng.Status.CurrentNodes),
+			zap.Int32("readyNodes", ng.Status.ReadyNodes),
+			zap.Int32("desiredNodes", ng.Status.DesiredNodes),
 		)
+		// Requeue with fast interval to check when nodes become Ready
+		return ctrl.Result{RequeueAfter: FastRequeueAfter}, nil
 	}
 
-	// Requeue to check progress
+	// Sequential scaling: only create ONE node at a time
+	// After this node becomes Ready, the reconciler will run again and create the next one
+	logger.Info("Creating new VPSieNode (sequential scaling: 1 at a time)",
+		zap.Int32("remainingToAdd", nodesToAdd),
+		zap.Int32("currentNodes", ng.Status.CurrentNodes),
+		zap.Int32("desiredNodes", ng.Status.DesiredNodes),
+	)
+
+	vpsieNode := r.buildVPSieNode(ng)
+
+	// Set owner reference
+	if err := controllerutil.SetControllerReference(ng, vpsieNode, r.Scheme); err != nil {
+		logger.Error("Failed to set owner reference", zap.Error(err))
+		SetErrorCondition(ng, true, ReasonKubernetesAPIError, fmt.Sprintf("Failed to set owner reference: %v", err))
+		return ctrl.Result{}, err
+	}
+
+	// Create the VPSieNode
+	if err := r.Create(ctx, vpsieNode); err != nil {
+		logger.Error("Failed to create VPSieNode",
+			zap.String("vpsienode", vpsieNode.Name),
+			zap.Error(err),
+		)
+		SetErrorCondition(ng, true, ReasonNodeProvisioningFailed, fmt.Sprintf("Failed to create VPSieNode: %v", err))
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("Created VPSieNode, waiting for it to be Ready before creating more",
+		zap.String("vpsienode", vpsieNode.Name),
+		zap.Int32("remainingAfterThis", nodesToAdd-1),
+	)
+
+	// Requeue to check progress - the next reconcile will create another node
+	// once this one is Ready
 	return ctrl.Result{RequeueAfter: FastRequeueAfter}, nil
 }
 
