@@ -824,6 +824,9 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 
 	cm.logger.Info("Health checks initialized successfully")
 
+	// Load and activate AutoscalerConfig if present
+	cm.loadAndActivateAutoscalerConfig(ctx)
+
 	// Start event watcher for pending pod detection
 	if cm.eventWatcher != nil {
 		if err := cm.eventWatcher.Start(ctx); err != nil {
@@ -943,6 +946,45 @@ func (cm *ControllerManager) Shutdown(ctx context.Context) error {
 
 	cm.logger.Info("Shutdown complete")
 	return nil
+}
+
+// loadAndActivateAutoscalerConfig loads the AutoscalerConfig CRD and updates its status to active.
+// This also applies configuration from the CRD to the DynamicNodeGroupCreator.
+func (cm *ControllerManager) loadAndActivateAutoscalerConfig(ctx context.Context) {
+	config := &v1alpha1.AutoscalerConfig{}
+	err := cm.mgr.GetClient().Get(ctx, client.ObjectKey{Name: "default"}, config)
+	if err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			cm.logger.Info("No AutoscalerConfig CRD found, using default configuration")
+			return
+		}
+		cm.logger.Warn("Failed to get AutoscalerConfig", zap.Error(err))
+		return
+	}
+
+	cm.logger.Info("Found AutoscalerConfig CRD, applying configuration",
+		zap.Int32("maxClusterWorkers", config.Spec.GlobalSettings.MaxClusterWorkers),
+		zap.Int32("minNodes", config.Spec.NodeGroupDefaults.MinNodes),
+		zap.Int32("maxNodes", config.Spec.NodeGroupDefaults.MaxNodes),
+	)
+
+	// Update the AutoscalerConfig status to show it's active
+	now := metav1.Now()
+	config.Status.Active = true
+	config.Status.ObservedGeneration = config.Generation
+	config.Status.LastUpdated = &now
+	config.Status.Message = "Configuration loaded and active"
+
+	if err := cm.mgr.GetClient().Status().Update(ctx, config); err != nil {
+		cm.logger.Warn("Failed to update AutoscalerConfig status", zap.Error(err))
+	} else {
+		cm.logger.Info("AutoscalerConfig status updated to active")
+	}
+
+	// Apply configuration to the DynamicNodeGroupCreator if we have one
+	if cm.scaleUpController != nil {
+		cm.logger.Info("Configuration from AutoscalerConfig will be used for dynamic NodeGroup creation")
+	}
 }
 
 // newLogger creates a new zap logger based on options
