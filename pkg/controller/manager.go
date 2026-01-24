@@ -990,6 +990,110 @@ func (cm *ControllerManager) loadAndActivateAutoscalerConfig(ctx context.Context
 	if cm.scaleUpController != nil {
 		cm.logger.Info("Configuration from AutoscalerConfig will be used for dynamic NodeGroup creation")
 	}
+
+	// Update existing managed NodeGroups with the new configuration
+	cm.syncManagedNodeGroups(ctx, config)
+}
+
+// syncManagedNodeGroups updates existing dynamically-created NodeGroups with AutoscalerConfig values
+func (cm *ControllerManager) syncManagedNodeGroups(ctx context.Context, config *v1alpha1.AutoscalerConfig) {
+	// List all NodeGroups with the managed label
+	nodeGroupList := &v1alpha1.NodeGroupList{}
+	if err := cm.mgr.GetClient().List(ctx, nodeGroupList, client.MatchingLabels{
+		"autoscaler.vpsie.com/managed": "true",
+	}); err != nil {
+		cm.logger.Warn("Failed to list managed NodeGroups", zap.Error(err))
+		return
+	}
+
+	if len(nodeGroupList.Items) == 0 {
+		cm.logger.Debug("No managed NodeGroups found to sync")
+		return
+	}
+
+	defaults := config.Spec.NodeGroupDefaults
+	updated := 0
+
+	for i := range nodeGroupList.Items {
+		ngRef := &nodeGroupList.Items[i]
+
+		// Update NodeGroup with retry logic to handle conflicts
+		if cm.updateNodeGroupWithRetry(ctx, ngRef.Name, ngRef.Namespace, defaults) {
+			updated++
+		}
+	}
+
+	if updated > 0 {
+		cm.logger.Info("Synced managed NodeGroups with AutoscalerConfig",
+			zap.Int("updated", updated),
+			zap.Int("total", len(nodeGroupList.Items)),
+		)
+	}
+}
+
+// updateNodeGroupWithRetry updates a NodeGroup with retry logic for conflict handling
+func (cm *ControllerManager) updateNodeGroupWithRetry(ctx context.Context, name, namespace string, defaults v1alpha1.NodeGroupDefaults) bool {
+	maxRetries := 3
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Always fetch fresh copy before update
+		ng := &v1alpha1.NodeGroup{}
+		if err := cm.mgr.GetClient().Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, ng); err != nil {
+			cm.logger.Warn("Failed to get NodeGroup for update",
+				zap.String("nodeGroup", name),
+				zap.Error(err),
+			)
+			return false
+		}
+
+		needsUpdate := false
+
+		// Check if maxNodes needs to be updated
+		if defaults.MaxNodes > 0 && ng.Spec.MaxNodes != defaults.MaxNodes {
+			cm.logger.Info("Updating NodeGroup maxNodes",
+				zap.String("nodeGroup", ng.Name),
+				zap.Int32("oldMax", ng.Spec.MaxNodes),
+				zap.Int32("newMax", defaults.MaxNodes),
+			)
+			ng.Spec.MaxNodes = defaults.MaxNodes
+			needsUpdate = true
+		}
+
+		// Check if minNodes needs to be updated
+		if ng.Spec.MinNodes != defaults.MinNodes {
+			cm.logger.Info("Updating NodeGroup minNodes",
+				zap.String("nodeGroup", ng.Name),
+				zap.Int32("oldMin", ng.Spec.MinNodes),
+				zap.Int32("newMin", defaults.MinNodes),
+			)
+			ng.Spec.MinNodes = defaults.MinNodes
+			needsUpdate = true
+		}
+
+		if !needsUpdate {
+			return false // No update needed
+		}
+
+		if err := cm.mgr.GetClient().Update(ctx, ng); err != nil {
+			if strings.Contains(err.Error(), "the object has been modified") && attempt < maxRetries-1 {
+				cm.logger.Debug("NodeGroup update conflict, retrying",
+					zap.String("nodeGroup", name),
+					zap.Int("attempt", attempt+1),
+				)
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			cm.logger.Warn("Failed to update managed NodeGroup",
+				zap.String("nodeGroup", name),
+				zap.Error(err),
+			)
+			return false
+		}
+
+		return true // Success
+	}
+
+	return false
 }
 
 // newLogger creates a new zap logger based on options
