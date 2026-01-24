@@ -224,6 +224,50 @@ func (r *NodeGroupReconciler) reconcileScaleUp(
 		return ctrl.Result{RequeueAfter: DefaultRequeueAfter}, nil
 	}
 
+	// Check for capacity limit failures - if VPSie cluster has reached its worker limit,
+	// don't try to create more nodes as they will just fail
+	capacityLimitFailures := CountCapacityLimitFailures(vpsieNodes)
+	if capacityLimitFailures > 0 {
+		logger.Warn("VPSie cluster capacity limit reached - pausing node creation",
+			zap.Int("failedNodes", capacityLimitFailures),
+			zap.Int32("desiredNodes", ng.Status.DesiredNodes),
+			zap.Int32("currentNodes", ng.Status.CurrentNodes),
+		)
+
+		// Set error condition on NodeGroup
+		SetErrorCondition(ng, true, ReasonClusterCapacityLimitReached,
+			fmt.Sprintf("VPSie cluster has reached its worker node limit. %d node(s) failed to provision. "+
+				"Delete existing workers or increase cluster limits to continue scaling.", capacityLimitFailures))
+
+		// Record event
+		r.Recorder.Eventf(ng, corev1.EventTypeWarning, "CapacityLimitReached",
+			"VPSie cluster capacity limit reached. %d node(s) failed to provision. Node creation paused.",
+			capacityLimitFailures)
+
+		// Clean up the failed VPSieNodes since they can't be recovered
+		failedNodes := GetFailedVPSieNodes(vpsieNodes)
+		for _, vn := range failedNodes {
+			// Only delete nodes that failed due to capacity limits
+			for _, cond := range vn.Status.Conditions {
+				if cond.Reason == CapacityLimitReachedReason {
+					logger.Info("Cleaning up failed VPSieNode (capacity limit)",
+						zap.String("vpsienode", vn.Name),
+					)
+					if err := r.Delete(ctx, &vn); err != nil {
+						logger.Error("Failed to delete failed VPSieNode",
+							zap.String("vpsienode", vn.Name),
+							zap.Error(err),
+						)
+					}
+					break
+				}
+			}
+		}
+
+		// Requeue with longer interval - capacity limit won't resolve quickly
+		return ctrl.Result{RequeueAfter: DefaultRequeueAfter * 2}, nil
+	}
+
 	// Sequential scaling: check if any nodes are still in transition (not yet Ready)
 	// If so, wait for them to be Ready before creating more nodes
 	nodesInTransition := CountNodesInTransition(vpsieNodes)

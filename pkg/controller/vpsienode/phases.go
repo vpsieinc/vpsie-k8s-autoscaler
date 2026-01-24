@@ -12,6 +12,7 @@ import (
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
+	vpsieclient "github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/client"
 )
 
 const (
@@ -161,6 +162,20 @@ func (h *ProvisioningPhaseHandler) Handle(ctx context.Context, vn *v1alpha1.VPSi
 			zap.String("vpsienode", vn.Name),
 			zap.Error(err),
 		)
+
+		// Check if this is a terminal error (e.g., cluster capacity limit reached)
+		// Terminal errors won't be resolved by retrying, so fail immediately
+		if vpsieclient.IsTerminalError(err) {
+			logger.Error("Terminal provisioning error - failing immediately without retry",
+				zap.String("vpsienode", vn.Name),
+				zap.Error(err),
+			)
+			SetPhase(vn, v1alpha1.VPSieNodePhaseFailed, ReasonCapacityLimitReached, "Cluster capacity limit reached")
+			RecordError(vn, ReasonCapacityLimitReached, err.Error())
+			// Return nil error so the status update persists; the phase is now Failed
+			return ctrl.Result{}, nil
+		}
+
 		RecordError(vn, ReasonVPSieAPIError, err.Error())
 		return result, err
 	}

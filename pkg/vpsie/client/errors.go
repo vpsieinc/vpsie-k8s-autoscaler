@@ -161,3 +161,64 @@ func IsRateLimited(err error) bool {
 	}
 	return false
 }
+
+// IsTerminalError checks if an error is a terminal error that won't be resolved by retrying.
+// These include cluster capacity limits, quota exceeded, plan restrictions, etc.
+func IsTerminalError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Terminal error patterns in VPSie API responses
+	terminalPatterns := []string{
+		"exceeds the allowed limit",   // Worker nodes count exceeds the allowed limit
+		"quota exceeded",              // Various quota limits
+		"plan does not allow",         // Plan-based restrictions
+		"maximum number of",           // Maximum number of X reached
+		"limit reached",               // Generic limit reached
+		"subscription does not allow", // Subscription-based restrictions
+	}
+
+	errStr := err.Error()
+	for _, pattern := range terminalPatterns {
+		if containsIgnoreCase(errStr, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// containsIgnoreCase checks if s contains substr (case-insensitive)
+func containsIgnoreCase(s, substr string) bool {
+	// Simple case-insensitive contains check
+	sLower := toLower(s)
+	substrLower := toLower(substr)
+	return contains(sLower, substrLower)
+}
+
+// toLower converts a string to lowercase (avoiding strings import)
+func toLower(s string) string {
+	result := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		result[i] = c
+	}
+	return string(result)
+}
+
+// contains checks if s contains substr
+func contains(s, substr string) bool {
+	if len(substr) > len(s) {
+		return false
+	}
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

@@ -39,6 +39,10 @@ const (
 	// ReasonProvisioningTimeout indicates provisioning took too long
 	ReasonProvisioningTimeout = "ProvisioningTimeout"
 
+	// ReasonCapacityLimitReached indicates cluster capacity limit was reached
+	// This is a terminal error that won't be resolved by retrying
+	ReasonCapacityLimitReached = "CapacityLimitReached"
+
 	// ReasonJoiningTimeout indicates node joining took too long
 	ReasonJoiningTimeout = "JoiningTimeout"
 

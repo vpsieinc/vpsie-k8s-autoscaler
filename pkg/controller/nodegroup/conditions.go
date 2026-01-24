@@ -41,6 +41,10 @@ const (
 
 	// ReasonScaleDownFailed indicates scale-down operation failed
 	ReasonScaleDownFailed = "ScaleDownFailed"
+
+	// ReasonClusterCapacityLimitReached indicates the VPSie cluster has reached its
+	// maximum worker node limit and node creation is paused until capacity is freed
+	ReasonClusterCapacityLimitReached = "ClusterCapacityLimitReached"
 )
 
 // SetCondition sets a condition on the NodeGroup status
