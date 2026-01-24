@@ -313,3 +313,38 @@ type DeleteK8sNodeResponse struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 }
+
+// K8sCluster represents a VPSie managed Kubernetes cluster
+type K8sCluster struct {
+	ID               int    `json:"id"`
+	Identifier       string `json:"identifier"`        // UUID identifier for API calls
+	Name             string `json:"name"`              // Cluster name (e.g., "HEL-Kubernetes-49ab")
+	Status           string `json:"status"`            // Cluster status
+	K8sVersion       string `json:"k8s_version"`       // Kubernetes version
+	DatacenterID     int    `json:"datacenter_id"`     // Numeric datacenter ID
+	DCIdentifier     string `json:"dcIdentifier"`      // Datacenter UUID
+	DatacenterName   string `json:"datacenter_name"`   // Datacenter display name
+	ProjectID        int    `json:"project_id"`        // Project ID
+	ProjectIdentifier string `json:"projectIdentifier"` // Project UUID
+	MasterCount      int    `json:"master_count"`      // Number of master nodes
+	SlaveCount       int    `json:"slave_count"`       // Number of worker nodes
+	MasterIP         string `json:"master_ip"`         // Master node IP
+	CreatedOn        string `json:"created_on"`
+	LastUpdated      string `json:"last_updated"`
+}
+
+// ListK8sClustersResponse represents the response from listing K8s clusters
+type ListK8sClustersResponse struct {
+	Error   bool         `json:"error"`
+	Code    int          `json:"code"`
+	Message string       `json:"message"`
+	Data    []K8sCluster `json:"data,omitempty"`
+}
+
+// GetK8sClusterResponse represents the response from getting a K8s cluster
+type GetK8sClusterResponse struct {
+	Error   bool       `json:"error"`
+	Code    int        `json:"code"`
+	Message string     `json:"message"`
+	Data    K8sCluster `json:"data,omitempty"`
+}

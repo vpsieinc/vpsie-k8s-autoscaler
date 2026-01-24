@@ -4,12 +4,17 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-logr/zapr"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -47,6 +52,342 @@ type ControllerManager struct {
 	scaleUpController *events.ScaleUpController
 	webhookServer     *webhook.Server
 	tracer            *tracing.Tracer
+	clusterConfig     *DiscoveredClusterConfig // Auto-discovered cluster configuration
+}
+
+// DiscoveredClusterConfig holds cluster configuration discovered from VPSie API
+type DiscoveredClusterConfig struct {
+	ClusterIdentifier string   // VPSie cluster UUID (resourceIdentifier)
+	ClusterName       string   // Cluster display name
+	DatacenterID      string   // Datacenter UUID
+	ProjectID         string   // Project UUID
+	KubernetesVersion string   // K8s version from cluster
+	OfferingIDs       []string // Available offering IDs for this datacenter
+	KubeSizeID        int      // Default K8s size ID
+}
+
+// extractClusterName extracts the VPSie cluster name from an API server hostname or node name.
+// Example: "HEL-Kubernetes-49ab-master-main.6.k8s.vpsie.net" -> "HEL-Kubernetes-49ab"
+// Example: "hel-kubernetes-49ab-slave-11cc" -> "HEL-Kubernetes-49ab"
+func extractClusterName(hostname string) string {
+	// Pattern: {DC}-Kubernetes-{id} followed by -master/-slave or other suffixes
+	// Case-insensitive matching
+	re := regexp.MustCompile(`(?i)^([a-z]+-kubernetes-[a-z0-9]+)`)
+	matches := re.FindStringSubmatch(hostname)
+	if len(matches) > 1 {
+		// Normalize to uppercase DC code and title case Kubernetes
+		// e.g., "hel-kubernetes-49ab" -> "HEL-Kubernetes-49ab"
+		parts := strings.SplitN(matches[1], "-", 3)
+		if len(parts) == 3 {
+			return strings.ToUpper(parts[0]) + "-Kubernetes-" + parts[2]
+		}
+		return matches[1]
+	}
+	return ""
+}
+
+// discoverClusterConfig auto-discovers cluster configuration from VPSie API.
+// It attempts to find the current cluster by matching the API server hostname.
+func discoverClusterConfig(ctx context.Context, config *rest.Config, k8sClient kubernetes.Interface, vpsieClient *vpsieclient.Client, logger *zap.Logger) (*DiscoveredClusterConfig, error) {
+	logger.Info("Starting cluster auto-discovery from VPSie API")
+
+	// Extract API server hostname - try multiple sources
+	apiServerHost := ""
+
+	// First, try from kubeconfig (works when running locally)
+	if config.Host != "" {
+		parsedURL, err := url.Parse(config.Host)
+		if err == nil {
+			host := parsedURL.Hostname()
+			// Skip internal IPs (10.x.x.x, kubernetes.default, etc.)
+			if !strings.HasPrefix(host, "10.") && !strings.HasPrefix(host, "kubernetes") {
+				apiServerHost = host
+			}
+		}
+	}
+
+	// If running in-cluster, try to get external API server URL from cluster-info ConfigMap
+	if apiServerHost == "" || strings.HasPrefix(apiServerHost, "10.") {
+		logger.Debug("Attempting to get API server URL from cluster-info ConfigMap")
+		cm, err := k8sClient.CoreV1().ConfigMaps("kube-public").Get(ctx, "cluster-info", metav1.GetOptions{})
+		if err == nil && cm.Data != nil {
+			if kubeconfig, ok := cm.Data["kubeconfig"]; ok {
+				// Parse the kubeconfig to extract the server URL
+				// The format is: server: https://hostname:port
+				for _, line := range strings.Split(kubeconfig, "\n") {
+					line = strings.TrimSpace(line)
+					if strings.HasPrefix(line, "server:") {
+						serverURL := strings.TrimPrefix(line, "server:")
+						serverURL = strings.TrimSpace(serverURL)
+						if parsedURL, err := url.Parse(serverURL); err == nil {
+							apiServerHost = parsedURL.Hostname()
+							logger.Info("Extracted API server hostname from cluster-info ConfigMap",
+								zap.String("apiServerHost", apiServerHost))
+						}
+						break
+					}
+				}
+			}
+		} else {
+			logger.Debug("Could not get cluster-info ConfigMap", zap.Error(err))
+		}
+	}
+
+	logger.Info("Looking for VPSie cluster matching API server",
+		zap.String("apiServerHost", apiServerHost))
+
+	// Extract cluster name from hostname (e.g., "HEL-Kubernetes-49ab" from "HEL-Kubernetes-49ab-master-main.6.k8s.vpsie.net")
+	var clusterName string
+	if apiServerHost != "" {
+		clusterName = extractClusterName(apiServerHost)
+	}
+
+	// If we couldn't extract from API server hostname (e.g., it's an IP), try node hostnames
+	if clusterName == "" {
+		logger.Debug("Could not extract cluster name from API server hostname, trying node hostnames")
+		nodes, err := k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+		if err == nil && len(nodes.Items) > 0 {
+			for _, node := range nodes.Items {
+				// Try to extract from kubernetes.io/hostname label
+				if hostname, ok := node.Labels["kubernetes.io/hostname"]; ok {
+					clusterName = extractClusterName(hostname)
+					if clusterName != "" {
+						logger.Info("Extracted cluster name from node hostname",
+							zap.String("nodeHostname", hostname),
+							zap.String("clusterName", clusterName))
+						break
+					}
+				}
+				// Try node name directly
+				clusterName = extractClusterName(node.Name)
+				if clusterName != "" {
+					logger.Info("Extracted cluster name from node name",
+						zap.String("nodeName", node.Name),
+						zap.String("clusterName", clusterName))
+					break
+				}
+			}
+		}
+	}
+
+	if clusterName == "" {
+		return nil, fmt.Errorf("could not extract cluster name from API server hostname (%s) or node hostnames", apiServerHost)
+	}
+	logger.Info("Extracted cluster name from hostname",
+		zap.String("clusterName", clusterName))
+
+	// Try to get VPSie cluster info from vpsie-secret first
+	// The secret can contain optional cluster configuration:
+	//   - resourceIdentifier: VPSie cluster UUID
+	//   - datacenterId: VPSie datacenter UUID
+	//   - projectId: VPSie project UUID
+	var clusterIdentifier, datacenterID, projectID string
+	secret, err := k8sClient.CoreV1().Secrets("kube-system").Get(ctx, "vpsie-secret", metav1.GetOptions{})
+	if err == nil && secret.Data != nil {
+		if id, ok := secret.Data["resourceIdentifier"]; ok && len(id) > 0 {
+			clusterIdentifier = string(id)
+			logger.Info("Found cluster identifier in vpsie-secret", zap.String("clusterIdentifier", clusterIdentifier))
+		}
+		if dc, ok := secret.Data["datacenterId"]; ok && len(dc) > 0 {
+			datacenterID = string(dc)
+			logger.Info("Found datacenter ID in vpsie-secret", zap.String("datacenterID", datacenterID))
+		}
+		if proj, ok := secret.Data["projectId"]; ok && len(proj) > 0 {
+			projectID = string(proj)
+			logger.Info("Found project ID in vpsie-secret", zap.String("projectID", projectID))
+		}
+	}
+
+	// Try to get VPSie cluster info from node labels/annotations (fallback)
+	// VPSie-managed nodes should have labels with cluster identifier
+	nodes, err := k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err == nil && len(nodes.Items) > 0 {
+		for _, node := range nodes.Items {
+			// Check for VPSie labels
+			if id, ok := node.Labels["vpsie.com/cluster-id"]; ok {
+				clusterIdentifier = id
+			}
+			if dc, ok := node.Labels["vpsie.com/datacenter-id"]; ok {
+				datacenterID = dc
+			}
+			if proj, ok := node.Labels["vpsie.com/project-id"]; ok {
+				projectID = proj
+			}
+			// Also check annotations
+			if id, ok := node.Annotations["vpsie.com/cluster-id"]; ok && clusterIdentifier == "" {
+				clusterIdentifier = id
+			}
+			if dc, ok := node.Annotations["vpsie.com/datacenter-id"]; ok && datacenterID == "" {
+				datacenterID = dc
+			}
+			// Check provider ID for VPSie format: vpsie://<dc>/<cluster>/<node-id>
+			if node.Spec.ProviderID != "" && strings.HasPrefix(node.Spec.ProviderID, "vpsie://") {
+				parts := strings.Split(strings.TrimPrefix(node.Spec.ProviderID, "vpsie://"), "/")
+				if len(parts) >= 2 {
+					if datacenterID == "" {
+						datacenterID = parts[0]
+					}
+					if clusterIdentifier == "" && len(parts) >= 2 {
+						clusterIdentifier = parts[1]
+					}
+				}
+			}
+			if clusterIdentifier != "" {
+				break
+			}
+		}
+		if clusterIdentifier != "" {
+			logger.Info("Found VPSie cluster info from node labels/annotations",
+				zap.String("clusterIdentifier", clusterIdentifier),
+				zap.String("datacenterID", datacenterID),
+				zap.String("projectID", projectID))
+		}
+	}
+
+	// Try to list K8s clusters from VPSie API
+	var matchedCluster *vpsieclient.K8sCluster
+	clusters, err := vpsieClient.ListK8sClusters(ctx)
+	if err != nil {
+		logger.Warn("Could not list K8s clusters from VPSie API, will use extracted info",
+			zap.Error(err),
+			zap.String("clusterName", clusterName))
+	} else {
+		logger.Info("Found VPSie K8s clusters", zap.Int("count", len(clusters)))
+
+		// Find the cluster that matches our cluster name
+		for i := range clusters {
+			cluster := &clusters[i]
+			logger.Debug("Checking cluster",
+				zap.String("name", cluster.Name),
+				zap.String("masterIP", cluster.MasterIP),
+				zap.String("identifier", cluster.Identifier))
+
+			// Match by exact cluster name
+			if cluster.Name == clusterName {
+				matchedCluster = cluster
+				logger.Info("Matched cluster by name",
+					zap.String("clusterName", cluster.Name),
+					zap.String("identifier", cluster.Identifier))
+				break
+			}
+
+			// Match by cluster name in hostname (e.g., "HEL-Kubernetes-49ab-master-main.6.k8s.vpsie.net")
+			if cluster.Name != "" && strings.Contains(strings.ToLower(apiServerHost), strings.ToLower(cluster.Name)) {
+				matchedCluster = cluster
+				logger.Info("Matched cluster by name in hostname",
+					zap.String("clusterName", cluster.Name),
+					zap.String("apiServerHost", apiServerHost))
+				break
+			}
+		}
+	}
+
+	// If we found a matched cluster from API, use its info
+	if matchedCluster != nil {
+		if clusterIdentifier == "" {
+			clusterIdentifier = matchedCluster.Identifier
+		}
+		if datacenterID == "" {
+			datacenterID = matchedCluster.DCIdentifier
+		}
+		if projectID == "" {
+			projectID = matchedCluster.ProjectIdentifier
+		}
+	}
+
+	// We need at least the cluster identifier to proceed
+	if clusterIdentifier == "" {
+		logger.Warn("Could not determine cluster identifier from VPSie API or node labels",
+			zap.String("clusterName", clusterName),
+			zap.String("hint", "Add 'resourceIdentifier' key to vpsie-secret, set --resource-identifier flag, or add vpsie.com/cluster-id label to nodes"))
+		return nil, fmt.Errorf("could not determine VPSie cluster identifier for %s", clusterName)
+	}
+
+	// Get node groups for this cluster to find available offerings
+	nodeGroups, err := vpsieClient.ListK8sNodeGroups(ctx, clusterIdentifier)
+	if err != nil {
+		logger.Warn("Failed to list node groups, will use defaults",
+			zap.Error(err))
+	}
+
+	// Collect offering IDs from existing node groups
+	offeringIDs := []string{}
+	var defaultKubeSizeID int
+	if len(nodeGroups) > 0 {
+		for _, ng := range nodeGroups {
+			// Use boxsize_id as offering ID
+			offeringID := strconv.Itoa(ng.BoxsizeID)
+			// Deduplicate
+			found := false
+			for _, existing := range offeringIDs {
+				if existing == offeringID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				offeringIDs = append(offeringIDs, offeringID)
+			}
+			// Use the first node group's boxsize as default
+			if defaultKubeSizeID == 0 {
+				defaultKubeSizeID = ng.BoxsizeID
+			}
+			// Get datacenter from node group if not set
+			if datacenterID == "" && ng.DCIdentifier != "" {
+				datacenterID = ng.DCIdentifier
+			}
+		}
+	}
+
+	// Get K8s offers for this datacenter if we didn't find offerings from node groups
+	if len(offeringIDs) == 0 && datacenterID != "" {
+		offers, err := vpsieClient.ListK8sOffers(ctx, datacenterID)
+		if err != nil {
+			logger.Warn("Failed to list K8s offers",
+				zap.Error(err))
+		} else {
+			for _, offer := range offers {
+				offeringIDs = append(offeringIDs, strconv.Itoa(offer.ID))
+				if defaultKubeSizeID == 0 {
+					defaultKubeSizeID = offer.ID
+				}
+			}
+		}
+	}
+
+	// Get Kubernetes version from server
+	kubernetesVersion := ""
+	if matchedCluster != nil && matchedCluster.K8sVersion != "" {
+		kubernetesVersion = matchedCluster.K8sVersion
+	} else {
+		// Get from Kubernetes API
+		serverVersion, err := k8sClient.Discovery().ServerVersion()
+		if err == nil {
+			kubernetesVersion = serverVersion.GitVersion
+		}
+	}
+
+	// Build discovered config
+	discoveredConfig := &DiscoveredClusterConfig{
+		ClusterIdentifier: clusterIdentifier,
+		ClusterName:       clusterName,
+		DatacenterID:      datacenterID,
+		ProjectID:         projectID,
+		KubernetesVersion: kubernetesVersion,
+		OfferingIDs:       offeringIDs,
+		KubeSizeID:        defaultKubeSizeID,
+	}
+
+	logger.Info("Cluster auto-discovery completed successfully",
+		zap.String("clusterName", discoveredConfig.ClusterName),
+		zap.String("clusterIdentifier", discoveredConfig.ClusterIdentifier),
+		zap.String("datacenterID", discoveredConfig.DatacenterID),
+		zap.String("projectID", discoveredConfig.ProjectID),
+		zap.String("kubernetesVersion", discoveredConfig.KubernetesVersion),
+		zap.Strings("offeringIDs", discoveredConfig.OfferingIDs),
+		zap.Int("kubeSizeID", discoveredConfig.KubeSizeID))
+
+	return discoveredConfig, nil
 }
 
 // NewManager creates a new ControllerManager
@@ -177,6 +518,21 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 	// Create health checker
 	healthChecker := NewHealthChecker(vpsieClient)
 
+	// Try auto-discovery if manual configuration is not provided
+	var clusterConfig *DiscoveredClusterConfig
+	needsDiscovery := opts.DefaultDatacenterID == "" || len(opts.DefaultOfferingIDs) == 0 || opts.ResourceIdentifier == ""
+
+	if needsDiscovery {
+		logger.Info("Manual cluster configuration not provided, attempting auto-discovery from VPSie API")
+		discovered, err := discoverClusterConfig(ctx, config, k8sClient, vpsieClient, logger)
+		if err != nil {
+			logger.Warn("Cluster auto-discovery failed, dynamic NodeGroup creation will be disabled",
+				zap.Error(err))
+		} else {
+			clusterConfig = discovered
+		}
+	}
+
 	cm := &ControllerManager{
 		config:           config,
 		options:          opts,
@@ -189,37 +545,72 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 		logger:           logger,
 		scheme:           scheme,
 		tracer:           tracer,
+		clusterConfig:    clusterConfig,
 	}
 
 	// Create DynamicNodeGroupCreator for automatic NodeGroup provisioning
-	// Template is configured via controller options (CLI flags)
-	// KubeSizeID is now optional - it's dynamically selected based on pod resource requirements
+	// Use auto-discovered values if manual configuration is not provided
 	var nodeGroupTemplate *events.NodeGroupTemplate
-	if opts.DefaultDatacenterID != "" && len(opts.DefaultOfferingIDs) > 0 && opts.ResourceIdentifier != "" && opts.KubernetesVersion != "" {
+
+	// Determine effective values: manual config takes precedence over auto-discovered
+	effectiveDatacenterID := opts.DefaultDatacenterID
+	effectiveOfferingIDs := opts.DefaultOfferingIDs
+	effectiveResourceID := opts.ResourceIdentifier
+	effectiveK8sVersion := opts.KubernetesVersion
+	effectiveKubeSizeID := opts.KubeSizeID
+	var effectiveProjectID string // Only from auto-discovery
+
+	if clusterConfig != nil {
+		if effectiveDatacenterID == "" {
+			effectiveDatacenterID = clusterConfig.DatacenterID
+		}
+		if len(effectiveOfferingIDs) == 0 {
+			effectiveOfferingIDs = clusterConfig.OfferingIDs
+		}
+		if effectiveResourceID == "" {
+			effectiveResourceID = clusterConfig.ClusterIdentifier
+		}
+		if effectiveK8sVersion == "" {
+			effectiveK8sVersion = clusterConfig.KubernetesVersion
+		}
+		if effectiveKubeSizeID == 0 {
+			effectiveKubeSizeID = clusterConfig.KubeSizeID
+		}
+		effectiveProjectID = clusterConfig.ProjectID
+	}
+
+	if effectiveDatacenterID != "" && len(effectiveOfferingIDs) > 0 && effectiveResourceID != "" {
 		nodeGroupTemplate = &events.NodeGroupTemplate{
 			Namespace:           "kube-system",
 			MinNodes:            1,
 			MaxNodes:            10,
-			DefaultDatacenterID: opts.DefaultDatacenterID,
-			DefaultOfferingIDs:  opts.DefaultOfferingIDs,
-			ResourceIdentifier:  opts.ResourceIdentifier,
-			KubernetesVersion:   opts.KubernetesVersion,
-			KubeSizeID:          opts.KubeSizeID, // Optional fallback, 0 means dynamic selection
+			DefaultDatacenterID: effectiveDatacenterID,
+			DefaultOfferingIDs:  effectiveOfferingIDs,
+			ResourceIdentifier:  effectiveResourceID,
+			KubernetesVersion:   effectiveK8sVersion,
+			KubeSizeID:          effectiveKubeSizeID,
+			Project:             effectiveProjectID,
+		}
+		configSource := "manual"
+		if clusterConfig != nil && needsDiscovery {
+			configSource = "auto-discovered"
 		}
 		logger.Info("Dynamic NodeGroup creation enabled",
-			zap.String("datacenterID", opts.DefaultDatacenterID),
-			zap.Strings("offeringIDs", opts.DefaultOfferingIDs),
-			zap.String("resourceIdentifier", opts.ResourceIdentifier),
-			zap.String("kubernetesVersion", opts.KubernetesVersion),
-			zap.Int("kubeSizeID", opts.KubeSizeID),
-			zap.Bool("dynamicKubeSizeSelection", opts.KubeSizeID == 0),
+			zap.String("configSource", configSource),
+			zap.String("datacenterID", effectiveDatacenterID),
+			zap.Strings("offeringIDs", effectiveOfferingIDs),
+			zap.String("resourceIdentifier", effectiveResourceID),
+			zap.String("kubernetesVersion", effectiveK8sVersion),
+			zap.Int("kubeSizeID", effectiveKubeSizeID),
+			zap.String("projectID", effectiveProjectID),
+			zap.Bool("dynamicKubeSizeSelection", effectiveKubeSizeID == 0),
 		)
 	} else {
 		logger.Warn("Dynamic NodeGroup creation disabled - missing required configuration",
-			zap.String("datacenterID", opts.DefaultDatacenterID),
-			zap.Int("offeringIDsCount", len(opts.DefaultOfferingIDs)),
-			zap.String("resourceIdentifier", opts.ResourceIdentifier),
-			zap.String("kubernetesVersion", opts.KubernetesVersion),
+			zap.String("datacenterID", effectiveDatacenterID),
+			zap.Int("offeringIDsCount", len(effectiveOfferingIDs)),
+			zap.String("resourceIdentifier", effectiveResourceID),
+			zap.String("kubernetesVersion", effectiveK8sVersion),
 		)
 	}
 	dynamicCreator := events.NewDynamicNodeGroupCreator(
