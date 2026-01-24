@@ -1,0 +1,418 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
+  name: autoscalerconfigs.autoscaler.vpsie.com
+spec:
+  group: autoscaler.vpsie.com
+  names:
+    kind: AutoscalerConfig
+    listKind: AutoscalerConfigList
+    plural: autoscalerconfigs
+    shortNames:
+    - asc
+    singular: autoscalerconfig
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - description: Default min nodes
+      jsonPath: .spec.nodeGroupDefaults.minNodes
+      name: MinNodes
+      type: integer
+    - description: Default max nodes
+      jsonPath: .spec.nodeGroupDefaults.maxNodes
+      name: MaxNodes
+      type: integer
+    - description: Dynamic NodeGroup creation enabled
+      jsonPath: .spec.globalSettings.enableDynamicNodeGroupCreation
+      name: DynamicCreation
+      type: boolean
+    - description: Configuration active
+      jsonPath: .status.active
+      name: Active
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          AutoscalerConfig is the Schema for the autoscalerconfigs API.
+          It provides cluster-wide configuration for the VPSie autoscaler,
+          including defaults for dynamically created NodeGroups.
+          Only one AutoscalerConfig should exist per cluster (named "default").
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              AutoscalerConfigSpec defines the desired configuration for the VPSie autoscaler.
+              This CRD serves as the single source of truth for autoscaler configuration,
+              including defaults for dynamically created NodeGroups.
+            properties:
+              globalSettings:
+                description: GlobalSettings contains cluster-wide autoscaler settings
+                properties:
+                  enableDynamicNodeGroupCreation:
+                    default: true
+                    description: EnableDynamicNodeGroupCreation controls whether the
+                      autoscaler can create new NodeGroups
+                    type: boolean
+                  enableRebalancing:
+                    default: true
+                    description: EnableRebalancing controls whether the autoscaler
+                      can rebalance nodes for cost optimization
+                    type: boolean
+                  maxConcurrentScaleDowns:
+                    default: 1
+                    description: MaxConcurrentScaleDowns is the maximum number of
+                      nodes that can be terminated simultaneously
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  maxConcurrentScaleUps:
+                    default: 1
+                    description: MaxConcurrentScaleUps is the maximum number of nodes
+                      that can be provisioned simultaneously
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  nodeReadyTimeoutSeconds:
+                    default: 600
+                    description: NodeReadyTimeoutSeconds is how long to wait for a
+                      new node to become ready
+                    format: int32
+                    minimum: 60
+                    type: integer
+                  podEvictionTimeoutSeconds:
+                    default: 120
+                    description: PodEvictionTimeoutSeconds is the maximum time to
+                      wait for pods to be evicted during scale-down
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  scaleDownCooldownSeconds:
+                    default: 300
+                    description: ScaleDownCooldownSeconds is the minimum time between
+                      scale-down operations (cluster-wide)
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  scaleUpCooldownSeconds:
+                    default: 60
+                    description: ScaleUpCooldownSeconds is the minimum time between
+                      scale-up operations (cluster-wide)
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  unschedulablePodGracePeriodSeconds:
+                    default: 30
+                    description: |-
+                      UnschedulablePodGracePeriodSeconds is how long to wait for a pod to be scheduled
+                      before considering it for scale-up
+                    format: int32
+                    minimum: 0
+                    type: integer
+                type: object
+              nodeGroupDefaults:
+                description: |-
+                  NodeGroupDefaults contains default values for dynamically created NodeGroups.
+                  These values are used when the autoscaler creates a new NodeGroup for unschedulable pods.
+                properties:
+                  costOptimization:
+                    description: CostOptimization defines default cost optimization
+                      settings
+                    properties:
+                      enabled:
+                        default: true
+                        description: Enabled controls whether cost optimization is
+                          active for this NodeGroup
+                        type: boolean
+                      maxPerformanceImpact:
+                        default: 5
+                        description: MaxPerformanceImpact is the maximum acceptable
+                          performance reduction percentage
+                        format: int32
+                        maximum: 100
+                        minimum: 0
+                        type: integer
+                      minMonthlySavings:
+                        default: 10
+                        description: MinMonthlySavings is the minimum monthly savings
+                          required to apply optimization
+                        type: number
+                      optimizationInterval:
+                        default: 24h
+                        description: OptimizationInterval is the minimum time between
+                          optimization actions
+                        type: string
+                      requireApproval:
+                        default: false
+                        description: RequireApproval controls whether optimizations
+                          require manual approval
+                        type: boolean
+                      strategy:
+                        default: auto
+                        description: |-
+                          Strategy defines the optimization strategy
+                          Values: "auto", "manual", "aggressive", "conservative"
+                        type: string
+                    type: object
+                  datacenterID:
+                    description: DatacenterID is the default VPSie datacenter ID
+                    type: string
+                  kubeSizeID:
+                    description: KubeSizeID is the default VPSie Kubernetes size/package
+                      ID
+                    type: integer
+                  kubernetesVersion:
+                    description: KubernetesVersion is the Kubernetes version for new
+                      nodes
+                    type: string
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Labels are additional labels to apply to all dynamically created nodes
+                      These are merged with any labels derived from pod NodeSelectors
+                    type: object
+                  maxNodes:
+                    default: 10
+                    description: MaxNodes is the maximum number of nodes for new NodeGroups
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  minNodes:
+                    default: 1
+                    description: MinNodes is the minimum number of nodes for new NodeGroups
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  namespace:
+                    default: default
+                    description: Namespace is the namespace where NodeGroups will
+                      be created
+                    type: string
+                  notes:
+                    description: Notes are additional notes for VPSie instances
+                    type: string
+                  offeringIDs:
+                    description: OfferingIDs is a list of allowed VPSie offering/boxsize
+                      IDs
+                    items:
+                      type: string
+                    type: array
+                  osImageID:
+                    description: OSImageID is the VPSie OS image ID for new nodes
+                    type: string
+                  project:
+                    description: Project is the VPSie project ID
+                    type: string
+                  resourceIdentifier:
+                    description: ResourceIdentifier is the VPSie Kubernetes cluster
+                      identifier
+                    type: string
+                  scaleDownPolicy:
+                    description: ScaleDownPolicy defines the default scale-down behavior
+                    properties:
+                      cooldownSeconds:
+                        default: 600
+                        description: |-
+                          CooldownSeconds is the time to wait after a scale-up before allowing scale-down
+                          This prevents scaling down immediately after scaling up
+                        format: int32
+                        minimum: 0
+                        type: integer
+                      cpuThreshold:
+                        default: 50
+                        description: |-
+                          CPUThreshold is the CPU utilization percentage below which scale-down is considered
+                          Scale down when node CPU usage is below this threshold for the stabilization window
+                        format: int32
+                        maximum: 100
+                        minimum: 0
+                        type: integer
+                      enabled:
+                        default: true
+                        description: Enabled controls whether automatic scale-down
+                          is enabled
+                        type: boolean
+                      memoryThreshold:
+                        default: 50
+                        description: |-
+                          MemoryThreshold is the memory utilization percentage below which scale-down is considered
+                          Scale down when node memory usage is below this threshold for the stabilization window
+                        format: int32
+                        maximum: 100
+                        minimum: 0
+                        type: integer
+                      stabilizationWindowSeconds:
+                        default: 600
+                        description: |-
+                          StabilizationWindowSeconds is the time to wait before scaling down after conditions are met
+                          This prevents premature scale-down and gives time for resource usage patterns to stabilize
+                        format: int32
+                        minimum: 0
+                        type: integer
+                    type: object
+                  scaleUpPolicy:
+                    description: ScaleUpPolicy defines the default scale-up behavior
+                    properties:
+                      cpuThreshold:
+                        default: 80
+                        description: |-
+                          CPUThreshold is the CPU utilization percentage that triggers scale-up
+                          Scale up when average CPU usage across nodes exceeds this threshold
+                        format: int32
+                        maximum: 100
+                        minimum: 0
+                        type: integer
+                      enabled:
+                        default: true
+                        description: Enabled controls whether automatic scale-up is
+                          enabled
+                        type: boolean
+                      memoryThreshold:
+                        default: 80
+                        description: |-
+                          MemoryThreshold is the memory utilization percentage that triggers scale-up
+                          Scale up when average memory usage across nodes exceeds this threshold
+                        format: int32
+                        maximum: 100
+                        minimum: 0
+                        type: integer
+                      stabilizationWindowSeconds:
+                        default: 60
+                        description: |-
+                          StabilizationWindowSeconds is the time to wait before scaling up after conditions are met
+                          This prevents flapping when resource usage fluctuates
+                        format: int32
+                        minimum: 0
+                        type: integer
+                    type: object
+                  spotConfig:
+                    description: SpotConfig defines default spot instance configuration
+                    properties:
+                      allowedInterruptionRate:
+                        default: 20
+                        description: |-
+                          AllowedInterruptionRate is the maximum interruption rate per hour
+                          Helps avoid offerings with high interruption rates
+                        format: int32
+                        maximum: 100
+                        minimum: 0
+                        type: integer
+                      enabled:
+                        default: false
+                        description: Enabled controls whether spot instances are used
+                        type: boolean
+                      fallbackToOnDemand:
+                        default: true
+                        description: FallbackToOnDemand controls whether to fall back
+                          to on-demand if spot unavailable
+                        type: boolean
+                      interruptionGracePeriod:
+                        default: 120s
+                        description: InterruptionGracePeriod is the time before spot
+                          termination to drain workloads
+                        type: string
+                      maxSpotPercentage:
+                        default: 80
+                        description: |-
+                          MaxSpotPercentage is the maximum percentage of nodes that can be spot instances
+                          This ensures some on-demand capacity for stability
+                        format: int32
+                        maximum: 100
+                        minimum: 0
+                        type: integer
+                    type: object
+                  sshKeyIDs:
+                    description: SSHKeyIDs is a list of VPSie SSH key IDs for new
+                      nodes
+                    items:
+                      type: string
+                    type: array
+                  tags:
+                    description: Tags are key-value pairs to tag VPSie instances
+                    items:
+                      type: string
+                    type: array
+                  taints:
+                    description: Taints are default taints to apply to nodes in dynamic
+                      NodeGroups
+                    items:
+                      description: |-
+                        The node this Taint is attached to has the "effect" on
+                        any pod that does not tolerate the Taint.
+                      properties:
+                        effect:
+                          description: |-
+                            Required. The effect of the taint on pods
+                            that do not tolerate the taint.
+                            Valid effects are NoSchedule, PreferNoSchedule and NoExecute.
+                          type: string
+                        key:
+                          description: Required. The taint key to be applied to a
+                            node.
+                          type: string
+                        timeAdded:
+                          description: |-
+                            TimeAdded represents the time at which the taint was added.
+                            It is only written for NoExecute taints.
+                          format: date-time
+                          type: string
+                        value:
+                          description: The taint value corresponding to the taint
+                            key.
+                          type: string
+                      required:
+                      - effect
+                      - key
+                      type: object
+                    type: array
+                type: object
+            type: object
+          status:
+            description: AutoscalerConfigStatus defines the observed state of AutoscalerConfig
+            properties:
+              active:
+                description: Active indicates whether this configuration is currently
+                  active
+                type: boolean
+              lastUpdated:
+                description: LastUpdated is when the configuration was last applied
+                format: date-time
+                type: string
+              message:
+                description: Message provides additional information about the configuration
+                  status
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is the generation observed by the
+                  controller
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
