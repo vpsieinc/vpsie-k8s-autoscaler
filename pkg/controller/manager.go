@@ -355,8 +355,13 @@ func discoverClusterConfig(ctx context.Context, config *rest.Config, k8sClient k
 	kubernetesVersion := ""
 	if matchedCluster != nil && matchedCluster.KubeVersion != "" {
 		kubernetesVersion = matchedCluster.KubeVersion
+		// VPSie API returns version without 'v' prefix (e.g., "1.34.1")
+		// but CRD validation requires it (e.g., "v1.34.1")
+		if !strings.HasPrefix(kubernetesVersion, "v") {
+			kubernetesVersion = "v" + kubernetesVersion
+		}
 	} else {
-		// Get from Kubernetes API
+		// Get from Kubernetes API (already has 'v' prefix)
 		serverVersion, err := k8sClient.Discovery().ServerVersion()
 		if err == nil {
 			kubernetesVersion = serverVersion.GitVersion
