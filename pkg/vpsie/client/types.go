@@ -316,21 +316,25 @@ type DeleteK8sNodeResponse struct {
 
 // K8sCluster represents a VPSie managed Kubernetes cluster
 type K8sCluster struct {
-	ID               int    `json:"id"`
-	Identifier       string `json:"identifier"`        // UUID identifier for API calls
-	Name             string `json:"name"`              // Cluster name (e.g., "HEL-Kubernetes-49ab")
-	Status           string `json:"status"`            // Cluster status
-	K8sVersion       string `json:"k8s_version"`       // Kubernetes version
-	DatacenterID     int    `json:"datacenter_id"`     // Numeric datacenter ID
-	DCIdentifier     string `json:"dcIdentifier"`      // Datacenter UUID
-	DatacenterName   string `json:"datacenter_name"`   // Datacenter display name
-	ProjectID        int    `json:"project_id"`        // Project ID
-	ProjectIdentifier string `json:"projectIdentifier"` // Project UUID
-	MasterCount      int    `json:"master_count"`      // Number of master nodes
-	SlaveCount       int    `json:"slave_count"`       // Number of worker nodes
-	MasterIP         string `json:"master_ip"`         // Master node IP
-	CreatedOn        string `json:"created_on"`
-	LastUpdated      string `json:"last_updated"`
+	Identifier     string  `json:"identifier"`      // UUID identifier for API calls
+	Name           string  `json:"cluster_name"`    // Cluster name (e.g., "HEL-Kubernetes-49ab")
+	UserID         int     `json:"user_id"`         // User ID
+	Count          int     `json:"count"`           // Total node count
+	KubeVersion    string  `json:"kube_version"`    // Kubernetes version
+	Nickname       string  `json:"nickname"`        // Plan nickname (e.g., "Starter", "Professional")
+	CPU            int     `json:"cpu"`             // CPU cores per node
+	RAM            int     `json:"ram"`             // RAM in MB per node
+	Traffic        int     `json:"traffic"`         // Traffic/bandwidth
+	Color          string  `json:"color"`           // UI color
+	Price          float64 `json:"price"`           // Monthly price
+	Lock           int     `json:"lock"`            // Lock status
+	CreatedBy      string  `json:"created_by"`      // Creator name
+	UpgradeVersion string  `json:"upgrade_version"` // Available upgrade version
+	LBID           *int    `json:"lb_id"`           // Load balancer ID (nullable)
+	ManagerCount   int     `json:"managerCount"`    // Number of master nodes
+	SlaveCount     int     `json:"slaveCount"`      // Number of worker nodes
+	CreatedOn      string  `json:"created_on"`
+	UpdatedOn      string  `json:"updated_on"`
 }
 
 // ListK8sClustersResponse represents the response from listing K8s clusters

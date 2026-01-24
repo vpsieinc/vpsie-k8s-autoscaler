@@ -259,8 +259,8 @@ func discoverClusterConfig(ctx context.Context, config *rest.Config, k8sClient k
 			cluster := &clusters[i]
 			logger.Debug("Checking cluster",
 				zap.String("name", cluster.Name),
-				zap.String("masterIP", cluster.MasterIP),
-				zap.String("identifier", cluster.Identifier))
+				zap.String("identifier", cluster.Identifier),
+				zap.String("kubeVersion", cluster.KubeVersion))
 
 			// Match by exact cluster name
 			if cluster.Name == clusterName {
@@ -287,12 +287,8 @@ func discoverClusterConfig(ctx context.Context, config *rest.Config, k8sClient k
 		if clusterIdentifier == "" {
 			clusterIdentifier = matchedCluster.Identifier
 		}
-		if datacenterID == "" {
-			datacenterID = matchedCluster.DCIdentifier
-		}
-		if projectID == "" {
-			projectID = matchedCluster.ProjectIdentifier
-		}
+		// Note: DCIdentifier and ProjectIdentifier are not in the cluster list response
+		// They need to be obtained from node groups or set manually
 	}
 
 	// We need at least the cluster identifier to proceed
@@ -357,8 +353,8 @@ func discoverClusterConfig(ctx context.Context, config *rest.Config, k8sClient k
 
 	// Get Kubernetes version from server
 	kubernetesVersion := ""
-	if matchedCluster != nil && matchedCluster.K8sVersion != "" {
-		kubernetesVersion = matchedCluster.K8sVersion
+	if matchedCluster != nil && matchedCluster.KubeVersion != "" {
+		kubernetesVersion = matchedCluster.KubeVersion
 	} else {
 		// Get from Kubernetes API
 		serverVersion, err := k8sClient.Discovery().ServerVersion()

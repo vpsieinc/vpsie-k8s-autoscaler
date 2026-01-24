@@ -1659,41 +1659,19 @@ func (c *Client) deleteWithBody(ctx context.Context, path string, body, result i
 
 // ListK8sClusters lists all Kubernetes clusters associated with the account.
 // This is used for auto-discovery of cluster configuration.
-// It tries multiple known API endpoint patterns since VPSie API versions may differ.
 func (c *Client) ListK8sClusters(ctx context.Context) ([]K8sCluster, error) {
 	var response ListK8sClustersResponse
-	var lastErr error
 
-	// Try multiple potential endpoints - VPSie API may use different paths
-	endpoints := []string{
-		"/k8s/clusters",       // Standard plural form
-		"/k8s/cluster/list",   // List action pattern
-		"/k8s/cluster",        // Singular form (some APIs use this for list)
-		"/k8s",                // Root K8s endpoint
-		"/apps/v2/k8s",        // Apps v2 prefix pattern
+	// GET /k8s/cluster/all - list all K8s clusters
+	if err := c.get(ctx, "/k8s/cluster/all", &response); err != nil {
+		return nil, fmt.Errorf("failed to list K8s clusters: %w", err)
 	}
 
-	for _, endpoint := range endpoints {
-		response = ListK8sClustersResponse{} // Reset response
-		err := c.get(ctx, endpoint, &response)
-		if err == nil && !response.Error && len(response.Data) > 0 {
-			return response.Data, nil
-		}
-		if err != nil {
-			lastErr = err
-			// Continue trying other endpoints on error
-			continue
-		}
-		if response.Error {
-			lastErr = NewAPIError(response.Code, "ListK8sClustersFailed", response.Message)
-			continue
-		}
+	if response.Error {
+		return nil, NewAPIError(response.Code, "ListK8sClustersFailed", response.Message)
 	}
 
-	if lastErr != nil {
-		return nil, fmt.Errorf("failed to list K8s clusters (tried %d endpoints): %w", len(endpoints), lastErr)
-	}
-	return nil, fmt.Errorf("no K8s clusters found from any endpoint")
+	return response.Data, nil
 }
 
 // GetK8sCluster retrieves details of a specific Kubernetes cluster by identifier.
@@ -1731,27 +1709,6 @@ func (c *Client) FindK8sClusterByName(ctx context.Context, name string) (*K8sClu
 
 	for i := range clusters {
 		if clusters[i].Name == name {
-			return &clusters[i], nil
-		}
-	}
-
-	return nil, nil // Not found
-}
-
-// FindK8sClusterByMasterIP finds a Kubernetes cluster by its master node IP.
-// This is useful when the cluster name is not known but the API server IP is.
-func (c *Client) FindK8sClusterByMasterIP(ctx context.Context, masterIP string) (*K8sCluster, error) {
-	if masterIP == "" {
-		return nil, NewConfigError("master_ip", "Master IP is required")
-	}
-
-	clusters, err := c.ListK8sClusters(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	for i := range clusters {
-		if clusters[i].MasterIP == masterIP {
 			return &clusters[i], nil
 		}
 	}
