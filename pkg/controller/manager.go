@@ -824,8 +824,13 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 
 	cm.logger.Info("Health checks initialized successfully")
 
-	// Load and activate AutoscalerConfig if present
-	cm.loadAndActivateAutoscalerConfig(ctx)
+	// Load and activate AutoscalerConfig after cache is ready
+	go func() {
+		// Wait for cache to be ready by waiting for manager to start
+		<-cm.mgr.Elected()
+		cm.logger.Info("Leader elected, loading AutoscalerConfig")
+		cm.loadAndActivateAutoscalerConfig(ctx)
+	}()
 
 	// Start event watcher for pending pod detection
 	if cm.eventWatcher != nil {
