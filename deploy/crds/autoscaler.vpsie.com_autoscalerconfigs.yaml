@@ -17,6 +17,10 @@ spec:
   scope: Cluster
   versions:
   - additionalPrinterColumns:
+    - description: Max cluster workers
+      jsonPath: .spec.globalSettings.maxClusterWorkers
+      name: MaxWorkers
+      type: integer
     - description: Default min nodes
       jsonPath: .spec.nodeGroupDefaults.minNodes
       name: MinNodes
@@ -81,6 +85,15 @@ spec:
                     description: EnableRebalancing controls whether the autoscaler
                       can rebalance nodes for cost optimization
                     type: boolean
+                  maxClusterWorkers:
+                    default: 10
+                    description: |-
+                      MaxClusterWorkers is the maximum total number of worker nodes allowed across all NodeGroups.
+                      This is a cluster-wide limit that prevents the autoscaler from exceeding VPSie cluster capacity.
+                      Set to 0 for unlimited (not recommended).
+                    format: int32
+                    minimum: 0
+                    type: integer
                   maxConcurrentScaleDowns:
                     default: 1
                     description: MaxConcurrentScaleDowns is the maximum number of

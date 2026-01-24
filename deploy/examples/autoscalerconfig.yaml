@@ -85,6 +85,10 @@ spec:
 
   # GlobalSettings: Cluster-wide autoscaler behavior settings
   globalSettings:
+    # Maximum total worker nodes allowed across all NodeGroups (cluster-wide limit)
+    # This prevents exceeding VPSie cluster capacity limits
+    maxClusterWorkers: 10
+
     # Enable/disable dynamic NodeGroup creation
     enableDynamicNodeGroupCreation: true
 

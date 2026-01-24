@@ -130,6 +130,14 @@ type GlobalAutoscalerSettings struct {
 	// +optional
 	MaxConcurrentScaleDowns int32 `json:"maxConcurrentScaleDowns,omitempty"`
 
+	// MaxClusterWorkers is the maximum total number of worker nodes allowed across all NodeGroups.
+	// This is a cluster-wide limit that prevents the autoscaler from exceeding VPSie cluster capacity.
+	// Set to 0 for unlimited (not recommended).
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:default=10
+	// +optional
+	MaxClusterWorkers int32 `json:"maxClusterWorkers,omitempty"`
+
 	// UnschedulablePodGracePeriodSeconds is how long to wait for a pod to be scheduled
 	// before considering it for scale-up
 	// +kubebuilder:validation:Minimum=0
@@ -182,6 +190,7 @@ type AutoscalerConfigStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=asc
+// +kubebuilder:printcolumn:name="MaxWorkers",type=integer,JSONPath=`.spec.globalSettings.maxClusterWorkers`,description="Max cluster workers"
 // +kubebuilder:printcolumn:name="MinNodes",type=integer,JSONPath=`.spec.nodeGroupDefaults.minNodes`,description="Default min nodes"
 // +kubebuilder:printcolumn:name="MaxNodes",type=integer,JSONPath=`.spec.nodeGroupDefaults.maxNodes`,description="Default max nodes"
 // +kubebuilder:printcolumn:name="DynamicCreation",type=boolean,JSONPath=`.spec.globalSettings.enableDynamicNodeGroupCreation`,description="Dynamic NodeGroup creation enabled"
