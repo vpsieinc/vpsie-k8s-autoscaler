@@ -25,7 +25,7 @@ spec:
 
       containers:
         - name: webhook
-          image: vpsie/k8s-autoscaler-webhook:latest
+          image: vpsieinc/vpsie-k8s-autoscaler-webhook:latest
           imagePullPolicy: IfNotPresent
 
           ports:

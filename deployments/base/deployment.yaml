@@ -47,7 +47,7 @@ spec:
               topologyKey: kubernetes.io/hostname
       containers:
       - name: controller
-        image: ghcr.io/vpsie/vpsie-k8s-autoscaler:v0.4.0-alpha
+        image: ghcr.io/vpsieinc/vpsie-k8s-autoscaler:v0.4.0-alpha
         imagePullPolicy: IfNotPresent
         command:
         - /vpsie-autoscaler

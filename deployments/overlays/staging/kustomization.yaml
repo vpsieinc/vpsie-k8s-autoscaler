@@ -70,7 +70,7 @@ patches:
 
 # Use staging-specific image tag
 images:
-  - name: ghcr.io/vpsie/vpsie-k8s-autoscaler
+  - name: ghcr.io/vpsieinc/vpsie-k8s-autoscaler
     newTag: v0.4.0-alpha
 
 # ConfigMap overrides for staging

@@ -184,7 +184,7 @@ maintainers:
 replicaCount: 1  # Use 2+ for HA with leader election
 
 image:
-  repository: ghcr.io/vpsie/vpsie-k8s-autoscaler
+  repository: ghcr.io/vpsieinc/vpsie-k8s-autoscaler
   pullPolicy: IfNotPresent
   tag: "latest"
 
@@ -396,7 +396,7 @@ spec:
       serviceAccountName: vpsie-autoscaler
       containers:
       - name: controller
-        image: ghcr.io/vpsie/vpsie-k8s-autoscaler:latest
+        image: ghcr.io/vpsieinc/vpsie-k8s-autoscaler:latest
         args:
           - --metrics-addr=:8080
           - --health-addr=:8081
@@ -426,7 +426,7 @@ configMapGenerator:
       - config.yaml
 
 images:
-  - name: ghcr.io/vpsie/vpsie-k8s-autoscaler
+  - name: ghcr.io/vpsieinc/vpsie-k8s-autoscaler
     newTag: v1.0.0
 ```
 

@@ -75,7 +75,7 @@ patches:
 
 # Override image tag for dev (use latest or dev tag)
 images:
-  - name: ghcr.io/vpsie/vpsie-k8s-autoscaler
+  - name: ghcr.io/vpsieinc/vpsie-k8s-autoscaler
     newTag: latest
 
 # ConfigMap overrides for dev

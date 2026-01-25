@@ -94,7 +94,7 @@ patches:
 
 # Use production-specific image tag (pin to specific version)
 images:
-  - name: ghcr.io/vpsie/vpsie-k8s-autoscaler
+  - name: ghcr.io/vpsieinc/vpsie-k8s-autoscaler
     newTag: v0.4.0
 
 # Production ConfigMap

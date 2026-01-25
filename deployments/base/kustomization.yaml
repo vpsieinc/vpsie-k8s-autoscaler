@@ -22,7 +22,7 @@ resources:
 
 # Images to use (can be overridden in overlays)
 images:
-  - name: ghcr.io/vpsie/vpsie-k8s-autoscaler
+  - name: ghcr.io/vpsieinc/vpsie-k8s-autoscaler
     newTag: v0.4.0-alpha
 
 # ConfigMap generator for shared configuration
