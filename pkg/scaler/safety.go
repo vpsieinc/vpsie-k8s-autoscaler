@@ -762,10 +762,11 @@ func matchesNodeAffinity(pod *corev1.Pod, node *corev1.Node) bool {
 //
 // RACE CONDITION NOTE: This function reads existingPod.Spec.NodeName which may change if the pod
 // is being rescheduled concurrently. This is acceptable for scale-down safety checks because:
-// 1. If the pod moves AFTER we check, the scale-down decision remains safe (pod is elsewhere)
-// 2. If the pod moves BEFORE we check but NodeName is stale, we may be overly conservative
-//    (blocking a safe scale-down) but never unsafe
-// 3. The scheduler handles the authoritative pod placement; we only make advisory decisions
+//  1. If the pod moves AFTER we check, the scale-down decision remains safe (pod is elsewhere)
+//  2. If the pod moves BEFORE we check but NodeName is stale, we may be overly conservative
+//     (blocking a safe scale-down) but never unsafe
+//  3. The scheduler handles the authoritative pod placement; we only make advisory decisions
+//
 // For stronger consistency, callers should use informer caches with appropriate resync periods.
 func matchesPodAffinityTerm(existingPod *corev1.Pod, term *corev1.PodAffinityTerm, node *corev1.Node) bool {
 	// Handle nil LabelSelector - cannot match without selector
