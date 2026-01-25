@@ -257,3 +257,82 @@ func ShouldReconcile(ng *v1alpha1.NodeGroup) bool {
 
 	return false
 }
+
+// HasNodesInTransition checks if any VPSieNodes are in a transitional state
+// (not yet Ready or Failed). Returns true if there are nodes being provisioned
+// or joining the cluster.
+func HasNodesInTransition(vpsieNodes []v1alpha1.VPSieNode) bool {
+	for _, vn := range vpsieNodes {
+		switch vn.Status.Phase {
+		case v1alpha1.VPSieNodePhasePending,
+			v1alpha1.VPSieNodePhaseProvisioning,
+			v1alpha1.VPSieNodePhaseProvisioned,
+			v1alpha1.VPSieNodePhaseJoining:
+			// Node is in a transitional state - not yet Ready
+			return true
+		}
+	}
+	return false
+}
+
+// CountNodesInTransition returns the number of VPSieNodes in transitional states
+func CountNodesInTransition(vpsieNodes []v1alpha1.VPSieNode) int {
+	count := 0
+	for _, vn := range vpsieNodes {
+		switch vn.Status.Phase {
+		case v1alpha1.VPSieNodePhasePending,
+			v1alpha1.VPSieNodePhaseProvisioning,
+			v1alpha1.VPSieNodePhaseProvisioned,
+			v1alpha1.VPSieNodePhaseJoining:
+			count++
+		}
+	}
+	return count
+}
+
+// CapacityLimitReachedReason is the condition reason indicating cluster capacity limit was reached
+const CapacityLimitReachedReason = "CapacityLimitReached"
+
+// HasCapacityLimitFailures checks if any VPSieNodes have failed due to capacity limits.
+// This indicates the VPSie cluster has reached its maximum worker node limit and
+// creating more nodes will fail until capacity is freed.
+func HasCapacityLimitFailures(vpsieNodes []v1alpha1.VPSieNode) bool {
+	for _, vn := range vpsieNodes {
+		if vn.Status.Phase == v1alpha1.VPSieNodePhaseFailed {
+			// Check conditions for CapacityLimitReached reason
+			for _, cond := range vn.Status.Conditions {
+				if cond.Reason == CapacityLimitReachedReason {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// CountCapacityLimitFailures returns the number of VPSieNodes that failed due to capacity limits
+func CountCapacityLimitFailures(vpsieNodes []v1alpha1.VPSieNode) int {
+	count := 0
+	for _, vn := range vpsieNodes {
+		if vn.Status.Phase == v1alpha1.VPSieNodePhaseFailed {
+			for _, cond := range vn.Status.Conditions {
+				if cond.Reason == CapacityLimitReachedReason {
+					count++
+					break
+				}
+			}
+		}
+	}
+	return count
+}
+
+// GetFailedVPSieNodes returns all VPSieNodes in Failed state
+func GetFailedVPSieNodes(vpsieNodes []v1alpha1.VPSieNode) []v1alpha1.VPSieNode {
+	var failed []v1alpha1.VPSieNode
+	for _, vn := range vpsieNodes {
+		if vn.Status.Phase == v1alpha1.VPSieNodePhaseFailed {
+			failed = append(failed, vn)
+		}
+	}
+	return failed
+}

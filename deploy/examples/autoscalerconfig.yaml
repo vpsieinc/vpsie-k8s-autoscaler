@@ -1,0 +1,113 @@
+# AutoscalerConfig - Cluster-wide configuration for the VPSie autoscaler
+# This CRD provides defaults for dynamically created NodeGroups and global settings.
+# Only one AutoscalerConfig named "default" should exist per cluster.
+
+apiVersion: autoscaler.vpsie.com/v1alpha1
+kind: AutoscalerConfig
+metadata:
+  name: default
+spec:
+  # NodeGroupDefaults: Default values for dynamically created NodeGroups
+  nodeGroupDefaults:
+    # Namespace where dynamically created NodeGroups will be placed
+    namespace: default
+
+    # Node count limits for dynamic NodeGroups
+    minNodes: 1
+    maxNodes: 5
+
+    # VPSie-specific configuration (required)
+    datacenterID: "your-datacenter-id"
+    resourceIdentifier: "your-cluster-resource-id"
+    project: "your-project-id"
+    kubernetesVersion: "v1.28.0"
+
+    # Available offering IDs (VM sizes)
+    offeringIDs:
+      - "offering-id-1"
+      - "offering-id-2"
+
+    # Custom labels to apply to all dynamically created nodes
+    # These labels are merged with pod NodeSelector labels
+    labels:
+      environment: production
+      managed-by: vpsie-autoscaler
+      team: platform
+
+    # Default taints for dynamic NodeGroups (optional)
+    # taints:
+    #   - key: dedicated
+    #     value: dynamic-workloads
+    #     effect: NoSchedule
+
+    # Scale-up policy configuration
+    scaleUpPolicy:
+      enabled: true
+      stabilizationWindowSeconds: 60
+      cpuThreshold: 80
+      memoryThreshold: 80
+
+    # Scale-down policy configuration
+    scaleDownPolicy:
+      enabled: true
+      stabilizationWindowSeconds: 600
+      cpuThreshold: 50
+      memoryThreshold: 50
+      cooldownSeconds: 600
+
+    # Cost optimization settings (optional)
+    costOptimization:
+      enabled: true
+      strategy: auto
+      optimizationInterval: "24h"
+      minMonthlySavings: 10.0
+      maxPerformanceImpact: 5
+      requireApproval: false
+
+    # SSH keys to install on nodes (optional)
+    # sshKeyIDs:
+    #   - "ssh-key-id-1"
+
+    # Tags for VPSie instances (optional)
+    tags:
+      - "kubernetes"
+      - "autoscaled"
+
+    # Notes for VPSie instances (optional)
+    notes: "Auto-provisioned by VPSie K8s Autoscaler"
+
+    # Spot instance configuration (optional)
+    # spotConfig:
+    #   enabled: false
+    #   maxSpotPercentage: 80
+    #   fallbackToOnDemand: true
+    #   interruptionGracePeriod: "120s"
+
+  # GlobalSettings: Cluster-wide autoscaler behavior settings
+  globalSettings:
+    # Maximum total worker nodes allowed across all NodeGroups (cluster-wide limit)
+    # This prevents exceeding VPSie cluster capacity limits
+    maxClusterWorkers: 10
+
+    # Enable/disable dynamic NodeGroup creation
+    enableDynamicNodeGroupCreation: true
+
+    # Enable/disable cost optimization rebalancing
+    enableRebalancing: true
+
+    # Cooldown periods between scaling operations
+    scaleUpCooldownSeconds: 60
+    scaleDownCooldownSeconds: 300
+
+    # Concurrent scaling limits (sequential scaling = 1)
+    maxConcurrentScaleUps: 1
+    maxConcurrentScaleDowns: 1
+
+    # How long to wait before considering a pod for scale-up
+    unschedulablePodGracePeriodSeconds: 30
+
+    # Timeout for new nodes to become ready
+    nodeReadyTimeoutSeconds: 600
+
+    # Timeout for pod eviction during scale-down
+    podEvictionTimeoutSeconds: 120

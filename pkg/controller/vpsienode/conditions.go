@@ -39,6 +39,10 @@ const (
 	// ReasonProvisioningTimeout indicates provisioning took too long
 	ReasonProvisioningTimeout = "ProvisioningTimeout"
 
+	// ReasonCapacityLimitReached indicates cluster capacity limit was reached
+	// This is a terminal error that won't be resolved by retrying
+	ReasonCapacityLimitReached = "CapacityLimitReached"
+
 	// ReasonJoiningTimeout indicates node joining took too long
 	ReasonJoiningTimeout = "JoiningTimeout"
 
@@ -53,6 +57,9 @@ const (
 
 	// ReasonVPSDeleteFailed indicates VPS deletion failed
 	ReasonVPSDeleteFailed = "VPSDeleteFailed"
+
+	// ReasonTTLExpired indicates the VPSieNode was deleted due to TTL expiration
+	ReasonTTLExpired = "TTLExpired"
 )
 
 // SetCondition sets or updates a condition on the VPSieNode

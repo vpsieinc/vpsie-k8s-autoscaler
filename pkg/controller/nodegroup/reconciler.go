@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 	vpsieclient "github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/client"
 )
 
@@ -208,6 +209,8 @@ func (r *NodeGroupReconciler) reconcile(ctx context.Context, ng *v1alpha1.NodeGr
 }
 
 // reconcileScaleUp handles scaling up the NodeGroup
+// Uses sequential scaling: only creates one node at a time and waits for it to be Ready
+// before creating additional nodes. This prevents over-provisioning and respects cluster limits.
 func (r *NodeGroupReconciler) reconcileScaleUp(
 	ctx context.Context,
 	ng *v1alpha1.NodeGroup,
@@ -221,37 +224,99 @@ func (r *NodeGroupReconciler) reconcileScaleUp(
 		return ctrl.Result{RequeueAfter: DefaultRequeueAfter}, nil
 	}
 
-	logger.Info("Creating new VPSieNodes",
-		zap.Int32("count", nodesToAdd),
-	)
-
-	// Create VPSieNode resources
-	for i := int32(0); i < nodesToAdd; i++ {
-		vpsieNode := r.buildVPSieNode(ng)
-
-		// Set owner reference
-		if err := controllerutil.SetControllerReference(ng, vpsieNode, r.Scheme); err != nil {
-			logger.Error("Failed to set owner reference", zap.Error(err))
-			SetErrorCondition(ng, true, ReasonKubernetesAPIError, fmt.Sprintf("Failed to set owner reference: %v", err))
-			return ctrl.Result{}, err
-		}
-
-		// Create the VPSieNode
-		if err := r.Create(ctx, vpsieNode); err != nil {
-			logger.Error("Failed to create VPSieNode",
-				zap.String("vpsienode", vpsieNode.Name),
-				zap.Error(err),
-			)
-			SetErrorCondition(ng, true, ReasonNodeProvisioningFailed, fmt.Sprintf("Failed to create VPSieNode: %v", err))
-			return ctrl.Result{}, err
-		}
-
-		logger.Info("Created VPSieNode",
-			zap.String("vpsienode", vpsieNode.Name),
+	// Check for capacity limit failures - if VPSie cluster has reached its worker limit,
+	// don't try to create more nodes as they will just fail
+	capacityLimitFailures := CountCapacityLimitFailures(vpsieNodes)
+	if capacityLimitFailures > 0 {
+		logger.Warn("VPSie cluster capacity limit reached - pausing node creation",
+			zap.Int("failedNodes", capacityLimitFailures),
+			zap.Int32("desiredNodes", ng.Status.DesiredNodes),
+			zap.Int32("currentNodes", ng.Status.CurrentNodes),
 		)
+
+		// Set error condition on NodeGroup
+		SetErrorCondition(ng, true, ReasonClusterCapacityLimitReached,
+			fmt.Sprintf("VPSie cluster has reached its worker node limit. %d node(s) failed to provision. "+
+				"Delete existing workers or increase cluster limits to continue scaling.", capacityLimitFailures))
+
+		// Record event
+		r.Recorder.Eventf(ng, corev1.EventTypeWarning, "CapacityLimitReached",
+			"VPSie cluster capacity limit reached. %d node(s) failed to provision. Node creation paused.",
+			capacityLimitFailures)
+
+		// Clean up the failed VPSieNodes since they can't be recovered
+		failedNodes := GetFailedVPSieNodes(vpsieNodes)
+		for _, vn := range failedNodes {
+			// Only delete nodes that failed due to capacity limits
+			for _, cond := range vn.Status.Conditions {
+				if cond.Reason == CapacityLimitReachedReason {
+					logger.Info("Cleaning up failed VPSieNode (capacity limit)",
+						zap.String("vpsienode", vn.Name),
+					)
+					if err := r.Delete(ctx, &vn); err != nil {
+						logger.Error("Failed to delete failed VPSieNode",
+							zap.String("vpsienode", vn.Name),
+							zap.Error(err),
+						)
+					}
+					break
+				}
+			}
+		}
+
+		// Requeue with longer interval - capacity limit won't resolve quickly
+		return ctrl.Result{RequeueAfter: DefaultRequeueAfter * 2}, nil
 	}
 
-	// Requeue to check progress
+	// Sequential scaling: check if any nodes are still in transition (not yet Ready)
+	// If so, wait for them to be Ready before creating more nodes
+	nodesInTransition := CountNodesInTransition(vpsieNodes)
+	if nodesInTransition > 0 {
+		logger.Info("Waiting for nodes in transition to be Ready before scaling up",
+			zap.Int("nodesInTransition", nodesInTransition),
+			zap.Int32("totalNodesToAdd", nodesToAdd),
+			zap.Int32("currentNodes", ng.Status.CurrentNodes),
+			zap.Int32("readyNodes", ng.Status.ReadyNodes),
+			zap.Int32("desiredNodes", ng.Status.DesiredNodes),
+		)
+		// Requeue with fast interval to check when nodes become Ready
+		return ctrl.Result{RequeueAfter: FastRequeueAfter}, nil
+	}
+
+	// Sequential scaling: only create ONE node at a time
+	// After this node becomes Ready, the reconciler will run again and create the next one
+	logger.Info("Creating new VPSieNode (sequential scaling: 1 at a time)",
+		zap.Int32("remainingToAdd", nodesToAdd),
+		zap.Int32("currentNodes", ng.Status.CurrentNodes),
+		zap.Int32("desiredNodes", ng.Status.DesiredNodes),
+	)
+
+	vpsieNode := r.buildVPSieNode(ng)
+
+	// Set owner reference
+	if err := controllerutil.SetControllerReference(ng, vpsieNode, r.Scheme); err != nil {
+		logger.Error("Failed to set owner reference", zap.Error(err))
+		SetErrorCondition(ng, true, ReasonKubernetesAPIError, fmt.Sprintf("Failed to set owner reference: %v", err))
+		return ctrl.Result{}, err
+	}
+
+	// Create the VPSieNode
+	if err := r.Create(ctx, vpsieNode); err != nil {
+		logger.Error("Failed to create VPSieNode",
+			zap.String("vpsienode", vpsieNode.Name),
+			zap.Error(err),
+		)
+		SetErrorCondition(ng, true, ReasonNodeProvisioningFailed, fmt.Sprintf("Failed to create VPSieNode: %v", err))
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("Created VPSieNode, waiting for it to be Ready before creating more",
+		zap.String("vpsienode", vpsieNode.Name),
+		zap.Int32("remainingAfterThis", nodesToAdd-1),
+	)
+
+	// Requeue to check progress - the next reconcile will create another node
+	// once this one is Ready
 	return ctrl.Result{RequeueAfter: FastRequeueAfter}, nil
 }
 
@@ -307,20 +372,60 @@ func (r *NodeGroupReconciler) reconcileIntelligentScaleDown(
 	// After successful drain, delete the corresponding VPSieNode CRs
 	// The VPSieNode controller will handle VM termination and K8s node deletion
 
-	// Build map for O(1) lookup instead of O(n*m) nested loops
+	// Build maps for O(1) lookup instead of O(n*m) nested loops
+	// Map by Status.NodeName (set when node joins K8s cluster)
 	vpsieNodeByNodeName := make(map[string]*v1alpha1.VPSieNode)
+	// Fallback map by Spec.NodeName (hostname from VPSie)
+	vpsieNodeBySpecName := make(map[string]*v1alpha1.VPSieNode)
+	// Fallback map by Status.Hostname (VPSie hostname)
+	vpsieNodeByHostname := make(map[string]*v1alpha1.VPSieNode)
+
 	for i := range vpsieNodes {
-		if nodeName := vpsieNodes[i].Status.NodeName; nodeName != "" {
-			vpsieNodeByNodeName[nodeName] = &vpsieNodes[i]
+		vn := &vpsieNodes[i]
+		if vn.Status.NodeName != "" {
+			vpsieNodeByNodeName[vn.Status.NodeName] = vn
+		}
+		if vn.Spec.NodeName != "" {
+			vpsieNodeBySpecName[vn.Spec.NodeName] = vn
+		}
+		if vn.Status.Hostname != "" {
+			vpsieNodeByHostname[vn.Status.Hostname] = vn
 		}
 	}
+
+	logger.Debug("Built VPSieNode lookup maps",
+		zap.Int("byNodeName", len(vpsieNodeByNodeName)),
+		zap.Int("bySpecName", len(vpsieNodeBySpecName)),
+		zap.Int("byHostname", len(vpsieNodeByHostname)),
+	)
 
 	deletedCount := 0
 	var deletionErrors []error
 	for _, candidate := range candidates {
-		// Find the VPSieNode CR for this node using map lookup
-		vn, ok := vpsieNodeByNodeName[candidate.Node.Name]
+		nodeName := candidate.Node.Name
+
+		// Find the VPSieNode CR for this node using multiple lookup strategies
+		vn, ok := vpsieNodeByNodeName[nodeName]
 		if !ok {
+			// Fallback: try Spec.NodeName
+			vn, ok = vpsieNodeBySpecName[nodeName]
+		}
+		if !ok {
+			// Fallback: try Status.Hostname
+			vn, ok = vpsieNodeByHostname[nodeName]
+		}
+		if !ok {
+			// CRITICAL: Log when we can't find a VPSieNode for a drained node
+			logger.Error("CRITICAL: Cannot find VPSieNode for drained node - VPS will NOT be deleted!",
+				zap.String("drainedNodeName", nodeName),
+				zap.Int("totalVPSieNodes", len(vpsieNodes)),
+			)
+			// Record metric for this failure
+			metrics.ScaleDownErrorsTotal.WithLabelValues(
+				ng.Name,
+				ng.Namespace,
+				"vpsienode_not_found",
+			).Inc()
 			continue
 		}
 

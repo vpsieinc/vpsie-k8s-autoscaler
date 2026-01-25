@@ -124,6 +124,32 @@ func addFlags(cmd *cobra.Command, opts *controller.Options) {
 		"Log format (json, console)")
 	flags.BoolVar(&opts.DevelopmentMode, "development", opts.DevelopmentMode,
 		"Enable development mode with verbose logging")
+
+	// VPSieNode garbage collection
+	flags.DurationVar(&opts.FailedVPSieNodeTTL, "failed-vpsienode-ttl", opts.FailedVPSieNodeTTL,
+		"Duration after which failed VPSieNodes are automatically deleted (0 to disable)")
+
+	// Webhook configuration
+	flags.BoolVar(&opts.EnableWebhook, "enable-webhook", opts.EnableWebhook,
+		"Enable validating webhook server for namespace enforcement")
+	flags.StringVar(&opts.WebhookAddr, "webhook-addr", opts.WebhookAddr,
+		"Address for the webhook server to bind to")
+	flags.StringVar(&opts.WebhookCertDir, "webhook-cert-dir", opts.WebhookCertDir,
+		"Directory containing TLS certificates for the webhook")
+	flags.StringVar(&opts.WebhookCertFile, "webhook-cert-file", opts.WebhookCertFile,
+		"Name of the TLS certificate file")
+	flags.StringVar(&opts.WebhookKeyFile, "webhook-key-file", opts.WebhookKeyFile,
+		"Name of the TLS key file")
+
+	// Sentry tracing configuration
+	flags.StringVar(&opts.SentryDSN, "sentry-dsn", opts.SentryDSN,
+		"Sentry DSN for error tracking and performance monitoring (can also use SENTRY_DSN env var)")
+	flags.StringVar(&opts.SentryEnvironment, "sentry-environment", opts.SentryEnvironment,
+		"Sentry environment name (e.g., production, staging)")
+	flags.Float64Var(&opts.SentryTracesSampleRate, "sentry-traces-sample-rate", opts.SentryTracesSampleRate,
+		"Sample rate for Sentry performance traces (0.0 to 1.0)")
+	flags.Float64Var(&opts.SentryErrorSampleRate, "sentry-error-sample-rate", opts.SentryErrorSampleRate,
+		"Sample rate for Sentry error events (0.0 to 1.0)")
 }
 
 // run starts the controller manager

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -249,3 +251,256 @@ func TestExecutor_ProvisioningErrorHandling(t *testing.T) {
 
 // Note: Additional integration tests for cordon, delete, rollback, pause/resume
 // would require more complex test setups and are better suited for integration tests
+
+// =============================================================================
+// Enhanced Scale-Down Safety Tests - Design Doc: enhanced-scale-down-safety-design.md
+// Generated: 2026-01-11 | Budget Used: 2 unit tests for executor.go
+// =============================================================================
+
+// TestSameNodeGroupProtection tests the same-nodegroup protection in rebalancer executor.
+// AC5: "Rebalancer does not terminate nodes when target nodegroup equals current nodegroup"
+func TestSameNodeGroupProtection(t *testing.T) {
+	// AC5: Same-NodeGroup Protection - SKIP scenario
+	// ROI: 64 | Business Value: 8 (prevents unnecessary churn) | Frequency: 4 (edge case)
+	// Behavior: Plan nodegroup == node's nodegroup AND same offering → Termination SKIPPED
+	// @category: core-functionality
+	// @dependency: Executor.executeRollingBatch, getNodeGroupFromNode (new)
+	// @complexity: medium
+	t.Run("AC5: Termination skipped when same nodegroup with same offering", func(t *testing.T) {
+		// Arrange:
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node-1",
+				Labels: map[string]string{
+					"autoscaler.vpsie.com/nodegroup": "test-ng",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+			},
+		}
+
+		fakeClient := fake.NewSimpleClientset(node)
+		executor := NewExecutor(fakeClient, nil, &ExecutorConfig{
+			DrainTimeout:        5 * time.Minute,
+			ProvisionTimeout:    10 * time.Minute,
+			HealthCheckInterval: 10 * time.Second,
+			MaxRetries:          3,
+		})
+
+		plan := &RebalancePlan{
+			ID:            "test-plan-same-ng",
+			NodeGroupName: "test-ng", // SAME as node's nodegroup
+			Namespace:     "default",
+			Strategy:      StrategyRolling,
+			Batches: []NodeBatch{
+				{
+					BatchNumber: 1,
+					Nodes: []CandidateNode{
+						{
+							NodeName:        "test-node-1",
+							CurrentOffering: "offering-standard-2-4",
+							TargetOffering:  "offering-standard-2-4", // SAME as current
+						},
+					},
+				},
+			},
+		}
+
+		state := &ExecutionState{
+			PlanID:           plan.ID,
+			Status:           StatusInProgress,
+			CurrentBatch:     0,
+			CompletedNodes:   make([]string, 0),
+			FailedNodes:      make([]NodeFailure, 0),
+			ProvisionedNodes: make([]string, 0),
+			StartedAt:        time.Now(),
+		}
+
+		// Act:
+		result, err := executor.executeRollingBatch(context.TODO(), plan, &plan.Batches[0], state)
+
+		// Assert:
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+		if result.NodesFailed != 0 {
+			t.Errorf("Expected NodesFailed=0 (operation skipped), got %d", result.NodesFailed)
+		}
+		if result.NodesRebalanced != 0 {
+			t.Errorf("Expected NodesRebalanced=0 (operation skipped), got %d", result.NodesRebalanced)
+		}
+		// Verify no nodes were added to failed or completed lists
+		if len(result.FailedNodes) != 0 {
+			t.Errorf("Expected no failed nodes, got %d", len(result.FailedNodes))
+		}
+		if len(result.CompletedNodes) != 0 {
+			t.Errorf("Expected no completed nodes, got %d", len(result.CompletedNodes))
+		}
+	})
+
+	// AC5: Different-NodeGroup - PROCEED scenario
+	// ROI: 68 | Business Value: 7 (correct behavior) | Frequency: 6 (normal case)
+	// Behavior: Plan nodegroup != node's nodegroup → Termination PROCEEDS
+	// @category: core-functionality
+	// @dependency: Executor.executeRollingBatch, getNodeGroupFromNode (new)
+	// @complexity: medium
+	t.Run("AC5: Termination proceeds when different nodegroup", func(t *testing.T) {
+		// Arrange:
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node-1",
+				Labels: map[string]string{
+					"autoscaler.vpsie.com/nodegroup": "source-ng", // Source nodegroup
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+			},
+		}
+
+		fakeClient := fake.NewSimpleClientset(node)
+		executor := NewExecutor(fakeClient, nil, &ExecutorConfig{
+			DrainTimeout:        5 * time.Minute,
+			ProvisionTimeout:    10 * time.Minute,
+			HealthCheckInterval: 10 * time.Second,
+			MaxRetries:          3,
+		})
+
+		plan := &RebalancePlan{
+			ID:            "test-plan-diff-ng",
+			NodeGroupName: "target-ng", // DIFFERENT from node's nodegroup
+			Namespace:     "default",
+			Strategy:      StrategyRolling,
+			Batches: []NodeBatch{
+				{
+					BatchNumber: 1,
+					Nodes: []CandidateNode{
+						{
+							NodeName:        "test-node-1",
+							CurrentOffering: "offering-standard-2-4",
+							TargetOffering:  "offering-standard-4-8",
+						},
+					},
+				},
+			},
+		}
+
+		state := &ExecutionState{
+			PlanID:           plan.ID,
+			Status:           StatusInProgress,
+			CurrentBatch:     0,
+			CompletedNodes:   make([]string, 0),
+			FailedNodes:      make([]NodeFailure, 0),
+			ProvisionedNodes: make([]string, 0),
+			StartedAt:        time.Now(),
+		}
+
+		// Act:
+		result, err := executor.executeRollingBatch(context.TODO(), plan, &plan.Batches[0], state)
+
+		// Assert:
+		// The execution should proceed (and fail at provisioning since it's not implemented)
+		// This verifies the guard clause does NOT block different-nodegroup operations
+		if err != nil {
+			t.Fatalf("Expected no error from executeRollingBatch, got: %v", err)
+		}
+		if result.NodesFailed != 1 {
+			t.Errorf("Expected NodesFailed=1 (should fail at provisioning), got %d", result.NodesFailed)
+		}
+		// Verify the failure is at "provision" stage, not blocked by same-nodegroup check
+		if len(result.FailedNodes) != 1 {
+			t.Fatalf("Expected 1 failed node, got %d", len(result.FailedNodes))
+		}
+		if result.FailedNodes[0].Operation != "provision" {
+			t.Errorf("Expected failure at 'provision' stage, got '%s'", result.FailedNodes[0].Operation)
+		}
+	})
+
+	// AC5: Same NodeGroup but Different Offering - PROCEED scenario
+	// ROI: 60 | Business Value: 7 (right-sizing use case) | Frequency: 5
+	// Behavior: Plan nodegroup == node's nodegroup BUT different offering → Termination PROCEEDS
+	// @category: core-functionality
+	// @dependency: Executor.executeRollingBatch, getNodeGroupFromNode (new)
+	// @complexity: medium
+	t.Run("AC5: Termination proceeds when same nodegroup but different offering (right-sizing)", func(t *testing.T) {
+		// Arrange:
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node-1",
+				Labels: map[string]string{
+					"autoscaler.vpsie.com/nodegroup": "test-ng",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+			},
+		}
+
+		fakeClient := fake.NewSimpleClientset(node)
+		executor := NewExecutor(fakeClient, nil, &ExecutorConfig{
+			DrainTimeout:        5 * time.Minute,
+			ProvisionTimeout:    10 * time.Minute,
+			HealthCheckInterval: 10 * time.Second,
+			MaxRetries:          3,
+		})
+
+		plan := &RebalancePlan{
+			ID:            "test-plan-right-sizing",
+			NodeGroupName: "test-ng", // SAME as node's nodegroup
+			Namespace:     "default",
+			Strategy:      StrategyRolling,
+			Batches: []NodeBatch{
+				{
+					BatchNumber: 1,
+					Nodes: []CandidateNode{
+						{
+							NodeName:        "test-node-1",
+							CurrentOffering: "offering-standard-4-8",
+							TargetOffering:  "offering-standard-2-4", // DIFFERENT - downsizing
+						},
+					},
+				},
+			},
+		}
+
+		state := &ExecutionState{
+			PlanID:           plan.ID,
+			Status:           StatusInProgress,
+			CurrentBatch:     0,
+			CompletedNodes:   make([]string, 0),
+			FailedNodes:      make([]NodeFailure, 0),
+			ProvisionedNodes: make([]string, 0),
+			StartedAt:        time.Now(),
+		}
+
+		// Act:
+		result, err := executor.executeRollingBatch(context.TODO(), plan, &plan.Batches[0], state)
+
+		// Assert:
+		// - Verify normal rebalance flow is attempted (this is a valid right-sizing operation)
+		// - Verify the guard clause does NOT block execution
+		if err != nil {
+			t.Fatalf("Expected no error from executeRollingBatch, got: %v", err)
+		}
+		if result.NodesFailed != 1 {
+			t.Errorf("Expected NodesFailed=1 (should fail at provisioning), got %d", result.NodesFailed)
+		}
+		// Verify the failure is at "provision" stage, not blocked by same-nodegroup check
+		if len(result.FailedNodes) != 1 {
+			t.Fatalf("Expected 1 failed node, got %d", len(result.FailedNodes))
+		}
+		if result.FailedNodes[0].Operation != "provision" {
+			t.Errorf("Expected failure at 'provision' stage, got '%s'", result.FailedNodes[0].Operation)
+		}
+	})
+}

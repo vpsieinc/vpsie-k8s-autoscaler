@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 
 	autoscalerv1alpha1 "github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/tracing"
 )
 
 const (
@@ -140,6 +141,14 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 // handleNodeGroupValidation handles NodeGroup validation requests
 func (s *Server) handleNodeGroupValidation(w http.ResponseWriter, r *http.Request) {
+	// Start Sentry transaction for tracing
+	ctx, span := tracing.StartTransaction(r.Context(), "webhook.validateNodeGroup", "webhook.validate")
+	if span != nil {
+		span.SetTag("webhook.type", "nodegroup")
+		defer span.Finish()
+	}
+	_ = ctx // ctx available for future use
+
 	s.logger.Debug("received NodeGroup validation request")
 
 	// Layer 1: Validate Content-Type
@@ -197,6 +206,14 @@ func (s *Server) handleNodeGroupValidation(w http.ResponseWriter, r *http.Reques
 
 // handleVPSieNodeValidation handles VPSieNode validation requests
 func (s *Server) handleVPSieNodeValidation(w http.ResponseWriter, r *http.Request) {
+	// Start Sentry transaction for tracing
+	ctx, span := tracing.StartTransaction(r.Context(), "webhook.validateVPSieNode", "webhook.validate")
+	if span != nil {
+		span.SetTag("webhook.type", "vpsienode")
+		defer span.Finish()
+	}
+	_ = ctx // ctx available for future use
+
 	s.logger.Debug("received VPSieNode validation request")
 
 	// Layer 1: Validate Content-Type
@@ -361,6 +378,14 @@ func (s *Server) validateVPSieNode(req *admissionv1.AdmissionRequest) *admission
 // handleNodeDeletionValidation handles node deletion validation requests
 // This addresses Fix #8: RBAC Protection - prevents deletion of non-managed nodes
 func (s *Server) handleNodeDeletionValidation(w http.ResponseWriter, r *http.Request) {
+	// Start Sentry transaction for tracing
+	ctx, span := tracing.StartTransaction(r.Context(), "webhook.validateNodeDeletion", "webhook.validate")
+	if span != nil {
+		span.SetTag("webhook.type", "node-deletion")
+		defer span.Finish()
+	}
+	_ = ctx // ctx available for future use
+
 	s.logger.Debug("received node deletion validation request")
 
 	// Layer 1: Validate Content-Type

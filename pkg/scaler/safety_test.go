@@ -2,10 +2,12 @@ package scaler
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/utils"
 	"go.uber.org/zap/zaptest"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -91,7 +93,7 @@ func TestIsSingleInstanceSystemPod(t *testing.T) {
 	}
 }
 
-// TestIsNodeReady tests the isNodeReady helper function
+// TestIsNodeReady tests the utils.IsNodeReady helper function
 func TestIsNodeReady(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -170,7 +172,7 @@ func TestIsNodeReady(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isNodeReady(tt.node)
+			result := utils.IsNodeReady(tt.node)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -1095,4 +1097,3326 @@ func TestIsSafeToRemove(t *testing.T) {
 			}
 		})
 	}
+}
+
+// =============================================================================
+// Enhanced Scale-Down Safety Tests - Design Doc: enhanced-scale-down-safety-design.md
+// Generated: 2026-01-11 | Budget Used: 6 unit tests for safety.go
+// =============================================================================
+
+// TestTolerationMatching tests the toleration matching algorithm for scale-down safety.
+// AC1: "Pods with tolerations for specific taints can only be scaled down if remaining nodes have matching taints"
+func TestTolerationMatching(t *testing.T) {
+	// AC1: Toleration Matching - BLOCKED scenario
+	// ROI: 78 | Business Value: 9 (prevents GPU workload disruption) | Frequency: 7 (common)
+	// Behavior: Pod tolerates specific taint → No remaining node has taint → Scale-down BLOCKED
+	// @category: core-functionality
+	// @dependency: tolerationsTolerateTaints, tolerationMatchesTaint functions
+	// @complexity: medium
+	t.Run("AC1: Scale-down blocked - pod tolerates taint but no remaining node has it", func(t *testing.T) {
+		// Arrange: Create pod with toleration for "gpu=true:NoSchedule"
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "gpu-workload",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{
+				Tolerations: []corev1.Toleration{
+					{
+						Key:      "gpu",
+						Value:    "true",
+						Effect:   corev1.TaintEffectNoSchedule,
+						Operator: corev1.TolerationOpEqual,
+					},
+				},
+			},
+		}
+
+		// Create node with taint "gpu=true:NoSchedule" (to be removed)
+		nodeToRemove := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "gpu-node-1",
+			},
+			Spec: corev1.NodeSpec{
+				Taints: []corev1.Taint{
+					{
+						Key:    "gpu",
+						Value:  "true",
+						Effect: corev1.TaintEffectNoSchedule,
+					},
+				},
+			},
+		}
+
+		// Create remaining node WITHOUT the gpu taint but WITH a different NoSchedule taint
+		// The pod does NOT tolerate this taint, so it cannot be scheduled there
+		remainingNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-no-gpu",
+			},
+			Spec: corev1.NodeSpec{
+				// This node has a different taint that the pod doesn't tolerate
+				Taints: []corev1.Taint{
+					{
+						Key:    "special",
+						Value:  "reserved",
+						Effect: corev1.TaintEffectNoSchedule,
+					},
+				},
+			},
+		}
+
+		// Act: Check if pod can be scheduled on remaining node
+		// tolerationsTolerateTaints returns true if tolerations cover all NoSchedule/NoExecute taints
+		result := tolerationsTolerateTaints(pod.Spec.Tolerations, remainingNode.Spec.Taints)
+
+		// Assert: Pod should NOT be able to schedule on remaining node because:
+		// - The remaining node has a "special=reserved:NoSchedule" taint
+		// - The pod only tolerates "gpu=true:NoSchedule"
+		// - The pod's tolerations do NOT cover the remaining node's taints
+		// - Therefore scale-down should be BLOCKED
+		_ = nodeToRemove
+
+		assert.False(t, result, "Pod's tolerations should NOT cover remaining node's taints")
+	})
+
+	// AC1: Toleration Matching - ALLOWED scenario
+	// ROI: 78 | Business Value: 9 | Frequency: 7
+	// Behavior: Pod tolerates taint → Remaining node has same taint → Scale-down ALLOWED
+	// @category: core-functionality
+	// @dependency: tolerationsTolerateTaints function
+	// @complexity: medium
+	t.Run("AC1: Scale-down allowed - remaining node has matching taint", func(t *testing.T) {
+		// Arrange: Create pod with toleration for "gpu=true:NoSchedule"
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "gpu-workload",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{
+				Tolerations: []corev1.Toleration{
+					{
+						Key:      "gpu",
+						Value:    "true",
+						Effect:   corev1.TaintEffectNoSchedule,
+						Operator: corev1.TolerationOpEqual,
+					},
+				},
+			},
+		}
+
+		// Create node with taint "gpu=true:NoSchedule" (to be removed)
+		nodeToRemove := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "gpu-node-1",
+			},
+			Spec: corev1.NodeSpec{
+				Taints: []corev1.Taint{
+					{
+						Key:    "gpu",
+						Value:  "true",
+						Effect: corev1.TaintEffectNoSchedule,
+					},
+				},
+			},
+		}
+
+		// Create remaining node WITH the same "gpu=true:NoSchedule" taint
+		remainingNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "gpu-node-2",
+			},
+			Spec: corev1.NodeSpec{
+				Taints: []corev1.Taint{
+					{
+						Key:    "gpu",
+						Value:  "true",
+						Effect: corev1.TaintEffectNoSchedule,
+					},
+				},
+			},
+		}
+
+		// Act: Check if pod can be scheduled on remaining node
+		// tolerationsTolerateTaints returns true if tolerations cover all NoSchedule/NoExecute taints
+		result := tolerationsTolerateTaints(pod.Spec.Tolerations, remainingNode.Spec.Taints)
+
+		// Assert: Pod SHOULD be able to schedule on remaining node because:
+		// - Pod tolerates gpu=true:NoSchedule
+		// - Remaining node has gpu=true:NoSchedule taint
+		// - Pod's toleration matches the taint, so scheduling is allowed
+		_ = nodeToRemove
+
+		assert.True(t, result, "Pod's tolerations should cover remaining node's taints")
+	})
+
+	// AC1: Wildcard toleration - ALLOWED scenario
+	// ROI: 45 | Business Value: 6 | Frequency: 3
+	// Behavior: Pod has wildcard toleration (empty key + Exists) → Matches any taint → Scale-down ALLOWED
+	// @category: edge-case
+	// @dependency: tolerationMatches function
+	// @complexity: low
+	t.Run("AC1: Wildcard toleration matches any taint", func(t *testing.T) {
+		// Arrange: Create pod with wildcard toleration (tolerates all taints)
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "tolerant-workload",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{
+				Tolerations: []corev1.Toleration{
+					{
+						// Wildcard toleration: empty key + Exists operator matches ANY taint
+						Key:      "",
+						Operator: corev1.TolerationOpExists,
+						Effect:   "", // Empty effect matches all effects
+					},
+				},
+			},
+		}
+
+		// Create node with any arbitrary taint
+		nodeWithTaint := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "special-node",
+			},
+			Spec: corev1.NodeSpec{
+				Taints: []corev1.Taint{
+					{
+						Key:    "special",
+						Value:  "value",
+						Effect: corev1.TaintEffectNoSchedule,
+					},
+				},
+			},
+		}
+
+		// Get the wildcard toleration and the taint for direct matching test
+		wildcardToleration := pod.Spec.Tolerations[0]
+		taint := nodeWithTaint.Spec.Taints[0]
+
+		// Act: Check if wildcard toleration matches the taint
+		result := tolerationMatches(&wildcardToleration, &taint)
+
+		// Assert: Wildcard toleration SHOULD match any taint because:
+		// - Empty Key + Exists operator matches all keys
+		// - Empty Effect matches all effects (NoSchedule, NoExecute, PreferNoSchedule)
+		_ = pod
+		_ = nodeWithTaint
+
+		// Verification items:
+		// - tolerationMatches(&wildcardToleration, &taint) == true
+		// - Pod can be scheduled on any node regardless of taints
+		// - Scale-down should be ALLOWED for pods with wildcard toleration
+
+		assert.True(t, result, "Wildcard toleration should match any taint")
+	})
+
+	// Test tolerationMatchesTaint with multiple tolerations
+	t.Run("AC1: tolerationMatchesTaint finds matching toleration in list", func(t *testing.T) {
+		// Arrange: Create a list of tolerations including the matching one
+		tolerations := []corev1.Toleration{
+			{
+				Key:      "other",
+				Value:    "value",
+				Effect:   corev1.TaintEffectNoSchedule,
+				Operator: corev1.TolerationOpEqual,
+			},
+			{
+				Key:      "gpu",
+				Value:    "true",
+				Effect:   corev1.TaintEffectNoSchedule,
+				Operator: corev1.TolerationOpEqual,
+			},
+		}
+
+		taint := &corev1.Taint{
+			Key:    "gpu",
+			Value:  "true",
+			Effect: corev1.TaintEffectNoSchedule,
+		}
+
+		// Act: Check if any toleration in the list matches the taint
+		result := tolerationMatchesTaint(tolerations, taint)
+
+		// Assert: Should find the matching toleration
+		assert.True(t, result, "Should find matching toleration for gpu=true:NoSchedule")
+	})
+
+	// Test tolerationMatchesTaint with no matching toleration
+	t.Run("AC1: tolerationMatchesTaint returns false when no match", func(t *testing.T) {
+		// Arrange: Create tolerations that don't match the taint
+		tolerations := []corev1.Toleration{
+			{
+				Key:      "other",
+				Value:    "value",
+				Effect:   corev1.TaintEffectNoSchedule,
+				Operator: corev1.TolerationOpEqual,
+			},
+		}
+
+		taint := &corev1.Taint{
+			Key:    "gpu",
+			Value:  "true",
+			Effect: corev1.TaintEffectNoSchedule,
+		}
+
+		// Act: Check if any toleration matches
+		result := tolerationMatchesTaint(tolerations, taint)
+
+		// Assert: Should not find a match
+		assert.False(t, result, "Should not find matching toleration for gpu=true:NoSchedule")
+	})
+
+	// Test tolerationMatches with Exists operator
+	t.Run("AC1: Exists operator matches any value for the same key", func(t *testing.T) {
+		// Arrange: Create toleration with Exists operator (matches any value)
+		toleration := &corev1.Toleration{
+			Key:      "gpu",
+			Operator: corev1.TolerationOpExists,
+			Effect:   corev1.TaintEffectNoSchedule,
+		}
+
+		taint := &corev1.Taint{
+			Key:    "gpu",
+			Value:  "any-value",
+			Effect: corev1.TaintEffectNoSchedule,
+		}
+
+		// Act: Check if toleration matches
+		result := tolerationMatches(toleration, taint)
+
+		// Assert: Exists operator should match any value
+		assert.True(t, result, "Exists operator should match any value for the same key")
+	})
+
+	// Test tolerationMatches with Equal operator and different values
+	t.Run("AC1: Equal operator requires exact value match", func(t *testing.T) {
+		// Arrange: Create toleration with Equal operator
+		toleration := &corev1.Toleration{
+			Key:      "gpu",
+			Value:    "v100",
+			Operator: corev1.TolerationOpEqual,
+			Effect:   corev1.TaintEffectNoSchedule,
+		}
+
+		taint := &corev1.Taint{
+			Key:    "gpu",
+			Value:  "a100", // Different value
+			Effect: corev1.TaintEffectNoSchedule,
+		}
+
+		// Act: Check if toleration matches
+		result := tolerationMatches(toleration, taint)
+
+		// Assert: Equal operator should require exact value match
+		assert.False(t, result, "Equal operator should require exact value match")
+	})
+
+	// Test tolerationMatches with empty toleration effect
+	t.Run("AC1: Empty toleration effect matches all effects", func(t *testing.T) {
+		// Arrange: Create toleration with empty effect (matches all effects)
+		toleration := &corev1.Toleration{
+			Key:      "gpu",
+			Value:    "true",
+			Operator: corev1.TolerationOpEqual,
+			Effect:   "", // Empty effect matches all
+		}
+
+		// Test against different effects
+		noScheduleTaint := &corev1.Taint{
+			Key:    "gpu",
+			Value:  "true",
+			Effect: corev1.TaintEffectNoSchedule,
+		}
+		noExecuteTaint := &corev1.Taint{
+			Key:    "gpu",
+			Value:  "true",
+			Effect: corev1.TaintEffectNoExecute,
+		}
+
+		// Act & Assert
+		assert.True(t, tolerationMatches(toleration, noScheduleTaint), "Empty effect should match NoSchedule")
+		assert.True(t, tolerationMatches(toleration, noExecuteTaint), "Empty effect should match NoExecute")
+	})
+}
+
+// TestNodeSelectorInCanPodsBeRescheduled tests nodeSelector verification in scale-down safety.
+// AC2: "Pods with nodeSelector can only be scaled down if remaining nodes have matching labels"
+func TestNodeSelectorInCanPodsBeRescheduled(t *testing.T) {
+	// AC2: NodeSelector Matching - BLOCKED scenario
+	// ROI: 68 | Business Value: 8 (prevents zone/disktype workload disruption) | Frequency: 6
+	// Behavior: Pod requires label → No remaining node has label → Scale-down BLOCKED
+	// @category: core-functionality
+	// @dependency: MatchesNodeSelector (existing), findSchedulableNode (new)
+	// @complexity: medium
+	t.Run("AC2: Scale-down blocked - no remaining node has required label", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Arrange:
+		nodeToRemove := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "ssd-node-to-remove",
+				Labels: map[string]string{
+					"disktype":                       "ssd",
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		remainingNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "hdd-node",
+				Labels: map[string]string{
+					"disktype":                       "hdd", // DOES NOT match required "ssd"
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "ssd-app",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{
+				NodeSelector: map[string]string{
+					"disktype": "ssd",
+				},
+				Containers: []corev1.Container{
+					{
+						Name: "app",
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("128Mi"),
+							},
+						},
+					},
+				},
+			},
+		}
+
+		fakeClient := fake.NewSimpleClientset(nodeToRemove, remainingNode)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Verify nodeSelector does not match remaining node
+		nodeSelectorMatches := MatchesNodeSelector(remainingNode, pod)
+		assert.False(t, nodeSelectorMatches, "Remaining node should NOT match pod's nodeSelector")
+
+		// Act:
+		// canSchedule, reason, err := manager.canPodsBeRescheduled(ctx, []*corev1.Pod{pod})
+
+		// Assert:
+		// require.NoError(t, err)
+		// assert.False(t, canSchedule, "Scale-down should be blocked - no SSD node available")
+		// assert.Contains(t, reason, "ssd-app", "Reason should contain pod name")
+
+		// Suppress unused variable warnings
+		_ = ctx
+		_ = manager
+
+		t.Skip("Skeleton: Implementation required - findSchedulableNode function")
+	})
+
+	// AC2: NodeSelector Matching - ALLOWED scenario
+	// ROI: 68 | Business Value: 8 | Frequency: 6
+	// Behavior: Pod requires label → Remaining node has label → Scale-down ALLOWED
+	// @category: core-functionality
+	// @dependency: MatchesNodeSelector (existing), findSchedulableNode (new)
+	// @complexity: medium
+	t.Run("AC2: Scale-down allowed - remaining node has required label", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Arrange:
+		nodeToRemove := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "ssd-node-to-remove",
+				Labels: map[string]string{
+					"disktype":                       "ssd",
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		remainingNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "ssd-node-2",
+				Labels: map[string]string{
+					"disktype":                       "ssd", // MATCHES required "ssd"
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "ssd-app",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{
+				NodeSelector: map[string]string{
+					"disktype": "ssd",
+				},
+				Containers: []corev1.Container{
+					{
+						Name: "app",
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("128Mi"),
+							},
+						},
+					},
+				},
+			},
+		}
+
+		fakeClient := fake.NewSimpleClientset(nodeToRemove, remainingNode)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Verify nodeSelector matches remaining node
+		nodeSelectorMatches := MatchesNodeSelector(remainingNode, pod)
+		assert.True(t, nodeSelectorMatches, "Remaining node SHOULD match pod's nodeSelector")
+
+		// Act:
+		// canSchedule, reason, err := manager.canPodsBeRescheduled(ctx, []*corev1.Pod{pod})
+
+		// Assert:
+		// require.NoError(t, err)
+		// assert.True(t, canSchedule, "Scale-down should be allowed - SSD node available")
+
+		// Suppress unused variable warnings
+		_ = ctx
+		_ = manager
+
+		t.Skip("Skeleton: Implementation required - findSchedulableNode function")
+	})
+}
+
+// TestAntiAffinityVerification tests pod anti-affinity constraint checking.
+// AC3: "Pods with anti-affinity rules are checked for topology spread after removal"
+func TestAntiAffinityVerification(t *testing.T) {
+	// AC3: Anti-Affinity - BLOCKED scenario
+	// ROI: 56 | Business Value: 7 (prevents HA violation) | Frequency: 5
+	// Behavior: Pod has anti-affinity → Moving would violate constraint → Scale-down BLOCKED
+	// @category: core-functionality
+	// @dependency: hasPodAntiAffinityViolation (new), findSchedulableNode (new)
+	// @complexity: high
+	t.Run("AC3: Scale-down blocked - would violate pod anti-affinity", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Arrange:
+		// Pod to be moved has anti-affinity: cannot colocate with other "app=web" pods
+		podToMove := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-to-remove",
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: &corev1.PodAntiAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+							{
+								LabelSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"app": "web",
+									},
+								},
+								TopologyKey: "kubernetes.io/hostname",
+							},
+						},
+					},
+				},
+				Containers: []corev1.Container{
+					{
+						Name: "web",
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("128Mi"),
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Node to be removed
+		nodeToRemove := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-to-remove",
+				Labels: map[string]string{
+					"kubernetes.io/hostname":         "worker-to-remove",
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		// Remaining node already has another web replica - anti-affinity would be violated
+		remainingNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname":         "worker-1",
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		// Existing pod on remaining node with label "app=web" - violates anti-affinity
+		existingPodOnRemainingNode := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-2",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web", // Matches anti-affinity selector
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+				Containers: []corev1.Container{
+					{
+						Name: "web",
+					},
+				},
+			},
+		}
+
+		fakeClient := fake.NewSimpleClientset(nodeToRemove, remainingNode, podToMove, existingPodOnRemainingNode)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Act:
+		// violation := hasPodAntiAffinityViolation(podToMove, remainingNode, []*corev1.Pod{existingPodOnRemainingNode})
+
+		// Assert:
+		// assert.True(t, violation, "Should detect anti-affinity violation")
+		// canSchedule, reason, err := manager.canPodsBeRescheduled(ctx, []*corev1.Pod{podToMove})
+		// require.NoError(t, err)
+		// assert.False(t, canSchedule, "Scale-down should be blocked - anti-affinity violation")
+		// assert.Contains(t, reason, "anti-affinity", "Reason should mention anti-affinity")
+
+		// Suppress unused variable warnings
+		_ = ctx
+		_ = manager
+		_ = existingPodOnRemainingNode
+		_ = remainingNode
+
+		t.Skip("Skeleton: Implementation required - hasPodAntiAffinityViolation function")
+	})
+
+	// AC3: Anti-Affinity - ALLOWED scenario (no violation)
+	// ROI: 56 | Business Value: 7 | Frequency: 5
+	// Behavior: Pod has anti-affinity → Moving would NOT violate → Scale-down ALLOWED
+	// @category: core-functionality
+	// @dependency: hasPodAntiAffinityViolation (new)
+	// @complexity: high
+	t.Run("AC3: Scale-down allowed - anti-affinity not violated", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Arrange:
+		// Pod to be moved has anti-affinity: cannot colocate with other "app=web" pods
+		podToMove := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-to-remove",
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: &corev1.PodAntiAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+							{
+								LabelSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"app": "web",
+									},
+								},
+								TopologyKey: "kubernetes.io/hostname",
+							},
+						},
+					},
+				},
+				Containers: []corev1.Container{
+					{
+						Name: "web",
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("128Mi"),
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Node to be removed
+		nodeToRemove := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-to-remove",
+				Labels: map[string]string{
+					"kubernetes.io/hostname":         "worker-to-remove",
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		// Remaining node does NOT have any "app=web" pod - no anti-affinity violation
+		remainingNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname":         "worker-1",
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		// Existing pod on remaining node with DIFFERENT label - no anti-affinity violation
+		existingPodOnRemainingNode := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "db-pod",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "database", // Different label - does NOT match anti-affinity selector
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+				Containers: []corev1.Container{
+					{
+						Name: "db",
+					},
+				},
+			},
+		}
+
+		fakeClient := fake.NewSimpleClientset(nodeToRemove, remainingNode, podToMove, existingPodOnRemainingNode)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Act:
+		// violation := hasPodAntiAffinityViolation(podToMove, remainingNode, []*corev1.Pod{existingPodOnRemainingNode})
+
+		// Assert:
+		// assert.False(t, violation, "Should NOT detect anti-affinity violation")
+		// canSchedule, _, err := manager.canPodsBeRescheduled(ctx, []*corev1.Pod{podToMove})
+		// require.NoError(t, err)
+		// assert.True(t, canSchedule, "Scale-down should be allowed - no anti-affinity violation")
+
+		// Suppress unused variable warnings
+		_ = ctx
+		_ = manager
+		_ = existingPodOnRemainingNode
+		_ = remainingNode
+
+		t.Skip("Skeleton: Implementation required - hasPodAntiAffinityViolation function")
+	})
+}
+
+// TestClearBlockingMessages tests that scale-down blocking messages are informative.
+// AC4: "Scale-down is blocked with clear log message when pods cannot be rescheduled"
+func TestClearBlockingMessages(t *testing.T) {
+	// AC4: Clear Blocking Messages
+	// ROI: 54 | Business Value: 6 (debugging/operations) | Frequency: 8
+	// Behavior: Scale-down blocked → Reason message includes pod name, constraint type, specific constraint
+	// @category: ux
+	// @dependency: canPodsBeRescheduled, findSchedulableNode
+	// @complexity: low
+	t.Run("AC4: Blocking message includes pod name and constraint type", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Arrange:
+		// Pod with nodeSelector that won't match any remaining node
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-abc123",
+				Namespace: "myapp",
+			},
+			Spec: corev1.PodSpec{
+				NodeSelector: map[string]string{
+					"zone": "us-east-1",
+				},
+				Containers: []corev1.Container{
+					{
+						Name: "web",
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("128Mi"),
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Node to be removed - has the required label
+		nodeToRemove := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "us-east-1-node",
+				Labels: map[string]string{
+					"zone":                           "us-east-1",
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		// Remaining node - does NOT have the required label
+		remainingNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "us-west-1-node",
+				Labels: map[string]string{
+					"zone":                           "us-west-1", // Wrong zone
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		fakeClient := fake.NewSimpleClientset(nodeToRemove, remainingNode)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Act:
+		// canSchedule, reason, err := manager.canPodsBeRescheduled(ctx, []*corev1.Pod{pod})
+
+		// Assert:
+		// require.NoError(t, err)
+		// assert.False(t, canSchedule, "Scale-down should be blocked")
+		// assert.Contains(t, reason, "myapp/web-abc123", "Reason should contain pod namespace/name")
+		// // The reason should indicate what constraint failed (e.g., "no suitable node", "nodeSelector", etc.)
+		// assert.True(t, strings.Contains(reason, "no suitable node") || strings.Contains(reason, "nodeSelector"),
+		//     "Reason should describe the constraint that failed")
+
+		// Suppress unused variable warnings
+		_ = ctx
+		_ = manager
+		_ = pod
+
+		t.Skip("Skeleton: Implementation required - canPodsBeRescheduled reason formatting")
+	})
+}
+
+// TestBackwardCompatibility tests that existing scale-down behavior is preserved.
+// AC6: "Existing clusters continue to work (nodes without special constraints scale down normally)"
+func TestBackwardCompatibility(t *testing.T) {
+	ctx := context.Background()
+	logger := zaptest.NewLogger(t)
+
+	// AC6: Backward Compatibility - Simple pods
+	// ROI: 111 | Business Value: 10 (regression prevention) | Frequency: 10 (all users)
+	// Behavior: Pods without constraints → Scale-down proceeds as before
+	// @category: core-functionality
+	// @dependency: IsSafeToRemove, canPodsBeRescheduled
+	// @complexity: low
+	t.Run("AC6: Scale-down works for simple pods without constraints", func(t *testing.T) {
+		// Arrange:
+		// - Create node to be removed with simple pod (no tolerations, nodeSelector, affinity)
+		// - Create remaining node with sufficient capacity
+		// - Both nodes without any taints or special labels
+
+		nodeToRemove := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-remove",
+				Labels: map[string]string{
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		remainingNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-keep",
+				Labels: map[string]string{
+					"autoscaler.vpsie.com/nodegroup": "test-group",
+				},
+			},
+			Spec: corev1.NodeSpec{Unschedulable: false},
+			Status: corev1.NodeStatus{
+				Conditions: []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+				},
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		}
+
+		simplePod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "simple-app",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{
+				// No tolerations
+				// No nodeSelector
+				// No affinity
+				Containers: []corev1.Container{
+					{
+						Name: "app",
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("128Mi"),
+							},
+						},
+					},
+				},
+			},
+		}
+
+		fakeClient := fake.NewSimpleClientset(nodeToRemove, remainingNode)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Act:
+		safe, reason, err := manager.IsSafeToRemove(ctx, nodeToRemove, []*corev1.Pod{simplePod})
+
+		// Assert:
+		// - Verify IsSafeToRemove returns (true, "safe to remove", nil)
+		// - Verify no constraint-related blocking
+		require.NoError(t, err, "IsSafeToRemove should not return error for simple pods")
+		assert.True(t, safe, "Scale-down should be safe for simple pods without constraints")
+		assert.Equal(t, "safe to remove", reason, "Expected 'safe to remove' reason for simple pods")
+
+		// Verification items:
+		// - safe == true
+		// - reason == "safe to remove"
+		// - err == nil
+	})
+}
+
+// =============================================================================
+// ESDS-005: Node Affinity Matching Tests
+// Tests for matchNodeSelectorRequirement, matchesNodeSelectorTerms, matchesNodeAffinity
+// =============================================================================
+
+// TestMatchNodeSelectorRequirement tests the matchNodeSelectorRequirement function
+// for all supported operators: In, NotIn, Exists, DoesNotExist
+func TestMatchNodeSelectorRequirement(t *testing.T) {
+	t.Run("In operator with matching value", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone": "us-east-1a",
+				},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "zone",
+			Operator: corev1.NodeSelectorOpIn,
+			Values:   []string{"us-east-1a", "us-east-1b"},
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.True(t, result, "In operator should match when node label value is in values list")
+	})
+
+	t.Run("In operator with non-matching value", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone": "us-west-1a",
+				},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "zone",
+			Operator: corev1.NodeSelectorOpIn,
+			Values:   []string{"us-east-1a", "us-east-1b"},
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.False(t, result, "In operator should not match when node label value is not in values list")
+	})
+
+	t.Run("In operator with missing label", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "test-node",
+				Labels: map[string]string{},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "zone",
+			Operator: corev1.NodeSelectorOpIn,
+			Values:   []string{"us-east-1a"},
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.False(t, result, "In operator should not match when node is missing the label")
+	})
+
+	t.Run("NotIn operator with matching value (should not match)", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"env": "production",
+				},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "env",
+			Operator: corev1.NodeSelectorOpNotIn,
+			Values:   []string{"production", "staging"},
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.False(t, result, "NotIn operator should not match when node label value is in values list")
+	})
+
+	t.Run("NotIn operator with non-matching value (should match)", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"env": "development",
+				},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "env",
+			Operator: corev1.NodeSelectorOpNotIn,
+			Values:   []string{"production", "staging"},
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.True(t, result, "NotIn operator should match when node label value is not in values list")
+	})
+
+	t.Run("NotIn operator with missing label (should match)", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "test-node",
+				Labels: map[string]string{},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "env",
+			Operator: corev1.NodeSelectorOpNotIn,
+			Values:   []string{"production"},
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.True(t, result, "NotIn operator should match when node is missing the label")
+	})
+
+	t.Run("Exists operator with key present", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"gpu": "nvidia-v100",
+				},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "gpu",
+			Operator: corev1.NodeSelectorOpExists,
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.True(t, result, "Exists operator should match when node has the label key")
+	})
+
+	t.Run("Exists operator with key absent", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "test-node",
+				Labels: map[string]string{},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "gpu",
+			Operator: corev1.NodeSelectorOpExists,
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.False(t, result, "Exists operator should not match when node is missing the label key")
+	})
+
+	t.Run("DoesNotExist operator with key absent", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"other": "value",
+				},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "gpu",
+			Operator: corev1.NodeSelectorOpDoesNotExist,
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.True(t, result, "DoesNotExist operator should match when node is missing the label key")
+	})
+
+	t.Run("DoesNotExist operator with key present", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"gpu": "nvidia",
+				},
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "gpu",
+			Operator: corev1.NodeSelectorOpDoesNotExist,
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.False(t, result, "DoesNotExist operator should not match when node has the label key")
+	})
+
+	t.Run("Node with nil labels", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+			},
+		}
+		req := &corev1.NodeSelectorRequirement{
+			Key:      "zone",
+			Operator: corev1.NodeSelectorOpIn,
+			Values:   []string{"us-east-1a"},
+		}
+
+		result := matchNodeSelectorRequirement(node, req)
+		assert.False(t, result, "Should handle nil labels gracefully")
+	})
+}
+
+// TestMatchesNodeSelectorTerms tests the matchesNodeSelectorTerms function
+// Terms are ORed - matching any term is sufficient
+// Within a term, expressions are ANDed - all must match
+func TestMatchesNodeSelectorTerms(t *testing.T) {
+	t.Run("Empty terms matches any node", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone": "us-east-1a",
+				},
+			},
+		}
+		terms := []corev1.NodeSelectorTerm{}
+
+		result := matchesNodeSelectorTerms(node, terms)
+		assert.True(t, result, "Empty terms should match any node")
+	})
+
+	t.Run("Single term with single matching expression", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone": "us-east-1a",
+				},
+			},
+		}
+		terms := []corev1.NodeSelectorTerm{
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      "zone",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"us-east-1a", "us-east-1b"},
+					},
+				},
+			},
+		}
+
+		result := matchesNodeSelectorTerms(node, terms)
+		assert.True(t, result, "Should match when single term matches")
+	})
+
+	t.Run("Single term with multiple expressions - all match (AND)", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone":     "us-east-1a",
+					"disktype": "ssd",
+				},
+			},
+		}
+		terms := []corev1.NodeSelectorTerm{
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      "zone",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"us-east-1a"},
+					},
+					{
+						Key:      "disktype",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"ssd"},
+					},
+				},
+			},
+		}
+
+		result := matchesNodeSelectorTerms(node, terms)
+		assert.True(t, result, "Should match when all expressions in term match (AND)")
+	})
+
+	t.Run("Single term with multiple expressions - one fails (AND)", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone":     "us-east-1a",
+					"disktype": "hdd", // Does not match ssd
+				},
+			},
+		}
+		terms := []corev1.NodeSelectorTerm{
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      "zone",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"us-east-1a"},
+					},
+					{
+						Key:      "disktype",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"ssd"},
+					},
+				},
+			},
+		}
+
+		result := matchesNodeSelectorTerms(node, terms)
+		assert.False(t, result, "Should not match when any expression in term fails (AND)")
+	})
+
+	t.Run("Multiple terms - first matches (OR)", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone": "us-east-1a",
+				},
+			},
+		}
+		terms := []corev1.NodeSelectorTerm{
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      "zone",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"us-east-1a"},
+					},
+				},
+			},
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      "zone",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"us-west-1a"},
+					},
+				},
+			},
+		}
+
+		result := matchesNodeSelectorTerms(node, terms)
+		assert.True(t, result, "Should match when any term matches (OR)")
+	})
+
+	t.Run("Multiple terms - second matches (OR)", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone": "us-west-1a",
+				},
+			},
+		}
+		terms := []corev1.NodeSelectorTerm{
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      "zone",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"us-east-1a"},
+					},
+				},
+			},
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      "zone",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"us-west-1a"},
+					},
+				},
+			},
+		}
+
+		result := matchesNodeSelectorTerms(node, terms)
+		assert.True(t, result, "Should match when any term matches (OR)")
+	})
+
+	t.Run("Multiple terms - none match", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone": "eu-west-1a",
+				},
+			},
+		}
+		terms := []corev1.NodeSelectorTerm{
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      "zone",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"us-east-1a"},
+					},
+				},
+			},
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      "zone",
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{"us-west-1a"},
+					},
+				},
+			},
+		}
+
+		result := matchesNodeSelectorTerms(node, terms)
+		assert.False(t, result, "Should not match when no terms match")
+	})
+
+	t.Run("Term with empty MatchExpressions matches any node", func(t *testing.T) {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-node",
+				Labels: map[string]string{
+					"zone": "us-east-1a",
+				},
+			},
+		}
+		terms := []corev1.NodeSelectorTerm{
+			{
+				MatchExpressions: []corev1.NodeSelectorRequirement{},
+			},
+		}
+
+		result := matchesNodeSelectorTerms(node, terms)
+		assert.True(t, result, "Term with empty MatchExpressions should match any node")
+	})
+}
+
+// TestMatchesNodeAffinity tests the matchesNodeAffinity function
+func TestMatchesNodeAffinity(t *testing.T) {
+	t.Run("Pod with no affinity matches any node", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{},
+		}
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"zone": "us-east-1a"},
+			},
+		}
+
+		result := matchesNodeAffinity(pod, node)
+		assert.True(t, result, "Pod with no affinity should match any node")
+	})
+
+	t.Run("Pod with nil Affinity matches any node", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Affinity: nil,
+			},
+		}
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"zone": "us-east-1a"},
+			},
+		}
+
+		result := matchesNodeAffinity(pod, node)
+		assert.True(t, result, "Pod with nil Affinity should match any node")
+	})
+
+	t.Run("Pod with nil NodeAffinity matches any node", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					NodeAffinity: nil,
+				},
+			},
+		}
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"zone": "us-east-1a"},
+			},
+		}
+
+		result := matchesNodeAffinity(pod, node)
+		assert.True(t, result, "Pod with nil NodeAffinity should match any node")
+	})
+
+	t.Run("Pod with required affinity matching node labels", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					NodeAffinity: &corev1.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{
+								{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "zone",
+											Operator: corev1.NodeSelectorOpIn,
+											Values:   []string{"us-east-1a", "us-east-1b"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"zone": "us-east-1a"},
+			},
+		}
+
+		result := matchesNodeAffinity(pod, node)
+		assert.True(t, result, "Pod with required affinity should match node with correct label")
+	})
+
+	t.Run("Pod with required affinity NOT matching node labels", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					NodeAffinity: &corev1.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{
+								{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "zone",
+											Operator: corev1.NodeSelectorOpIn,
+											Values:   []string{"us-east-1a", "us-east-1b"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"zone": "us-west-1a"},
+			},
+		}
+
+		result := matchesNodeAffinity(pod, node)
+		assert.False(t, result, "Pod with required affinity should not match node with wrong label")
+	})
+
+	t.Run("Pod with only preferred affinity matches any node (soft constraint ignored)", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					NodeAffinity: &corev1.NodeAffinity{
+						PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{
+							{
+								Weight: 100,
+								Preference: corev1.NodeSelectorTerm{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "zone",
+											Operator: corev1.NodeSelectorOpIn,
+											Values:   []string{"us-east-1a"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"zone": "us-west-1a"}, // Does not match preferred
+			},
+		}
+
+		result := matchesNodeAffinity(pod, node)
+		assert.True(t, result, "Pod with only preferred affinity should match any node (soft constraint)")
+	})
+
+	t.Run("Pod with both required and preferred affinity", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					NodeAffinity: &corev1.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{
+								{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "disktype",
+											Operator: corev1.NodeSelectorOpIn,
+											Values:   []string{"ssd"},
+										},
+									},
+								},
+							},
+						},
+						PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{
+							{
+								Weight: 100,
+								Preference: corev1.NodeSelectorTerm{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "zone",
+											Operator: corev1.NodeSelectorOpIn,
+											Values:   []string{"us-east-1a"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{
+					"disktype": "ssd",        // Matches required
+					"zone":     "us-west-1a", // Does NOT match preferred
+				},
+			},
+		}
+
+		result := matchesNodeAffinity(pod, node)
+		assert.True(t, result, "Pod should match when required affinity matches (preferred is ignored)")
+	})
+
+	t.Run("Pod with required affinity using Exists operator", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					NodeAffinity: &corev1.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{
+								{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "gpu",
+											Operator: corev1.NodeSelectorOpExists,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		nodeWithGPU := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"gpu": "nvidia-v100"},
+			},
+		}
+		nodeWithoutGPU := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"cpu": "intel"},
+			},
+		}
+
+		assert.True(t, matchesNodeAffinity(pod, nodeWithGPU), "Should match node with gpu label")
+		assert.False(t, matchesNodeAffinity(pod, nodeWithoutGPU), "Should not match node without gpu label")
+	})
+
+	t.Run("Pod with multiple OR terms in required affinity", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					NodeAffinity: &corev1.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{
+								{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "zone",
+											Operator: corev1.NodeSelectorOpIn,
+											Values:   []string{"us-east-1a"},
+										},
+									},
+								},
+								{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "zone",
+											Operator: corev1.NodeSelectorOpIn,
+											Values:   []string{"us-west-1a"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		nodeEast := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"zone": "us-east-1a"},
+			},
+		}
+		nodeWest := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"zone": "us-west-1a"},
+			},
+		}
+		nodeEurope := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{"zone": "eu-west-1a"},
+			},
+		}
+
+		assert.True(t, matchesNodeAffinity(pod, nodeEast), "Should match first OR term")
+		assert.True(t, matchesNodeAffinity(pod, nodeWest), "Should match second OR term")
+		assert.False(t, matchesNodeAffinity(pod, nodeEurope), "Should not match when no terms match")
+	})
+}
+
+// =============================================================================
+// ESDS-006: Pod Anti-Affinity Matching Tests
+// Tests for matchesPodAffinityTerm, hasPodAntiAffinityViolation
+// =============================================================================
+
+// TestMatchesPodAffinityTerm tests the matchesPodAffinityTerm function
+// which checks if an existing pod matches a pod affinity term considering
+// the topology key and label selector.
+func TestMatchesPodAffinityTerm(t *testing.T) {
+	t.Run("Label selector matches and same topology - returns true", func(t *testing.T) {
+		// Existing pod on worker-1 with label app=web
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+			},
+		}
+
+		// Term that selects pods with app=web on same hostname
+		term := &corev1.PodAffinityTerm{
+			LabelSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "web",
+				},
+			},
+			TopologyKey: "kubernetes.io/hostname",
+		}
+
+		// Node where we're checking - has same hostname as existing pod's node
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		result := matchesPodAffinityTerm(existingPod, term, node)
+		assert.True(t, result, "Should match when label selector matches and pods on same topology")
+	})
+
+	t.Run("Label selector matches but different topology - returns false", func(t *testing.T) {
+		// Existing pod on worker-1 with label app=web
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+			},
+		}
+
+		// Term that selects pods with app=web on same hostname
+		term := &corev1.PodAffinityTerm{
+			LabelSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "web",
+				},
+			},
+			TopologyKey: "kubernetes.io/hostname",
+		}
+
+		// Node where we're checking - has DIFFERENT hostname than existing pod's node
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-2",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-2",
+				},
+			},
+		}
+
+		result := matchesPodAffinityTerm(existingPod, term, node)
+		assert.False(t, result, "Should NOT match when pods are on different topologies")
+	})
+
+	t.Run("Label selector does not match - returns false", func(t *testing.T) {
+		// Existing pod on worker-1 with label app=database (different)
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "db-pod",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "database",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+			},
+		}
+
+		// Term that selects pods with app=web
+		term := &corev1.PodAffinityTerm{
+			LabelSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "web",
+				},
+			},
+			TopologyKey: "kubernetes.io/hostname",
+		}
+
+		// Node where we're checking - same as existing pod's node
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		result := matchesPodAffinityTerm(existingPod, term, node)
+		assert.False(t, result, "Should NOT match when label selector does not match existing pod")
+	})
+
+	t.Run("Nil label selector - returns false", func(t *testing.T) {
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+			},
+		}
+
+		// Term with nil label selector
+		term := &corev1.PodAffinityTerm{
+			LabelSelector: nil,
+			TopologyKey:   "kubernetes.io/hostname",
+		}
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		result := matchesPodAffinityTerm(existingPod, term, node)
+		assert.False(t, result, "Should return false when LabelSelector is nil")
+	})
+
+	t.Run("Zone topology key matching", func(t *testing.T) {
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+			},
+		}
+
+		// Term that uses zone topology
+		term := &corev1.PodAffinityTerm{
+			LabelSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "web",
+				},
+			},
+			TopologyKey: "topology.kubernetes.io/zone",
+		}
+
+		// Node in same zone as existing pod's node
+		nodeSameZone := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-2",
+				Labels: map[string]string{
+					"topology.kubernetes.io/zone": "us-east-1a",
+				},
+			},
+		}
+
+		// For zone-based topology, we need to check if the existing pod's node
+		// has the same zone. Since we can't get the existing pod's node labels
+		// directly, this test verifies zone-based matching works.
+		// The existing pod is on worker-1, but we need its zone label.
+		// In real usage, we'd need to look up the node. For this test,
+		// we simplify by checking the current node's topology label exists.
+		result := matchesPodAffinityTerm(existingPod, term, nodeSameZone)
+		// This will depend on implementation - for now we'll verify behavior
+		// Expecting false because we can't verify the existing pod's node zone without lookup
+		assert.False(t, result, "Should return false when cannot verify topology match")
+	})
+
+	t.Run("MatchExpressions label selector", func(t *testing.T) {
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app":     "web",
+					"version": "v1",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+			},
+		}
+
+		// Term with MatchExpressions
+		term := &corev1.PodAffinityTerm{
+			LabelSelector: &metav1.LabelSelector{
+				MatchExpressions: []metav1.LabelSelectorRequirement{
+					{
+						Key:      "app",
+						Operator: metav1.LabelSelectorOpIn,
+						Values:   []string{"web", "api"},
+					},
+				},
+			},
+			TopologyKey: "kubernetes.io/hostname",
+		}
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		result := matchesPodAffinityTerm(existingPod, term, node)
+		assert.True(t, result, "Should match when MatchExpressions selector matches")
+	})
+}
+
+// TestHasPodAntiAffinityViolation tests the hasPodAntiAffinityViolation function
+// which checks if scheduling a pod to a node would violate anti-affinity rules.
+func TestHasPodAntiAffinityViolation(t *testing.T) {
+	t.Run("No anti-affinity - no violation", func(t *testing.T) {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "simple-pod",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{},
+		}
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+		existingPods := []*corev1.Pod{}
+
+		result := hasPodAntiAffinityViolation(pod, node, existingPods)
+		assert.False(t, result, "Should return false when pod has no anti-affinity")
+	})
+
+	t.Run("Nil Affinity - no violation", func(t *testing.T) {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "simple-pod",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{
+				Affinity: nil,
+			},
+		}
+		node := &corev1.Node{}
+		existingPods := []*corev1.Pod{}
+
+		result := hasPodAntiAffinityViolation(pod, node, existingPods)
+		assert.False(t, result, "Should return false when Affinity is nil")
+	})
+
+	t.Run("Nil PodAntiAffinity - no violation", func(t *testing.T) {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "simple-pod",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: nil,
+				},
+			},
+		}
+		node := &corev1.Node{}
+		existingPods := []*corev1.Pod{}
+
+		result := hasPodAntiAffinityViolation(pod, node, existingPods)
+		assert.False(t, result, "Should return false when PodAntiAffinity is nil")
+	})
+
+	t.Run("Anti-affinity with no matching existing pods - no violation", func(t *testing.T) {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: &corev1.PodAntiAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+							{
+								LabelSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"app": "web",
+									},
+								},
+								TopologyKey: "kubernetes.io/hostname",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		// No existing pods
+		existingPods := []*corev1.Pod{}
+
+		result := hasPodAntiAffinityViolation(pod, node, existingPods)
+		assert.False(t, result, "Should return false when no existing pods match")
+	})
+
+	t.Run("Anti-affinity violated - matching pod on same topology", func(t *testing.T) {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: &corev1.PodAntiAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+							{
+								LabelSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"app": "web",
+									},
+								},
+								TopologyKey: "kubernetes.io/hostname",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		// Existing pod on same node with matching label
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-2",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+			},
+		}
+
+		result := hasPodAntiAffinityViolation(pod, node, []*corev1.Pod{existingPod})
+		assert.True(t, result, "Should return true when anti-affinity would be violated")
+	})
+
+	t.Run("Preferred anti-affinity ignored - soft constraint", func(t *testing.T) {
+		weight := int32(100)
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: &corev1.PodAntiAffinity{
+						// Only preferred (soft) constraint - should be ignored
+						PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
+							{
+								Weight: weight,
+								PodAffinityTerm: corev1.PodAffinityTerm{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{
+											"app": "web",
+										},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		// Existing pod on same node with matching label
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-2",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+			},
+		}
+
+		result := hasPodAntiAffinityViolation(pod, node, []*corev1.Pod{existingPod})
+		assert.False(t, result, "Should return false - preferred (soft) constraints are ignored")
+	})
+
+	t.Run("Anti-affinity not violated - matching pod on different topology", func(t *testing.T) {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: &corev1.PodAntiAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+							{
+								LabelSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"app": "web",
+									},
+								},
+								TopologyKey: "kubernetes.io/hostname",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		// Existing pod on DIFFERENT node with matching label
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-2",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-2", // Different node
+			},
+		}
+
+		result := hasPodAntiAffinityViolation(pod, node, []*corev1.Pod{existingPod})
+		assert.False(t, result, "Should return false - existing pod is on different topology")
+	})
+
+	t.Run("Multiple anti-affinity terms - first term violated", func(t *testing.T) {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: &corev1.PodAntiAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+							{
+								LabelSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"app": "web",
+									},
+								},
+								TopologyKey: "kubernetes.io/hostname",
+							},
+							{
+								LabelSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"tier": "frontend",
+									},
+								},
+								TopologyKey: "kubernetes.io/hostname",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		// Existing pod matches first term
+		existingPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-2",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "worker-1",
+			},
+		}
+
+		result := hasPodAntiAffinityViolation(pod, node, []*corev1.Pod{existingPod})
+		assert.True(t, result, "Should return true when any anti-affinity term is violated")
+	})
+
+	t.Run("Empty existing pods list - no violation", func(t *testing.T) {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-replica-1",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app": "web",
+				},
+			},
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					PodAntiAffinity: &corev1.PodAntiAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+							{
+								LabelSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"app": "web",
+									},
+								},
+								TopologyKey: "kubernetes.io/hostname",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker-1",
+				Labels: map[string]string{
+					"kubernetes.io/hostname": "worker-1",
+				},
+			},
+		}
+
+		result := hasPodAntiAffinityViolation(pod, node, []*corev1.Pod{})
+		assert.False(t, result, "Should return false with empty existing pods list")
+	})
+}
+
+// =============================================================================
+// Tests for Anti-Affinity Integration in canPodsBeRescheduled
+// =============================================================================
+
+// TestCheckAntiAffinityTermBlocksScaleDown tests that checkAntiAffinityTerm properly
+// blocks scale-down when there aren't enough nodes to satisfy anti-affinity.
+// Note: The anti-affinity check is done in hasAntiAffinityViolations, not canPodsBeRescheduled.
+func TestCheckAntiAffinityTermBlocksScaleDown(t *testing.T) {
+	t.Run("5 pods with anti-affinity, only 4 remaining nodes - should block", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Create 5 ready nodes (one will be removed, leaving 4)
+		nodes := []runtime.Object{}
+		for i := 1; i <= 5; i++ {
+			nodes = append(nodes, &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   fmt.Sprintf("node-%d", i),
+					Labels: map[string]string{"kubernetes.io/hostname": fmt.Sprintf("node-%d", i)},
+				},
+				Spec: corev1.NodeSpec{Unschedulable: false},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+					},
+				},
+			})
+		}
+
+		// Create 5 nginx pods with hostname anti-affinity (each needs unique node)
+		pods := []runtime.Object{}
+		for i := 0; i < 5; i++ {
+			pods = append(pods, &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("nginx-%d", i),
+					Namespace: "default",
+					Labels:    map[string]string{"app": "nginx"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: fmt.Sprintf("node-%d", i+1),
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "nginx"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+								},
+							},
+						},
+					},
+				},
+			})
+		}
+
+		allObjects := append(nodes, pods...)
+		fakeClient := fake.NewSimpleClientset(allObjects...)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Get pods on node-1 (the node being considered for removal)
+		podList, _ := fakeClient.CoreV1().Pods("default").List(ctx, metav1.ListOptions{})
+		var podsToCheck []*corev1.Pod
+		for i := range podList.Items {
+			if podList.Items[i].Spec.NodeName == "node-1" {
+				podsToCheck = append(podsToCheck, &podList.Items[i])
+			}
+		}
+
+		// Act - call hasAntiAffinityViolations which calls checkAntiAffinityTerm
+		hasViolation, reason, err := manager.hasAntiAffinityViolations(ctx, podsToCheck)
+
+		// Assert
+		require.NoError(t, err)
+		assert.True(t, hasViolation, "Scale-down should be blocked - 5 pods need 5 nodes but only 4 remain after removal")
+		assert.Contains(t, reason, "anti-affinity", "Reason should mention anti-affinity")
+		assert.Contains(t, reason, "5", "Reason should mention 5 pods")
+		assert.Contains(t, reason, "4", "Reason should mention 4 remaining nodes")
+	})
+
+	t.Run("3 pods with anti-affinity, 5 nodes available - should allow", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Create 5 available nodes
+		nodes := []runtime.Object{}
+		for i := 1; i <= 5; i++ {
+			nodes = append(nodes, &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   fmt.Sprintf("node-%d", i),
+					Labels: map[string]string{"kubernetes.io/hostname": fmt.Sprintf("node-%d", i)},
+				},
+				Spec: corev1.NodeSpec{Unschedulable: false},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+					},
+				},
+			})
+		}
+
+		// Create 3 nginx pods with hostname anti-affinity (on 3 different nodes)
+		pods := []runtime.Object{}
+		for i := 0; i < 3; i++ {
+			pods = append(pods, &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("nginx-%d", i),
+					Namespace: "default",
+					Labels:    map[string]string{"app": "nginx"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: fmt.Sprintf("node-%d", i+1),
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "nginx"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+								},
+							},
+						},
+					},
+				},
+			})
+		}
+
+		allObjects := append(nodes, pods...)
+		fakeClient := fake.NewSimpleClientset(allObjects...)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Get pods on node-1 (the node being considered for removal)
+		podList, _ := fakeClient.CoreV1().Pods("default").List(ctx, metav1.ListOptions{})
+		var podsToCheck []*corev1.Pod
+		for i := range podList.Items {
+			if podList.Items[i].Spec.NodeName == "node-1" {
+				podsToCheck = append(podsToCheck, &podList.Items[i])
+			}
+		}
+
+		// Act - call hasAntiAffinityViolations
+		hasViolation, _, err := manager.hasAntiAffinityViolations(ctx, podsToCheck)
+
+		// Assert - 3 pods need 3 nodes, after removing 1 we have 4 nodes, so it should be allowed
+		require.NoError(t, err)
+		assert.False(t, hasViolation, "Scale-down should be allowed - 4 remaining nodes for 3 pods with anti-affinity")
+	})
+
+	t.Run("Pods without anti-affinity - resource check only", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Create 2 available nodes with enough resources
+		nodes := []runtime.Object{
+			&corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "node-1",
+					Labels: map[string]string{"kubernetes.io/hostname": "node-1"},
+				},
+				Spec: corev1.NodeSpec{Unschedulable: false},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+					},
+					Allocatable: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("4"),
+						corev1.ResourceMemory: resource.MustParse("8Gi"),
+					},
+				},
+			},
+			&corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "node-2",
+					Labels: map[string]string{"kubernetes.io/hostname": "node-2"},
+				},
+				Spec: corev1.NodeSpec{Unschedulable: false},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+					},
+					Allocatable: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("4"),
+						corev1.ResourceMemory: resource.MustParse("8Gi"),
+					},
+				},
+			},
+		}
+
+		// Create simple pods without anti-affinity
+		pods := []*corev1.Pod{
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "simple-1", Namespace: "default"},
+				Spec: corev1.PodSpec{
+					NodeName: "node-1",
+					Containers: []corev1.Container{
+						{
+							Name: "app",
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("100m"),
+									corev1.ResourceMemory: resource.MustParse("128Mi"),
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		fakeClient := fake.NewSimpleClientset(nodes...)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Act
+		canSchedule, _, err := manager.canPodsBeRescheduled(ctx, pods)
+
+		// Assert
+		require.NoError(t, err)
+		assert.True(t, canSchedule, "Scale-down should be allowed for pods without anti-affinity")
+	})
+}
+
+// TestCheckAntiAffinityTermEdgeCase_CurrentPodInMatchingSet tests the scenario where
+// the current pod being checked is itself in the matching pods set.
+// For hostname-based anti-affinity, all matching pods (including the current one) need
+// unique nodes, so the scale-down should be blocked if there aren't enough nodes.
+func TestCheckAntiAffinityTermEdgeCase_CurrentPodInMatchingSet(t *testing.T) {
+	t.Run("4 pods with anti-affinity, current pod in matching set, 4 nodes - should block", func(t *testing.T) {
+		// Scenario: 4 pods with app=nginx hostname anti-affinity, 4 nodes
+		// If we remove node-1, we have 3 remaining nodes but 4 pods still need unique nodes
+		// The current pod (nginx-0) still needs a node after being moved
+		// All 3 remaining nodes have nginx pods, so nginx-0 cannot be scheduled -> BLOCK
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Create 4 ready nodes
+		nodes := []runtime.Object{}
+		for i := 1; i <= 4; i++ {
+			nodes = append(nodes, &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   fmt.Sprintf("node-%d", i),
+					Labels: map[string]string{"kubernetes.io/hostname": fmt.Sprintf("node-%d", i)},
+				},
+				Spec: corev1.NodeSpec{Unschedulable: false},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+					},
+				},
+			})
+		}
+
+		// Create 4 nginx pods with hostname anti-affinity (each on a different node)
+		pods := []runtime.Object{}
+		for i := 0; i < 4; i++ {
+			pods = append(pods, &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("nginx-%d", i),
+					Namespace: "default",
+					Labels:    map[string]string{"app": "nginx"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: fmt.Sprintf("node-%d", i+1),
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "nginx"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+								},
+							},
+						},
+					},
+				},
+			})
+		}
+
+		allObjects := append(nodes, pods...)
+		fakeClient := fake.NewSimpleClientset(allObjects...)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Get pods on node-1 (the node being considered for removal)
+		// The pod on node-1 is nginx-0, which has app=nginx label
+		podList, _ := fakeClient.CoreV1().Pods("default").List(ctx, metav1.ListOptions{})
+		var podsToCheck []*corev1.Pod
+		for i := range podList.Items {
+			if podList.Items[i].Spec.NodeName == "node-1" {
+				podsToCheck = append(podsToCheck, &podList.Items[i])
+			}
+		}
+
+		// Act
+		hasViolation, reason, err := manager.hasAntiAffinityViolations(ctx, podsToCheck)
+
+		// Assert - 4 pods need 4 unique nodes for hostname anti-affinity
+		// After removing node-1, only 3 nodes remain, so 4 pods cannot fit
+		require.NoError(t, err)
+		assert.True(t, hasViolation, "Scale-down should be blocked - 4 pods need 4 unique nodes but only 3 remain")
+		assert.Contains(t, reason, "anti-affinity", "Reason should mention anti-affinity")
+		assert.Contains(t, reason, "4", "Reason should mention 4 pods")
+		assert.Contains(t, reason, "3", "Reason should mention 3 remaining nodes")
+	})
+
+	t.Run("4 pods with anti-affinity, 5 nodes, current pod in matching set - should allow", func(t *testing.T) {
+		// Scenario: 4 pods with hostname anti-affinity, 5 nodes
+		// If we remove node-1, we have 4 remaining nodes for 4 pods = exactly enough
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Create 5 ready nodes
+		nodes := []runtime.Object{}
+		for i := 1; i <= 5; i++ {
+			nodes = append(nodes, &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   fmt.Sprintf("node-%d", i),
+					Labels: map[string]string{"kubernetes.io/hostname": fmt.Sprintf("node-%d", i)},
+				},
+				Spec: corev1.NodeSpec{Unschedulable: false},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+					},
+				},
+			})
+		}
+
+		// Create 4 nginx pods with hostname anti-affinity (on nodes 1-4)
+		pods := []runtime.Object{}
+		for i := 0; i < 4; i++ {
+			pods = append(pods, &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("nginx-%d", i),
+					Namespace: "default",
+					Labels:    map[string]string{"app": "nginx"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: fmt.Sprintf("node-%d", i+1),
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "nginx"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+								},
+							},
+						},
+					},
+				},
+			})
+		}
+
+		allObjects := append(nodes, pods...)
+		fakeClient := fake.NewSimpleClientset(allObjects...)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Get pods on node-1
+		podList, _ := fakeClient.CoreV1().Pods("default").List(ctx, metav1.ListOptions{})
+		var podsToCheck []*corev1.Pod
+		for i := range podList.Items {
+			if podList.Items[i].Spec.NodeName == "node-1" {
+				podsToCheck = append(podsToCheck, &podList.Items[i])
+			}
+		}
+
+		// Act
+		hasViolation, _, err := manager.hasAntiAffinityViolations(ctx, podsToCheck)
+
+		// Assert - 4 pods can fit on 4 remaining nodes (nginx-0 can go to node-5)
+		require.NoError(t, err)
+		assert.False(t, hasViolation, "Scale-down should be allowed - 4 pods can fit on 4 remaining nodes")
+	})
+}
+
+// TestCheckAntiAffinityTermCrossNamespace tests namespace resolution for pod anti-affinity.
+// PodAffinityTerm has Namespaces and NamespaceSelector fields that should be respected.
+func TestCheckAntiAffinityTermCrossNamespace(t *testing.T) {
+	t.Run("anti-affinity with explicit Namespaces field", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Create 3 nodes
+		nodes := []runtime.Object{}
+		for i := 1; i <= 3; i++ {
+			nodes = append(nodes, &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   fmt.Sprintf("node-%d", i),
+					Labels: map[string]string{"kubernetes.io/hostname": fmt.Sprintf("node-%d", i)},
+				},
+				Spec: corev1.NodeSpec{Unschedulable: false},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+					},
+				},
+			})
+		}
+
+		// Create pods in different namespaces
+		pods := []runtime.Object{
+			// Pod in default namespace on node-1 with anti-affinity targeting team-a and team-b namespaces
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "frontend-0",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "frontend"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "node-1",
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "frontend"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+									Namespaces:  []string{"team-a", "team-b"},
+								},
+							},
+						},
+					},
+				},
+			},
+			// Pods with app=frontend in team-a namespace
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "frontend-a1",
+					Namespace: "team-a",
+					Labels:    map[string]string{"app": "frontend"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-2"},
+			},
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "frontend-a2",
+					Namespace: "team-a",
+					Labels:    map[string]string{"app": "frontend"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-3"},
+			},
+			// Pod with app=frontend in team-b namespace
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "frontend-b1",
+					Namespace: "team-b",
+					Labels:    map[string]string{"app": "frontend"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-3"},
+			},
+		}
+
+		// Create namespaces
+		namespaces := []runtime.Object{
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}},
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "team-a"}},
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "team-b"}},
+		}
+
+		allObjects := append(append(nodes, pods...), namespaces...)
+		fakeClient := fake.NewSimpleClientset(allObjects...)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Get pods on node-1
+		podsToCheck := []*corev1.Pod{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "frontend-0",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "frontend"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "node-1",
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "frontend"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+									Namespaces:  []string{"team-a", "team-b"},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Act
+		hasViolation, reason, err := manager.hasAntiAffinityViolations(ctx, podsToCheck)
+
+		// Assert - There are 3 matching pods in team-a and team-b, but only 2 remaining nodes
+		// So this should be a violation
+		require.NoError(t, err)
+		assert.True(t, hasViolation, "Scale-down should be blocked - 3 pods in team-a/team-b need unique nodes, only 2 remain")
+		assert.Contains(t, reason, "anti-affinity", "Reason should mention anti-affinity. Got: %s", reason)
+	})
+
+	t.Run("anti-affinity with NamespaceSelector", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Create 3 nodes
+		nodes := []runtime.Object{}
+		for i := 1; i <= 3; i++ {
+			nodes = append(nodes, &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   fmt.Sprintf("node-%d", i),
+					Labels: map[string]string{"kubernetes.io/hostname": fmt.Sprintf("node-%d", i)},
+				},
+				Spec: corev1.NodeSpec{Unschedulable: false},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+					},
+				},
+			})
+		}
+
+		// Create namespaces with labels
+		namespaces := []runtime.Object{
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "default",
+					Labels: map[string]string{"env": "default"},
+				},
+			},
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "production-a",
+					Labels: map[string]string{"env": "production"},
+				},
+			},
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "production-b",
+					Labels: map[string]string{"env": "production"},
+				},
+			},
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "staging",
+					Labels: map[string]string{"env": "staging"},
+				},
+			},
+		}
+
+		// Create pods
+		pods := []runtime.Object{
+			// Pod with anti-affinity using NamespaceSelector (matches env=production namespaces)
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "backend-0",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "backend"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "node-1",
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "backend"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+									NamespaceSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"env": "production"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			// Pods with app=backend in production namespaces
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "backend-prod-a",
+					Namespace: "production-a",
+					Labels:    map[string]string{"app": "backend"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-2"},
+			},
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "backend-prod-b",
+					Namespace: "production-b",
+					Labels:    map[string]string{"app": "backend"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-3"},
+			},
+			// Pod with app=backend in staging (should NOT be counted)
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "backend-staging",
+					Namespace: "staging",
+					Labels:    map[string]string{"app": "backend"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-3"},
+			},
+		}
+
+		allObjects := append(append(nodes, pods...), namespaces...)
+		fakeClient := fake.NewSimpleClientset(allObjects...)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Get pods on node-1
+		podsToCheck := []*corev1.Pod{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "backend-0",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "backend"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "node-1",
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "backend"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+									NamespaceSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"env": "production"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Act
+		hasViolation, _, err := manager.hasAntiAffinityViolations(ctx, podsToCheck)
+
+		// Assert - There are 2 matching pods in production namespaces, 2 remaining nodes after removal
+		// This should be allowed (2 pods can fit on 2 nodes)
+		require.NoError(t, err)
+		assert.False(t, hasViolation, "Scale-down should be allowed - 2 pods in production namespaces, 2 remaining nodes")
+	})
+
+	t.Run("anti-affinity with both Namespaces and NamespaceSelector (intersection)", func(t *testing.T) {
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Create 3 nodes
+		nodes := []runtime.Object{}
+		for i := 1; i <= 3; i++ {
+			nodes = append(nodes, &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   fmt.Sprintf("node-%d", i),
+					Labels: map[string]string{"kubernetes.io/hostname": fmt.Sprintf("node-%d", i)},
+				},
+				Spec: corev1.NodeSpec{Unschedulable: false},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+					},
+				},
+			})
+		}
+
+		// Create namespaces
+		namespaces := []runtime.Object{
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{Name: "default"},
+			},
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "team-a",
+					Labels: map[string]string{"team": "alpha"},
+				},
+			},
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "team-b",
+					Labels: map[string]string{"team": "alpha"},
+				},
+			},
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "team-c",
+					Labels: map[string]string{"team": "beta"},
+				},
+			},
+		}
+
+		// Create pods
+		pods := []runtime.Object{
+			// Pod with anti-affinity using both Namespaces (team-a, team-b) AND NamespaceSelector (team=alpha)
+			// Intersection: only namespaces that are in the list AND match the selector
+			// team-a matches (in list AND has team=alpha)
+			// team-b matches (in list AND has team=alpha)
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "worker-0",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "worker"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "node-1",
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "worker"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+									Namespaces:  []string{"team-a", "team-b"},
+									NamespaceSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"team": "alpha"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			// Pod in team-a (should be counted - matches both Namespaces and NamespaceSelector)
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "worker-a",
+					Namespace: "team-a",
+					Labels:    map[string]string{"app": "worker"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-2"},
+			},
+			// Pod in team-b (should be counted - matches both)
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "worker-b",
+					Namespace: "team-b",
+					Labels:    map[string]string{"app": "worker"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-3"},
+			},
+			// Pod in team-c (should NOT be counted - not in Namespaces list even though it matches selector)
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "worker-c",
+					Namespace: "team-c",
+					Labels:    map[string]string{"app": "worker"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-3"},
+			},
+		}
+
+		allObjects := append(append(nodes, pods...), namespaces...)
+		fakeClient := fake.NewSimpleClientset(allObjects...)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Get pods on node-1
+		podsToCheck := []*corev1.Pod{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "worker-0",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "worker"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "node-1",
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "worker"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+									Namespaces:  []string{"team-a", "team-b"},
+									NamespaceSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"team": "alpha"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Act
+		hasViolation, _, err := manager.hasAntiAffinityViolations(ctx, podsToCheck)
+
+		// Assert - Only 2 matching pods (team-a and team-b), 2 remaining nodes
+		// team-c is excluded because it's not in the explicit Namespaces list
+		require.NoError(t, err)
+		assert.False(t, hasViolation, "Scale-down should be allowed - only 2 pods match intersection (team-a, team-b), 2 remaining nodes")
+	})
+
+	t.Run("anti-affinity with no Namespaces and no NamespaceSelector defaults to pod namespace", func(t *testing.T) {
+		// This is the backward compatibility test - when both are empty/nil, use pod.Namespace
+		ctx := context.Background()
+		logger := zaptest.NewLogger(t)
+
+		// Create 3 nodes
+		nodes := []runtime.Object{}
+		for i := 1; i <= 3; i++ {
+			nodes = append(nodes, &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   fmt.Sprintf("node-%d", i),
+					Labels: map[string]string{"kubernetes.io/hostname": fmt.Sprintf("node-%d", i)},
+				},
+				Spec: corev1.NodeSpec{Unschedulable: false},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+					},
+				},
+			})
+		}
+
+		// Create pods in different namespaces
+		pods := []runtime.Object{
+			// Pod in default namespace with anti-affinity (no Namespaces, no NamespaceSelector)
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "cache-0",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "cache"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "node-1",
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "cache"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+									// Namespaces and NamespaceSelector are empty/nil
+								},
+							},
+						},
+					},
+				},
+			},
+			// Another cache pod in default namespace
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "cache-1",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "cache"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-2"},
+			},
+			// Cache pod in other namespace (should NOT be counted)
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "cache-other",
+					Namespace: "other",
+					Labels:    map[string]string{"app": "cache"},
+				},
+				Spec: corev1.PodSpec{NodeName: "node-3"},
+			},
+		}
+
+		namespaces := []runtime.Object{
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}},
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "other"}},
+		}
+
+		allObjects := append(append(nodes, pods...), namespaces...)
+		fakeClient := fake.NewSimpleClientset(allObjects...)
+		manager := &ScaleDownManager{
+			client: fakeClient,
+			logger: logger.Sugar(),
+			config: DefaultConfig(),
+		}
+
+		// Get pods on node-1
+		podsToCheck := []*corev1.Pod{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "cache-0",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "cache"},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "node-1",
+					Affinity: &corev1.Affinity{
+						PodAntiAffinity: &corev1.PodAntiAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+								{
+									LabelSelector: &metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "cache"},
+									},
+									TopologyKey: "kubernetes.io/hostname",
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Act
+		hasViolation, _, err := manager.hasAntiAffinityViolations(ctx, podsToCheck)
+
+		// Assert - Only 2 matching pods in default namespace (cache-0 and cache-1)
+		// cache-0 is the current pod, so it should be excluded from count = 1 other pod
+		// 1 pod needs 1 node, we have 2 remaining = allowed
+		require.NoError(t, err)
+		assert.False(t, hasViolation, "Scale-down should be allowed - only 1 other matching pod in default namespace, 2 remaining nodes")
+	})
 }

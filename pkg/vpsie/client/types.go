@@ -6,7 +6,8 @@ import (
 
 // VPS represents a Virtual Private Server instance from VPSie API
 type VPS struct {
-	ID           int       `json:"id"` // API returns numeric ID
+	ID           int       `json:"id"`                   // API returns numeric ID
+	Identifier   string    `json:"identifier,omitempty"` // VPSie UUID for K8s API operations
 	Name         string    `json:"name"`
 	Hostname     string    `json:"hostname"`
 	Status       string    `json:"status"`       // running, stopped, suspended, etc.
@@ -298,4 +299,56 @@ type ListK8sNodeGroupsResponse struct {
 	Code    int            `json:"code"`
 	Message string         `json:"message"`
 	Data    []K8sNodeGroup `json:"data,omitempty"`
+}
+
+// DeleteK8sNodeRequest represents a request to delete a node from a VPSie K8s cluster
+type DeleteK8sNodeRequest struct {
+	// Identifier is the VPSie node UUID to delete
+	Identifier string `json:"identifier"`
+}
+
+// DeleteK8sNodeResponse represents the response from deleting a K8s node
+type DeleteK8sNodeResponse struct {
+	Error   bool   `json:"error"`
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+// K8sCluster represents a VPSie managed Kubernetes cluster
+type K8sCluster struct {
+	Identifier     string  `json:"identifier"`      // UUID identifier for API calls
+	Name           string  `json:"cluster_name"`    // Cluster name (e.g., "HEL-Kubernetes-49ab")
+	UserID         int     `json:"user_id"`         // User ID
+	Count          int     `json:"count"`           // Total node count
+	KubeVersion    string  `json:"kube_version"`    // Kubernetes version
+	Nickname       string  `json:"nickname"`        // Plan nickname (e.g., "Starter", "Professional")
+	CPU            int     `json:"cpu"`             // CPU cores per node
+	RAM            int     `json:"ram"`             // RAM in MB per node
+	Traffic        int     `json:"traffic"`         // Traffic/bandwidth
+	Color          string  `json:"color"`           // UI color
+	Price          float64 `json:"price"`           // Monthly price
+	Lock           int     `json:"lock"`            // Lock status
+	CreatedBy      string  `json:"created_by"`      // Creator name
+	UpgradeVersion string  `json:"upgrade_version"` // Available upgrade version
+	LBID           *int    `json:"lb_id"`           // Load balancer ID (nullable)
+	ManagerCount   int     `json:"managerCount"`    // Number of master nodes
+	SlaveCount     int     `json:"slaveCount"`      // Number of worker nodes
+	CreatedOn      string  `json:"created_on"`
+	UpdatedOn      string  `json:"updated_on"`
+}
+
+// ListK8sClustersResponse represents the response from listing K8s clusters
+type ListK8sClustersResponse struct {
+	Error   bool         `json:"error"`
+	Code    int          `json:"code"`
+	Message string       `json:"message"`
+	Data    []K8sCluster `json:"data,omitempty"`
+}
+
+// GetK8sClusterResponse represents the response from getting a K8s cluster
+type GetK8sClusterResponse struct {
+	Error   bool       `json:"error"`
+	Code    int        `json:"code"`
+	Message string     `json:"message"`
+	Data    K8sCluster `json:"data,omitempty"`
 }

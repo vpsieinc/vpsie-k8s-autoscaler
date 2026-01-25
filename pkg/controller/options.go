@@ -67,6 +67,41 @@ type Options struct {
 	// KubeSizeID is the VPSie Kubernetes size/package ID for dynamic NodeGroups
 	// Get available IDs from the k8s/offers API endpoint
 	KubeSizeID int
+
+	// FailedVPSieNodeTTL is the duration after which failed VPSieNodes are automatically deleted
+	// Set to 0 to disable automatic cleanup
+	FailedVPSieNodeTTL time.Duration
+
+	// Webhook configuration
+
+	// EnableWebhook enables the validating webhook server
+	EnableWebhook bool
+
+	// WebhookAddr is the address the webhook server binds to
+	WebhookAddr string
+
+	// WebhookCertDir is the directory containing TLS certificates for the webhook
+	WebhookCertDir string
+
+	// WebhookCertFile is the name of the TLS certificate file
+	WebhookCertFile string
+
+	// WebhookKeyFile is the name of the TLS key file
+	WebhookKeyFile string
+
+	// Sentry configuration
+
+	// SentryDSN is the Sentry Data Source Name (can also be set via SENTRY_DSN env var)
+	SentryDSN string
+
+	// SentryEnvironment is the deployment environment (e.g., "production", "staging")
+	SentryEnvironment string
+
+	// SentryTracesSampleRate is the sample rate for performance traces (0.0 to 1.0)
+	SentryTracesSampleRate float64
+
+	// SentryErrorSampleRate is the sample rate for error events (0.0 to 1.0)
+	SentryErrorSampleRate float64
 }
 
 // NewDefaultOptions returns Options with default values
@@ -90,6 +125,16 @@ func NewDefaultOptions() *Options {
 		ResourceIdentifier:      "",  // Must be set for dynamic NodeGroup creation
 		KubernetesVersion:       "",  // Must be set for dynamic NodeGroup creation
 		KubeSizeID:              0,   // Must be set for dynamic NodeGroup creation
+		FailedVPSieNodeTTL:      30 * time.Minute,
+		EnableWebhook:           false,
+		WebhookAddr:             ":9443",
+		WebhookCertDir:          "/var/run/webhook-certs",
+		WebhookCertFile:         "tls.crt",
+		WebhookKeyFile:          "tls.key",
+		SentryDSN:               "",  // Set via SENTRY_DSN env var or --sentry-dsn flag
+		SentryEnvironment:       "",  // Defaults to "development" if not set
+		SentryTracesSampleRate:  0.1, // 10% of transactions
+		SentryErrorSampleRate:   1.0, // 100% of errors
 	}
 }
 
@@ -148,6 +193,27 @@ func (o *Options) Validate() error {
 		return fmt.Errorf("invalid log format '%s', must be one of: json, console", o.LogFormat)
 	}
 
+	// Validate FailedVPSieNodeTTL (0 is valid, meaning disabled)
+	if o.FailedVPSieNodeTTL < 0 {
+		return fmt.Errorf("failed VPSieNode TTL cannot be negative")
+	}
+
+	// Validate webhook configuration
+	if o.EnableWebhook {
+		if o.WebhookAddr == "" {
+			return fmt.Errorf("webhook address cannot be empty when webhook is enabled")
+		}
+		if o.WebhookCertDir == "" {
+			return fmt.Errorf("webhook cert directory cannot be empty when webhook is enabled")
+		}
+		if o.WebhookCertFile == "" {
+			return fmt.Errorf("webhook cert file cannot be empty when webhook is enabled")
+		}
+		if o.WebhookKeyFile == "" {
+			return fmt.Errorf("webhook key file cannot be empty when webhook is enabled")
+		}
+	}
+
 	return nil
 }
 
@@ -190,6 +256,20 @@ func (o *Options) Complete() error {
 
 	if o.LogFormat == "" {
 		o.LogFormat = defaults.LogFormat
+	}
+
+	// Webhook defaults
+	if o.WebhookAddr == "" {
+		o.WebhookAddr = defaults.WebhookAddr
+	}
+	if o.WebhookCertDir == "" {
+		o.WebhookCertDir = defaults.WebhookCertDir
+	}
+	if o.WebhookCertFile == "" {
+		o.WebhookCertFile = defaults.WebhookCertFile
+	}
+	if o.WebhookKeyFile == "" {
+		o.WebhookKeyFile = defaults.WebhookKeyFile
 	}
 
 	return nil

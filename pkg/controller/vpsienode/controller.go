@@ -3,6 +3,7 @@ package vpsienode
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/internal/logging"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/tracing"
 )
 
 const (
@@ -31,15 +33,16 @@ const (
 // VPSieNodeReconciler reconciles a VPSieNode object
 type VPSieNodeReconciler struct {
 	client.Client
-	Scheme       *runtime.Scheme
-	VPSieClient  VPSieClientInterface
-	Logger       *zap.Logger
-	Recorder     record.EventRecorder
-	stateMachine *StateMachine
-	provisioner  *Provisioner
-	joiner       *Joiner
-	drainer      *Drainer
-	terminator   *Terminator
+	Scheme        *runtime.Scheme
+	VPSieClient   VPSieClientInterface
+	Logger        *zap.Logger
+	Recorder      record.EventRecorder
+	FailedNodeTTL time.Duration
+	stateMachine  *StateMachine
+	provisioner   *Provisioner
+	joiner        *Joiner
+	drainer       *Drainer
+	terminator    *Terminator
 }
 
 // NewVPSieNodeReconciler creates a new VPSieNodeReconciler
@@ -49,27 +52,29 @@ func NewVPSieNodeReconciler(
 	vpsieClient VPSieClientInterface,
 	logger *zap.Logger,
 	sshKeyIDs []string,
+	failedNodeTTL time.Duration,
 ) *VPSieNodeReconciler {
 	provisioner := NewProvisioner(vpsieClient, sshKeyIDs)
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
-	stateMachine := NewStateMachine(provisioner, joiner, terminator)
+	stateMachine := NewStateMachine(provisioner, joiner, terminator, failedNodeTTL, client)
 
 	// Create and inject discoverer for async VPS ID discovery
 	discoverer := NewDiscoverer(vpsieClient, client, logger)
 	provisioner.SetDiscoverer(discoverer)
 
 	return &VPSieNodeReconciler{
-		Client:       client,
-		Scheme:       scheme,
-		VPSieClient:  vpsieClient,
-		Logger:       logger.Named(ControllerName),
-		stateMachine: stateMachine,
-		provisioner:  provisioner,
-		joiner:       joiner,
-		drainer:      drainer,
-		terminator:   terminator,
+		Client:        client,
+		Scheme:        scheme,
+		VPSieClient:   vpsieClient,
+		Logger:        logger.Named(ControllerName),
+		FailedNodeTTL: failedNodeTTL,
+		stateMachine:  stateMachine,
+		provisioner:   provisioner,
+		joiner:        joiner,
+		drainer:       drainer,
+		terminator:    terminator,
 	}
 }
 
@@ -98,6 +103,15 @@ func (r *VPSieNodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 func (r *VPSieNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// Add correlation ID for request tracing
 	ctx = logging.WithRequestID(ctx)
+
+	// Start Sentry transaction for tracing
+	ctx, span := tracing.StartTransaction(ctx, "VPSieNodeReconciler.Reconcile", "controller.reconcile")
+	if span != nil {
+		span.SetTag("controller", ControllerName)
+		span.SetTag("resource.name", req.Name)
+		span.SetTag("resource.namespace", req.Namespace)
+		defer span.Finish()
+	}
 
 	logger := logging.WithRequestIDField(ctx, r.Logger.With(
 		zap.String("namespace", req.Namespace),

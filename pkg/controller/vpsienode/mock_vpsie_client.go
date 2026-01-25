@@ -33,16 +33,23 @@ type MockVPSieClient struct {
 	// ListK8sNodeGroupsFunc allows custom behavior for ListK8sNodeGroups
 	ListK8sNodeGroupsFunc func(ctx context.Context, clusterIdentifier string) ([]vpsieclient.K8sNodeGroup, error)
 
+	// DeleteK8sNodeFunc allows custom behavior for DeleteK8sNode
+	DeleteK8sNodeFunc func(ctx context.Context, clusterIdentifier, nodeIdentifier string) error
+
 	// CallCounts tracks how many times each method was called
 	CallCounts map[string]int
+
+	// DeletedK8sNodes tracks nodes deleted via DeleteK8sNode
+	DeletedK8sNodes map[string]bool
 }
 
 // NewMockVPSieClient creates a new mock VPSie client
 func NewMockVPSieClient() *MockVPSieClient {
 	return &MockVPSieClient{
-		VMs:        make(map[int]*vpsieclient.VPS),
-		NextID:     1000,
-		CallCounts: make(map[string]int),
+		VMs:             make(map[int]*vpsieclient.VPS),
+		NextID:          1000,
+		CallCounts:      make(map[string]int),
+		DeletedK8sNodes: make(map[string]bool),
 	}
 }
 
@@ -265,6 +272,32 @@ func (m *MockVPSieClient) ListK8sNodeGroups(ctx context.Context, clusterIdentifi
 
 	// Default: return empty list
 	return nil, nil
+}
+
+// DeleteK8sNode mocks deleting a K8s node from a cluster
+func (m *MockVPSieClient) DeleteK8sNode(ctx context.Context, clusterIdentifier, nodeIdentifier string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.CallCounts["DeleteK8sNode"]++
+
+	// Use custom function if provided
+	if m.DeleteK8sNodeFunc != nil {
+		return m.DeleteK8sNodeFunc(ctx, clusterIdentifier, nodeIdentifier)
+	}
+
+	// Track the deletion
+	key := fmt.Sprintf("%s/%s", clusterIdentifier, nodeIdentifier)
+	if m.DeletedK8sNodes[key] {
+		// Already deleted, return not found error
+		return &vpsieclient.APIError{
+			StatusCode: 404,
+			Message:    "K8s node not found",
+		}
+	}
+
+	m.DeletedK8sNodes[key] = true
+	return nil
 }
 
 // Helper functions to parse string IDs to int

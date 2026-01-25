@@ -86,7 +86,7 @@ func TestTerminationFlow(t *testing.T) {
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
-	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator)
+	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator, 24*time.Hour, client)
 	reconciler.provisioner = provisioner
 	reconciler.joiner = joiner
 	reconciler.drainer = drainer
@@ -252,7 +252,7 @@ func TestTerminationWithPods(t *testing.T) {
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
-	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator)
+	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator, 24*time.Hour, client)
 	reconciler.provisioner = provisioner
 	reconciler.drainer = drainer
 	reconciler.terminator = terminator
@@ -350,7 +350,7 @@ func TestTerminationWithNonExistentNode(t *testing.T) {
 	joiner := NewJoiner(client, provisioner)
 	drainer := NewDrainer(client)
 	terminator := NewTerminator(drainer, provisioner)
-	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator)
+	reconciler.stateMachine = NewStateMachine(provisioner, joiner, terminator, 24*time.Hour, client)
 	reconciler.provisioner = provisioner
 	reconciler.drainer = drainer
 	reconciler.terminator = terminator

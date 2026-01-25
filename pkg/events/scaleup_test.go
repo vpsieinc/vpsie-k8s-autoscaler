@@ -39,7 +39,7 @@ func TestMakeScaleUpDecision(t *testing.T) {
 		expectedNodes    int32
 	}{
 		{
-			name: "Scale up from 2 to 3 nodes",
+			name: "Scale up from 2 to 3 nodes (sequential scaling)",
 			nodeGroup: &v1alpha1.NodeGroup{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "ng-1",
@@ -53,6 +53,7 @@ func TestMakeScaleUpDecision(t *testing.T) {
 				},
 				Status: v1alpha1.NodeGroupStatus{
 					DesiredNodes: 2,
+					ReadyNodes:   2, // All nodes ready - no nodes in transition
 				},
 			},
 			match: NodeGroupMatch{
@@ -69,6 +70,7 @@ func TestMakeScaleUpDecision(t *testing.T) {
 					},
 					Status: v1alpha1.NodeGroupStatus{
 						DesiredNodes: 2,
+						ReadyNodes:   2, // All nodes ready - no nodes in transition
 					},
 				},
 				MatchingPods: []*corev1.Pod{
@@ -83,7 +85,7 @@ func TestMakeScaleUpDecision(t *testing.T) {
 			},
 			canScale:         true,
 			expectedDecision: true,
-			expectedNodes:    3, // 2 current + 1 new (based on 4 CPU / 4 CPU per instance)
+			expectedNodes:    3, // 2 current + 1 new (sequential scaling: only add 1 at a time)
 		},
 		{
 			name: "At max capacity, no scale-up",
@@ -99,12 +101,14 @@ func TestMakeScaleUpDecision(t *testing.T) {
 				},
 				Status: v1alpha1.NodeGroupStatus{
 					DesiredNodes: 5,
+					ReadyNodes:   5, // All nodes ready
 				},
 			},
 			match: NodeGroupMatch{
 				NodeGroup: &v1alpha1.NodeGroup{
 					Status: v1alpha1.NodeGroupStatus{
 						DesiredNodes: 5,
+						ReadyNodes:   5, // All nodes ready
 					},
 					Spec: v1alpha1.NodeGroupSpec{
 						MaxNodes: 5,
@@ -136,6 +140,7 @@ func TestMakeScaleUpDecision(t *testing.T) {
 				},
 				Status: v1alpha1.NodeGroupStatus{
 					DesiredNodes: 2,
+					ReadyNodes:   2, // All nodes ready
 				},
 			},
 			match: NodeGroupMatch{
@@ -145,6 +150,7 @@ func TestMakeScaleUpDecision(t *testing.T) {
 					},
 					Status: v1alpha1.NodeGroupStatus{
 						DesiredNodes: 2,
+						ReadyNodes:   2, // All nodes ready
 					},
 					Spec: v1alpha1.NodeGroupSpec{
 						MaxNodes:    10,
@@ -164,7 +170,7 @@ func TestMakeScaleUpDecision(t *testing.T) {
 			expectedDecision: false,
 		},
 		{
-			name: "Respect max capacity limit",
+			name: "Sequential scaling adds one node at a time",
 			nodeGroup: &v1alpha1.NodeGroup{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "ng-1",
@@ -177,6 +183,7 @@ func TestMakeScaleUpDecision(t *testing.T) {
 				},
 				Status: v1alpha1.NodeGroupStatus{
 					DesiredNodes: 3,
+					ReadyNodes:   3, // All nodes ready - no nodes in transition
 				},
 			},
 			match: NodeGroupMatch{
@@ -186,6 +193,7 @@ func TestMakeScaleUpDecision(t *testing.T) {
 					},
 					Status: v1alpha1.NodeGroupStatus{
 						DesiredNodes: 3,
+						ReadyNodes:   3, // All nodes ready - no nodes in transition
 					},
 					Spec: v1alpha1.NodeGroupSpec{
 						MaxNodes:    5,
@@ -198,14 +206,57 @@ func TestMakeScaleUpDecision(t *testing.T) {
 					{ObjectMeta: metav1.ObjectMeta{Name: "pod-3"}},
 				},
 				Deficit: ResourceDeficit{
-					CPU:    resource.MustParse("12000m"), // Would need 3 nodes
+					CPU:    resource.MustParse("12000m"), // Would need 3 nodes in batch mode
 					Memory: resource.MustParse("24Gi"),
 					Pods:   3,
 				},
 			},
 			canScale:         true,
 			expectedDecision: true,
-			expectedNodes:    5, // Limited by maxNodes (3 + 3 = 6, but max is 5)
+			expectedNodes:    4, // Sequential scaling: only add 1 node at a time (3 + 1 = 4)
+		},
+		{
+			name: "Nodes in transition - skip scale-up",
+			nodeGroup: &v1alpha1.NodeGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "ng-1",
+					Namespace: "default",
+				},
+				Spec: v1alpha1.NodeGroupSpec{
+					MinNodes:    1,
+					MaxNodes:    10,
+					OfferingIDs: []string{"offering-1"},
+				},
+				Status: v1alpha1.NodeGroupStatus{
+					DesiredNodes: 3,
+					ReadyNodes:   2, // 1 node being provisioned (3 - 2 = 1)
+				},
+			},
+			match: NodeGroupMatch{
+				NodeGroup: &v1alpha1.NodeGroup{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "ng-1",
+					},
+					Status: v1alpha1.NodeGroupStatus{
+						DesiredNodes: 3,
+						ReadyNodes:   2, // 1 node being provisioned
+					},
+					Spec: v1alpha1.NodeGroupSpec{
+						MaxNodes:    10,
+						OfferingIDs: []string{"offering-1"},
+					},
+				},
+				MatchingPods: []*corev1.Pod{
+					{ObjectMeta: metav1.ObjectMeta{Name: "pod-1"}},
+				},
+				Deficit: ResourceDeficit{
+					CPU:    resource.MustParse("2000m"),
+					Memory: resource.MustParse("4Gi"),
+					Pods:   1,
+				},
+			},
+			canScale:         true,
+			expectedDecision: false, // Should skip because nodes are being provisioned
 		},
 	}
 
@@ -391,6 +442,7 @@ func TestHandleScaleUp(t *testing.T) {
 		},
 		Status: v1alpha1.NodeGroupStatus{
 			DesiredNodes: 2,
+			ReadyNodes:   2, // All nodes ready - no nodes in transition for sequential scaling
 		},
 	}
 
@@ -607,6 +659,7 @@ func TestGetScaleUpDecisions(t *testing.T) {
 		},
 		Status: v1alpha1.NodeGroupStatus{
 			DesiredNodes: 2,
+			ReadyNodes:   2, // All nodes ready - no nodes in transition for sequential scaling
 		},
 	}
 
@@ -634,6 +687,7 @@ func TestGetScaleUpDecisions(t *testing.T) {
 
 	require.Len(t, decisions, 1, "Should have one scale-up decision")
 	assert.Equal(t, "ng-prod", decisions[0].NodeGroup.Name)
-	assert.Greater(t, decisions[0].DesiredNodes, int32(2))
+	assert.Equal(t, int32(3), decisions[0].DesiredNodes, "Sequential scaling: should add 1 node (2 + 1 = 3)")
+	assert.Equal(t, int32(1), decisions[0].NodesToAdd, "Sequential scaling: should only add 1 node at a time")
 	assert.Equal(t, "offering-1", decisions[0].InstanceType)
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/utils"
 
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -228,7 +229,7 @@ func (s *ScaleDownManager) canPodsBeRescheduled(ctx context.Context, pods []*cor
 		}
 
 		// Skip nodes with issues
-		if !isNodeReady(node) {
+		if !utils.IsNodeReady(node) {
 			continue
 		}
 
@@ -270,6 +271,9 @@ func (s *ScaleDownManager) canPodsBeRescheduled(ctx context.Context, pods []*cor
 		return false, fmt.Sprintf("insufficient memory capacity for rescheduling (need %d, available %d)",
 			requiredMem, totalAvailableMem), nil
 	}
+
+	// Note: Pod anti-affinity checks are handled by hasAntiAffinityViolations
+	// which looks at ALL matching pods across the cluster, not just pods being moved
 
 	return true, "", nil
 }
@@ -345,18 +349,27 @@ func (s *ScaleDownManager) checkAntiAffinityTerm(
 		return false, "", fmt.Errorf("invalid label selector: %w", err)
 	}
 
-	// Check if rescheduling this pod would violate the anti-affinity rule
-	// This is a simplified check - full scheduling simulation would be more accurate
-	matchingPods, err := s.client.CoreV1().Pods(pod.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: selector.String(),
-	})
+	// Resolve target namespaces according to Kubernetes semantics
+	targetNamespaces, err := s.resolveTargetNamespaces(ctx, term, pod.Namespace)
 	if err != nil {
-		return false, "", fmt.Errorf("failed to list pods: %w", err)
+		return false, "", fmt.Errorf("failed to resolve target namespaces: %w", err)
+	}
+
+	// Collect matching pods from all target namespaces
+	var allMatchingPods []corev1.Pod
+	for _, ns := range targetNamespaces {
+		matchingPods, err := s.client.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
+			LabelSelector: selector.String(),
+		})
+		if err != nil {
+			return false, "", fmt.Errorf("failed to list pods in namespace %s: %w", ns, err)
+		}
+		allMatchingPods = append(allMatchingPods, matchingPods.Items...)
 	}
 
 	// If there are matching pods and topology key is node hostname,
 	// we need at least 2 nodes to satisfy anti-affinity
-	if len(matchingPods.Items) > 0 && term.TopologyKey == "kubernetes.io/hostname" {
+	if len(allMatchingPods) > 0 && term.TopologyKey == "kubernetes.io/hostname" {
 		nodes, err := s.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 		if err != nil {
 			return false, "", fmt.Errorf("failed to list nodes: %w", err)
@@ -364,18 +377,84 @@ func (s *ScaleDownManager) checkAntiAffinityTerm(
 
 		readyNodes := 0
 		for i := range nodes.Items {
-			if isNodeReady(&nodes.Items[i]) && !nodes.Items[i].Spec.Unschedulable {
+			if utils.IsNodeReady(&nodes.Items[i]) && !nodes.Items[i].Spec.Unschedulable {
 				readyNodes++
 			}
 		}
 
-		// If we only have 2 ready nodes and we're removing one, anti-affinity might be violated
-		if readyNodes <= 2 {
-			return true, fmt.Sprintf("insufficient nodes to satisfy anti-affinity for pod %s/%s", pod.Namespace, pod.Name), nil
+		// After removing this node, we need at least as many nodes as matching pods
+		// For hostname-based anti-affinity, each pod needs a unique node
+		remainingNodes := readyNodes - 1
+		if len(allMatchingPods) > remainingNodes {
+			return true, fmt.Sprintf("insufficient nodes for anti-affinity: %d pods require unique nodes but only %d nodes remain after removal",
+				len(allMatchingPods), remainingNodes), nil
 		}
 	}
 
 	return false, "", nil
+}
+
+// resolveTargetNamespaces determines which namespaces to search for matching pods
+// based on the PodAffinityTerm's Namespaces and NamespaceSelector fields.
+// Follows Kubernetes semantics:
+// 1. If Namespaces is non-empty: use those namespaces
+// 2. If NamespaceSelector is non-nil: list namespaces matching selector
+// 3. If both are specified: use intersection
+// 4. If both are empty/nil: use podNamespace only (default behavior)
+func (s *ScaleDownManager) resolveTargetNamespaces(
+	ctx context.Context,
+	term *corev1.PodAffinityTerm,
+	podNamespace string,
+) ([]string, error) {
+	hasNamespaces := len(term.Namespaces) > 0
+	hasNamespaceSelector := term.NamespaceSelector != nil
+
+	// Case 4: Both empty/nil - use pod's namespace only (backward compatible)
+	if !hasNamespaces && !hasNamespaceSelector {
+		return []string{podNamespace}, nil
+	}
+
+	// Case 1: Only Namespaces specified
+	if hasNamespaces && !hasNamespaceSelector {
+		return term.Namespaces, nil
+	}
+
+	// Get namespaces matching the selector (for Cases 2 and 3)
+	nsSelector, err := metav1.LabelSelectorAsSelector(term.NamespaceSelector)
+	if err != nil {
+		return nil, fmt.Errorf("invalid namespace selector: %w", err)
+	}
+
+	namespaceList, err := s.client.CoreV1().Namespaces().List(ctx, metav1.ListOptions{
+		LabelSelector: nsSelector.String(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list namespaces: %w", err)
+	}
+
+	// Build set of namespaces matching the selector
+	selectorMatches := make(map[string]bool)
+	for _, ns := range namespaceList.Items {
+		selectorMatches[ns.Name] = true
+	}
+
+	// Case 2: Only NamespaceSelector specified
+	if !hasNamespaces && hasNamespaceSelector {
+		result := make([]string, 0, len(selectorMatches))
+		for ns := range selectorMatches {
+			result = append(result, ns)
+		}
+		return result, nil
+	}
+
+	// Case 3: Both specified - use intersection
+	result := make([]string, 0)
+	for _, ns := range term.Namespaces {
+		if selectorMatches[ns] {
+			result = append(result, ns)
+		}
+	}
+	return result, nil
 }
 
 // hasInsufficientCapacity checks if cluster would have insufficient capacity after removal
@@ -425,15 +504,6 @@ func (s *ScaleDownManager) hasInsufficientCapacity(
 }
 
 // Helper functions
-
-func isNodeReady(node *corev1.Node) bool {
-	for _, condition := range node.Status.Conditions {
-		if condition.Type == corev1.NodeReady {
-			return condition.Status == corev1.ConditionTrue
-		}
-	}
-	return false
-}
 
 // HasPersistentVolumes checks if any pods have persistent volumes
 func HasPersistentVolumes(pod *corev1.Pod) bool {
@@ -498,4 +568,266 @@ func MatchesNodeSelector(node *corev1.Node, pod *corev1.Pod) bool {
 	nodeLabels := labels.Set(node.Labels)
 	selector := labels.SelectorFromSet(pod.Spec.NodeSelector)
 	return selector.Matches(nodeLabels)
+}
+
+// tolerationMatches checks if a toleration matches a taint.
+// Per Kubernetes documentation:
+// - Empty key with Exists operator matches all taints (wildcard)
+// - Key must match
+// - Effect must match (empty toleration effect matches all effects)
+// - Operator: Exists matches any value, Equal requires value match
+func tolerationMatches(toleration *corev1.Toleration, taint *corev1.Taint) bool {
+	// Empty key with Exists operator matches all taints
+	if toleration.Key == "" && toleration.Operator == corev1.TolerationOpExists {
+		return true
+	}
+
+	// Key must match
+	if toleration.Key != taint.Key {
+		return false
+	}
+
+	// Effect must match (empty toleration effect matches all effects)
+	if toleration.Effect != "" && toleration.Effect != taint.Effect {
+		return false
+	}
+
+	// Operator-based value matching
+	switch toleration.Operator {
+	case corev1.TolerationOpExists:
+		// Exists operator matches any value
+		return true
+	case corev1.TolerationOpEqual, "":
+		// Equal operator (or default) requires value match
+		return toleration.Value == taint.Value
+	}
+
+	return false
+}
+
+// tolerationMatchesTaint checks if any toleration in the list matches the taint.
+func tolerationMatchesTaint(tolerations []corev1.Toleration, taint *corev1.Taint) bool {
+	for i := range tolerations {
+		if tolerationMatches(&tolerations[i], taint) {
+			return true
+		}
+	}
+	return false
+}
+
+// tolerationsTolerateTaints checks if tolerations cover all taints with NoSchedule/NoExecute effect.
+// Only hard constraints (NoSchedule, NoExecute) are checked.
+// PreferNoSchedule is a soft constraint and is ignored.
+// Returns true if all hard-constraint taints are tolerated, false otherwise.
+func tolerationsTolerateTaints(tolerations []corev1.Toleration, taints []corev1.Taint) bool {
+	for _, taint := range taints {
+		// Only check hard constraints (NoSchedule, NoExecute)
+		// PreferNoSchedule is soft - ignored for hard scheduling decisions
+		if taint.Effect != corev1.TaintEffectNoSchedule &&
+			taint.Effect != corev1.TaintEffectNoExecute {
+			continue
+		}
+
+		// Check if any toleration matches this taint
+		if !tolerationMatchesTaint(tolerations, &taint) {
+			return false
+		}
+	}
+	return true
+}
+
+// matchNodeSelectorRequirement checks if a node satisfies a single node selector requirement.
+// Supports operators: In, NotIn, Exists, DoesNotExist
+// Note: Gt and Lt operators are not implemented as they are alpha features.
+func matchNodeSelectorRequirement(node *corev1.Node, req *corev1.NodeSelectorRequirement) bool {
+	// Handle nil labels
+	if node.Labels == nil {
+		// For operators that check label absence, nil labels means absent
+		switch req.Operator {
+		case corev1.NodeSelectorOpDoesNotExist:
+			return true
+		case corev1.NodeSelectorOpNotIn:
+			return true
+		default:
+			return false
+		}
+	}
+
+	value, exists := node.Labels[req.Key]
+
+	switch req.Operator {
+	case corev1.NodeSelectorOpIn:
+		// Node label value must be in the requirement values list
+		if !exists {
+			return false
+		}
+		for _, v := range req.Values {
+			if value == v {
+				return true
+			}
+		}
+		return false
+
+	case corev1.NodeSelectorOpNotIn:
+		// Node label value must NOT be in the requirement values list
+		// If label doesn't exist, it's considered "not in" the values
+		if !exists {
+			return true
+		}
+		for _, v := range req.Values {
+			if value == v {
+				return false
+			}
+		}
+		return true
+
+	case corev1.NodeSelectorOpExists:
+		// Node must have the label key (value doesn't matter)
+		return exists
+
+	case corev1.NodeSelectorOpDoesNotExist:
+		// Node must NOT have the label key
+		return !exists
+
+	default:
+		// Gt and Lt are not supported (alpha feature)
+		return false
+	}
+}
+
+// matchesNodeSelectorTerms checks if a node matches any of the node selector terms.
+// Terms are ORed - matching any term is sufficient.
+// Within a term, MatchExpressions are ANDed - all must match.
+func matchesNodeSelectorTerms(node *corev1.Node, terms []corev1.NodeSelectorTerm) bool {
+	// Empty terms matches any node
+	if len(terms) == 0 {
+		return true
+	}
+
+	// Terms are ORed - matching any term is sufficient
+	for _, term := range terms {
+		if matchesNodeSelectorTerm(node, &term) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesNodeSelectorTerm checks if a node matches a single node selector term.
+// MatchExpressions within a term are ANDed - all must match.
+func matchesNodeSelectorTerm(node *corev1.Node, term *corev1.NodeSelectorTerm) bool {
+	// Empty MatchExpressions matches any node
+	if len(term.MatchExpressions) == 0 {
+		return true
+	}
+
+	// MatchExpressions are ANDed - all must match
+	for i := range term.MatchExpressions {
+		if !matchNodeSelectorRequirement(node, &term.MatchExpressions[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// matchesNodeAffinity checks if a pod's node affinity requirements are satisfied by a node.
+// Only checks RequiredDuringSchedulingIgnoredDuringExecution (hard constraint).
+// Preferred constraints are ignored for scale-down decisions - they express preferences, not requirements.
+func matchesNodeAffinity(pod *corev1.Pod, node *corev1.Node) bool {
+	// No affinity requirements means matches any node
+	if pod.Spec.Affinity == nil || pod.Spec.Affinity.NodeAffinity == nil {
+		return true
+	}
+
+	nodeAffinity := pod.Spec.Affinity.NodeAffinity
+
+	// Check required (hard) constraints
+	if nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
+		if !matchesNodeSelectorTerms(node, nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms) {
+			return false
+		}
+	}
+
+	// Preferred (soft) constraints are NOT checked for scale-down decisions
+	// They express preferences, not requirements
+	return true
+}
+
+// matchesPodAffinityTerm checks if an existing pod matches a pod affinity term
+// considering the topology key and label selector.
+// For hostname-based topology (kubernetes.io/hostname), we use a simplified check:
+// if the existing pod's NodeName matches the target node's Name, they are on the same topology.
+// For other topology keys (e.g., zone), we would need to look up the existing pod's node,
+// which requires additional API calls. For safety, we return false for non-hostname topologies.
+//
+// RACE CONDITION NOTE: This function reads existingPod.Spec.NodeName which may change if the pod
+// is being rescheduled concurrently. This is acceptable for scale-down safety checks because:
+//  1. If the pod moves AFTER we check, the scale-down decision remains safe (pod is elsewhere)
+//  2. If the pod moves BEFORE we check but NodeName is stale, we may be overly conservative
+//     (blocking a safe scale-down) but never unsafe
+//  3. The scheduler handles the authoritative pod placement; we only make advisory decisions
+//
+// For stronger consistency, callers should use informer caches with appropriate resync periods.
+func matchesPodAffinityTerm(existingPod *corev1.Pod, term *corev1.PodAffinityTerm, node *corev1.Node) bool {
+	// Handle nil LabelSelector - cannot match without selector
+	if term.LabelSelector == nil {
+		return false
+	}
+
+	// Convert LabelSelector to labels.Selector
+	selector, err := metav1.LabelSelectorAsSelector(term.LabelSelector)
+	if err != nil {
+		// Invalid selector - cannot match
+		return false
+	}
+
+	// Check if existing pod's labels match the selector
+	if !selector.Matches(labels.Set(existingPod.Labels)) {
+		return false
+	}
+
+	// Check topology key matching
+	// For kubernetes.io/hostname, we can directly compare pod's NodeName with node's Name
+	if term.TopologyKey == "kubernetes.io/hostname" {
+		// The existing pod is on the same topology if its NodeName matches the target node's
+		// hostname label (which typically equals the node name)
+		nodeHostname := node.Labels[term.TopologyKey]
+		if nodeHostname == "" {
+			// Node doesn't have hostname label - use node name as fallback
+			nodeHostname = node.Name
+		}
+		return existingPod.Spec.NodeName == nodeHostname
+	}
+
+	// For other topology keys (e.g., topology.kubernetes.io/zone), we would need to:
+	// 1. Get the existing pod's node
+	// 2. Get the topology value from that node's labels
+	// 3. Compare with the target node's topology value
+	// Without the ability to look up the existing pod's node, we cannot verify
+	// the topology match. For safety, return false (no match assumed).
+	return false
+}
+
+// hasPodAntiAffinityViolation checks if scheduling pod to node would violate anti-affinity rules.
+// Only checks RequiredDuringSchedulingIgnoredDuringExecution (hard constraint).
+// Preferred (soft) constraints are ignored for scale-down decisions - they express preferences, not requirements.
+func hasPodAntiAffinityViolation(pod *corev1.Pod, node *corev1.Node, existingPods []*corev1.Pod) bool {
+	// No anti-affinity requirements means no violation possible
+	if pod.Spec.Affinity == nil || pod.Spec.Affinity.PodAntiAffinity == nil {
+		return false
+	}
+
+	antiAffinity := pod.Spec.Affinity.PodAntiAffinity
+
+	// Only check required (hard) anti-affinity constraints
+	// Preferred (soft) constraints are ignored for scale-down decisions
+	for _, term := range antiAffinity.RequiredDuringSchedulingIgnoredDuringExecution {
+		for _, existingPod := range existingPods {
+			if matchesPodAffinityTerm(existingPod, &term, node) {
+				return true // Would violate anti-affinity
+			}
+		}
+	}
+
+	return false
 }

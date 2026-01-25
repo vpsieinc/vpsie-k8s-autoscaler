@@ -25,3 +25,25 @@ spec:
     port: 8081
     targetPort: health
     protocol: TCP
+
+---
+# Service for webhook server
+# This service routes admission webhook requests to the controller pods
+apiVersion: v1
+kind: Service
+metadata:
+  name: vpsie-autoscaler-webhook
+  namespace: kube-system
+  labels:
+    app: vpsie-autoscaler
+    component: controller
+spec:
+  type: ClusterIP
+  selector:
+    app: vpsie-autoscaler
+    component: controller
+  ports:
+  - name: webhook
+    port: 443
+    targetPort: webhook
+    protocol: TCP

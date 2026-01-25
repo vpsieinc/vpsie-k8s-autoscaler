@@ -3,7 +3,9 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -145,6 +147,10 @@ type ClientOptions struct {
 	// HTTPClient is a custom HTTP client to use (optional)
 	HTTPClient *http.Client
 
+	// HTTPTransport is a custom HTTP transport to use (optional)
+	// This is useful for adding tracing/monitoring middleware
+	HTTPTransport http.RoundTripper
+
 	// Timeout is the HTTP client timeout
 	Timeout time.Duration
 
@@ -273,27 +279,36 @@ func NewClient(ctx context.Context, clientset kubernetes.Interface, opts *Client
 	// Create HTTP client if not provided
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
-		httpClient = &http.Client{
-			Timeout: opts.Timeout,
-			Transport: &http.Transport{
-				// TLS configuration - enforce TLS 1.2+ with strong cipher suites
-				// This addresses Fix #9: TLS Validation
-				TLSClientConfig: &tls.Config{
-					MinVersion: tls.VersionTLS12, // Disables TLS 1.0 and 1.1
-					CipherSuites: []uint16{
-						// ECDHE provides forward secrecy, AES-GCM is authenticated encryption
-						tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-						tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-						tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-						tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-					},
-					PreferServerCipherSuites: true,
-					InsecureSkipVerify:       false, // Explicit for security audits
+		// Create base transport with TLS configuration
+		baseTransport := &http.Transport{
+			// TLS configuration - enforce TLS 1.2+ with strong cipher suites
+			// This addresses Fix #9: TLS Validation
+			TLSClientConfig: &tls.Config{
+				MinVersion: tls.VersionTLS12, // Disables TLS 1.0 and 1.1
+				CipherSuites: []uint16{
+					// ECDHE provides forward secrecy, AES-GCM is authenticated encryption
+					tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+					tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+					tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+					tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 				},
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     90 * time.Second,
+				PreferServerCipherSuites: true,
+				InsecureSkipVerify:       false, // Explicit for security audits
 			},
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+		}
+
+		// Use custom transport if provided (e.g., for tracing), wrapping the base transport
+		var transport http.RoundTripper = baseTransport
+		if opts.HTTPTransport != nil {
+			transport = opts.HTTPTransport
+		}
+
+		httpClient = &http.Client{
+			Timeout:   opts.Timeout,
+			Transport: transport,
 		}
 	}
 
@@ -394,27 +409,36 @@ func NewClientWithCredentialsAndContext(ctx context.Context, baseURL, clientID, 
 	// Create HTTP client if not provided
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
-		httpClient = &http.Client{
-			Timeout: opts.Timeout,
-			Transport: &http.Transport{
-				// TLS configuration - enforce TLS 1.2+ with strong cipher suites
-				// This addresses Fix #9: TLS Validation
-				TLSClientConfig: &tls.Config{
-					MinVersion: tls.VersionTLS12, // Disables TLS 1.0 and 1.1
-					CipherSuites: []uint16{
-						// ECDHE provides forward secrecy, AES-GCM is authenticated encryption
-						tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-						tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-						tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-						tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-					},
-					PreferServerCipherSuites: true,
-					InsecureSkipVerify:       false, // Explicit for security audits
+		// Create base transport with TLS configuration
+		baseTransport := &http.Transport{
+			// TLS configuration - enforce TLS 1.2+ with strong cipher suites
+			// This addresses Fix #9: TLS Validation
+			TLSClientConfig: &tls.Config{
+				MinVersion: tls.VersionTLS12, // Disables TLS 1.0 and 1.1
+				CipherSuites: []uint16{
+					// ECDHE provides forward secrecy, AES-GCM is authenticated encryption
+					tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+					tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+					tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+					tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 				},
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     90 * time.Second,
+				PreferServerCipherSuites: true,
+				InsecureSkipVerify:       false, // Explicit for security audits
 			},
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+		}
+
+		// Use custom transport if provided (e.g., for tracing), wrapping the base transport
+		var transport http.RoundTripper = baseTransport
+		if opts.HTTPTransport != nil {
+			transport = opts.HTTPTransport
+		}
+
+		httpClient = &http.Client{
+			Timeout:   opts.Timeout,
+			Transport: transport,
 		}
 	}
 
@@ -959,19 +983,14 @@ func (c *Client) IsSimpleTokenAuth() bool {
 	return c.useSimpleToken
 }
 
-// CalculateCredentialsHash calculates a hash of the given credentials for change detection.
+// CalculateCredentialsHash calculates a SHA-256 hash of the given credentials for change detection.
 // This is useful for comparing credentials without storing them in plain text.
 // The hash does not expose the actual credentials.
 // This function is exported to allow credential change detection before updating the client.
 func CalculateCredentialsHash(clientID, clientSecret string) string {
-	// Use a simple hash of clientID + secret for change detection
-	// We don't need cryptographic security here, just change detection
 	combined := clientID + ":" + clientSecret
-	var hash uint64
-	for i := 0; i < len(combined); i++ {
-		hash = hash*31 + uint64(combined[i])
-	}
-	return fmt.Sprintf("%016x", hash)
+	hash := sha256.Sum256([]byte(combined))
+	return hex.EncodeToString(hash[:])
 }
 
 // GetCredentialsHash returns a hash of the current credentials for change detection.
@@ -1513,15 +1532,17 @@ func (c *Client) AddK8sSlaveToGroup(ctx context.Context, clusterIdentifier strin
 
 	// Try to unmarshal data as an object first
 	var nodeData struct {
-		ID       int    `json:"id"`
-		Status   string `json:"status"`
-		Hostname string `json:"hostname"`
+		ID         int    `json:"id"`
+		Identifier string `json:"identifier"` // VPSie node UUID for K8s API operations
+		Status     string `json:"status"`
+		Hostname   string `json:"hostname"`
 	}
-	if err := json.Unmarshal(response.Data, &nodeData); err == nil && nodeData.ID != 0 {
+	if err := json.Unmarshal(response.Data, &nodeData); err == nil && (nodeData.ID != 0 || nodeData.Identifier != "") {
 		return &VPS{
-			ID:       nodeData.ID,
-			Hostname: nodeData.Hostname,
-			Status:   nodeData.Status,
+			ID:         nodeData.ID,
+			Identifier: nodeData.Identifier,
+			Hostname:   nodeData.Hostname,
+			Status:     nodeData.Status,
 		}, nil
 	}
 
@@ -1564,4 +1585,130 @@ func (c *Client) AddK8sSlave(ctx context.Context, clusterIdentifier string, grou
 	}
 
 	return nil
+}
+
+// DeleteK8sNode deletes a worker node from a VPSie managed Kubernetes cluster.
+// This uses the K8s-specific deletion API which properly removes the node from the cluster.
+//
+// The clusterIdentifier is the UUID of the VPSie K8s cluster.
+// The nodeIdentifier is the UUID of the specific node to delete.
+//
+// Example usage:
+//
+//	err := client.DeleteK8sNode(ctx, "cluster-uuid", "node-uuid")
+//	if err != nil {
+//	    log.Fatalf("failed to delete K8s node: %v", err)
+//	}
+func (c *Client) DeleteK8sNode(ctx context.Context, clusterIdentifier, nodeIdentifier string) error {
+	if clusterIdentifier == "" {
+		return NewConfigError("cluster_identifier", "Cluster identifier is required")
+	}
+	if nodeIdentifier == "" {
+		return NewConfigError("node_identifier", "Node identifier is required")
+	}
+
+	var response DeleteK8sNodeResponse
+
+	// DELETE /k8s/cluster/byId/{clusterIdentifier}/delete/slave
+	// with body {"identifier": "nodeIdentifier"}
+	endpoint := fmt.Sprintf("/k8s/cluster/byId/%s/delete/slave", clusterIdentifier)
+	reqBody := DeleteK8sNodeRequest{
+		Identifier: nodeIdentifier,
+	}
+
+	if err := c.deleteWithBody(ctx, endpoint, reqBody, &response); err != nil {
+		// If node not found, consider it already deleted
+		if IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to delete K8s node: %w", err)
+	}
+
+	if response.Error {
+		return NewAPIError(response.Code, "DeleteK8sNodeFailed", response.Message)
+	}
+
+	return nil
+}
+
+// deleteWithBody performs a DELETE request with a JSON body
+func (c *Client) deleteWithBody(ctx context.Context, path string, body, result interface{}) error {
+	resp, err := c.doRequest(ctx, http.MethodDelete, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if result != nil {
+		// Limit response body size to prevent DoS attacks
+		limitedReader := io.LimitReader(resp.Body, MaxResponseBodySize)
+		if err := json.NewDecoder(limitedReader).Decode(result); err != nil {
+			return fmt.Errorf("failed to decode response: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// ============================================================================
+// Kubernetes Cluster Discovery Operations
+// ============================================================================
+
+// ListK8sClusters lists all Kubernetes clusters associated with the account.
+// This is used for auto-discovery of cluster configuration.
+func (c *Client) ListK8sClusters(ctx context.Context) ([]K8sCluster, error) {
+	var response ListK8sClustersResponse
+
+	// GET /k8s/cluster/all - list all K8s clusters
+	if err := c.get(ctx, "/k8s/cluster/all", &response); err != nil {
+		return nil, fmt.Errorf("failed to list K8s clusters: %w", err)
+	}
+
+	if response.Error {
+		return nil, NewAPIError(response.Code, "ListK8sClustersFailed", response.Message)
+	}
+
+	return response.Data, nil
+}
+
+// GetK8sCluster retrieves details of a specific Kubernetes cluster by identifier.
+func (c *Client) GetK8sCluster(ctx context.Context, clusterIdentifier string) (*K8sCluster, error) {
+	if clusterIdentifier == "" {
+		return nil, NewConfigError("cluster_identifier", "Cluster identifier is required")
+	}
+
+	var response GetK8sClusterResponse
+
+	// GET /k8s/cluster/byId/{identifier}
+	endpoint := fmt.Sprintf("/k8s/cluster/byId/%s", clusterIdentifier)
+	if err := c.get(ctx, endpoint, &response); err != nil {
+		return nil, fmt.Errorf("failed to get K8s cluster: %w", err)
+	}
+
+	if response.Error {
+		return nil, NewAPIError(response.Code, "GetK8sClusterFailed", response.Message)
+	}
+
+	return &response.Data, nil
+}
+
+// FindK8sClusterByName finds a Kubernetes cluster by its name.
+// Returns nil if no cluster is found with the given name.
+func (c *Client) FindK8sClusterByName(ctx context.Context, name string) (*K8sCluster, error) {
+	if name == "" {
+		return nil, NewConfigError("name", "Cluster name is required")
+	}
+
+	clusters, err := c.ListK8sClusters(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range clusters {
+		if clusters[i].Name == name {
+			return &clusters[i], nil
+		}
+	}
+
+	return nil, nil // Not found
 }

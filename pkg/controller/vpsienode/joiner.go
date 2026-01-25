@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/utils"
 )
 
 // Joiner handles node joining operations
@@ -92,7 +93,7 @@ func (j *Joiner) CheckJoinStatus(ctx context.Context, vn *v1alpha1.VPSieNode, lo
 	}
 
 	// Check if node is ready
-	nodeReady := j.isNodeReady(node)
+	nodeReady := utils.IsNodeReady(node)
 	if nodeReady {
 		logger.Info("Node is ready",
 			zap.String("vpsienode", vn.Name),
@@ -164,7 +165,7 @@ func (j *Joiner) MonitorNode(ctx context.Context, vn *v1alpha1.VPSieNode, logger
 	}
 
 	// Check node readiness
-	nodeReady := j.isNodeReady(node)
+	nodeReady := utils.IsNodeReady(node)
 	if !nodeReady {
 		logger.Warn("Node is no longer ready",
 			zap.String("vpsienode", vn.Name),
@@ -274,16 +275,6 @@ func (j *Joiner) findNodeByHostname(ctx context.Context, hostname string) (*core
 	}
 
 	return nil, errors.NewNotFound(corev1.Resource("node"), hostname)
-}
-
-// isNodeReady checks if a Kubernetes Node is ready
-func (j *Joiner) isNodeReady(node *corev1.Node) bool {
-	for _, cond := range node.Status.Conditions {
-		if cond.Type == corev1.NodeReady {
-			return cond.Status == corev1.ConditionTrue
-		}
-	}
-	return false
 }
 
 // applyNodeConfiguration applies labels and taints from NodeGroup to the Kubernetes Node

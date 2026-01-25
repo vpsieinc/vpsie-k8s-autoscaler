@@ -11,6 +11,7 @@ import (
 
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/tracing"
 )
 
 // ScaleUpDecision represents a decision to scale up a NodeGroup
@@ -58,6 +59,13 @@ func (c *ScaleUpController) SetWatcher(watcher *EventWatcher) {
 
 // HandleScaleUp processes scheduling events and makes scale-up decisions
 func (c *ScaleUpController) HandleScaleUp(ctx context.Context, events []SchedulingEvent) error {
+	// Start Sentry transaction for tracing
+	ctx, span := tracing.StartTransaction(ctx, "ScaleUpController.HandleScaleUp", "scaler.scale_up")
+	if span != nil {
+		span.SetTag("event_count", fmt.Sprintf("%d", len(events)))
+		defer span.Finish()
+	}
+
 	c.logger.Info("Handling scale-up request",
 		zap.Int("eventCount", len(events)),
 	)
@@ -204,24 +212,62 @@ func (c *ScaleUpController) makeScaleUpDecision(
 	// Estimate nodes needed
 	nodesNeeded := c.analyzer.EstimateNodesNeeded(match.Deficit, instanceInfo)
 
-	// Calculate actual nodes to add (respect max capacity)
-	availableCapacity := ng.Spec.MaxNodes - ng.Status.DesiredNodes
-	nodesToAdd := int32(nodesNeeded)
-	if nodesToAdd > availableCapacity {
-		nodesToAdd = availableCapacity
+	// Sequential scaling: check if any nodes are still being provisioned (not yet ready)
+	// If DesiredNodes > ReadyNodes, nodes are in transition - wait for them to be Ready
+	nodesBeingProvisioned := ng.Status.DesiredNodes - ng.Status.ReadyNodes
+	if nodesBeingProvisioned < 0 {
+		nodesBeingProvisioned = 0
 	}
 
-	if nodesToAdd <= 0 {
+	// If there are nodes being provisioned, wait for them to be Ready first
+	// This prevents over-provisioning and respects cluster limits
+	if nodesBeingProvisioned > 0 {
+		c.logger.Debug("Waiting for nodes to be Ready before adding more (sequential scaling)",
+			zap.String("nodeGroup", ng.Name),
+			zap.Int("nodesNeeded", nodesNeeded),
+			zap.Int32("nodesBeingProvisioned", nodesBeingProvisioned),
+			zap.Int32("desiredNodes", ng.Status.DesiredNodes),
+			zap.Int32("readyNodes", ng.Status.ReadyNodes),
+		)
+		metrics.ScaleUpDecisionsTotal.WithLabelValues(ng.Name, ng.Namespace, "skipped_provisioning").Inc()
 		return nil, nil
 	}
 
+	// Check if we actually need more nodes based on deficit
+	// nodesNeeded from EstimateNodesNeeded already represents the NEW nodes needed
+	// to satisfy the unschedulable pod deficit
+	if nodesNeeded <= 0 {
+		c.logger.Debug("No additional nodes needed based on deficit analysis",
+			zap.String("nodeGroup", ng.Name),
+			zap.Int("nodesNeeded", nodesNeeded),
+		)
+		return nil, nil
+	}
+
+	// Check available capacity
+	availableCapacity := ng.Spec.MaxNodes - ng.Status.DesiredNodes
+	if availableCapacity <= 0 {
+		c.logger.Debug("NodeGroup at max capacity",
+			zap.String("nodeGroup", ng.Name),
+			zap.Int32("desiredNodes", ng.Status.DesiredNodes),
+			zap.Int32("maxNodes", ng.Spec.MaxNodes),
+		)
+		return nil, nil
+	}
+
+	// Sequential scaling: only add ONE node at a time
+	// Wait for it to be Ready, then re-evaluate if more are needed
+	nodesToAdd := int32(1)
+
 	desiredNodes := ng.Status.DesiredNodes + nodesToAdd
 
-	c.logger.Info("Scale-up decision made",
+	c.logger.Info("Scale-up decision made (sequential scaling: 1 node at a time)",
 		zap.String("nodeGroup", ng.Name),
-		zap.Int32("currentNodes", ng.Status.DesiredNodes),
+		zap.Int32("currentNodes", ng.Status.CurrentNodes),
+		zap.Int32("readyNodes", ng.Status.ReadyNodes),
 		zap.Int32("desiredNodes", desiredNodes),
 		zap.Int32("nodesToAdd", nodesToAdd),
+		zap.Int("totalNodesNeeded", nodesNeeded),
 		zap.String("instanceType", instanceType),
 		zap.Int("matchingPods", len(match.MatchingPods)),
 	)
@@ -238,7 +284,7 @@ func (c *ScaleUpController) makeScaleUpDecision(
 		InstanceType: instanceType,
 		MatchingPods: len(match.MatchingPods),
 		Deficit:      match.Deficit,
-		Reason:       fmt.Sprintf("Scaling up to accommodate %d pending pods", len(match.MatchingPods)),
+		Reason:       fmt.Sprintf("Sequential scaling: adding 1 node for %d pending pods (estimated %d total needed)", len(match.MatchingPods), nodesNeeded),
 	}, nil
 }
 
@@ -266,6 +312,10 @@ func (c *ScaleUpController) executeScaleUp(ctx context.Context, decision ScaleUp
 			zap.String("nodeGroup", ng.Name),
 			zap.Int32("currentDesired", ng.Status.DesiredNodes),
 		)
+		// Still record the scale event to prevent repeated scale-up attempts
+		// This is important when the NodeGroup reconciler sets DesiredNodes
+		// before our scale decision is executed
+		c.watcher.RecordScaleEvent(ng.Name)
 		return nil
 	}
 

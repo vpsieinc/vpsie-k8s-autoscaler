@@ -27,7 +27,8 @@ type DynamicNodeGroupCreator struct {
 	template    *NodeGroupTemplate
 }
 
-// NodeGroupTemplate provides default values for dynamically created NodeGroups
+// NodeGroupTemplate provides default values for dynamically created NodeGroups.
+// This can be populated from the AutoscalerConfig CRD for full configuration control.
 type NodeGroupTemplate struct {
 	// Namespace is the namespace where NodeGroups will be created
 	Namespace string
@@ -58,6 +59,34 @@ type NodeGroupTemplate struct {
 
 	// KubeSizeID is the VPSie Kubernetes size/package ID (from k8s/offers endpoint)
 	KubeSizeID int
+
+	// Labels are additional labels to apply to all dynamically created nodes
+	// These are merged with labels derived from pod NodeSelectors
+	Labels map[string]string
+
+	// Taints are default taints to apply to nodes
+	Taints []corev1.Taint
+
+	// ScaleUpPolicy defines the default scale-up behavior
+	ScaleUpPolicy *v1alpha1.ScaleUpPolicy
+
+	// ScaleDownPolicy defines the default scale-down behavior
+	ScaleDownPolicy *v1alpha1.ScaleDownPolicy
+
+	// CostOptimization defines default cost optimization settings
+	CostOptimization *v1alpha1.CostOptimizationConfig
+
+	// SSHKeyIDs is a list of VPSie SSH key IDs for new nodes
+	SSHKeyIDs []string
+
+	// Tags are key-value pairs to tag VPSie instances
+	Tags []string
+
+	// Notes are additional notes for VPSie instances
+	Notes string
+
+	// SpotConfig defines default spot instance configuration
+	SpotConfig *v1alpha1.SpotInstanceConfig
 }
 
 // DefaultNodeGroupTemplate returns a template with sensible defaults
@@ -267,7 +296,7 @@ func (c *DynamicNodeGroupCreator) generateNodeGroupName() string {
 	return fmt.Sprintf("auto-%s-%d", datacenter, timestamp%10000000000)
 }
 
-// buildNodeGroupSpec builds a NodeGroup spec based on pod requirements
+// buildNodeGroupSpec builds a NodeGroup spec based on pod requirements and template defaults
 func (c *DynamicNodeGroupCreator) buildNodeGroupSpec(pod *corev1.Pod) v1alpha1.NodeGroupSpec {
 	spec := v1alpha1.NodeGroupSpec{
 		MinNodes:           c.template.MinNodes,
@@ -279,21 +308,55 @@ func (c *DynamicNodeGroupCreator) buildNodeGroupSpec(pod *corev1.Pod) v1alpha1.N
 		OSImageID:          c.template.OSImageID,
 		KubernetesVersion:  c.template.KubernetesVersion,
 		KubeSizeID:         c.template.KubeSizeID,
+		SSHKeyIDs:          c.template.SSHKeyIDs,
+		Tags:               c.template.Tags,
+		Notes:              c.template.Notes,
 	}
 
-	// Copy node selector labels to NodeGroup spec
-	if len(pod.Spec.NodeSelector) > 0 {
-		spec.Labels = make(map[string]string)
-		for key, value := range pod.Spec.NodeSelector {
-			spec.Labels[key] = value
-		}
+	// Apply scale-up policy from template
+	if c.template.ScaleUpPolicy != nil {
+		spec.ScaleUpPolicy = *c.template.ScaleUpPolicy
+	}
+
+	// Apply scale-down policy from template
+	if c.template.ScaleDownPolicy != nil {
+		spec.ScaleDownPolicy = *c.template.ScaleDownPolicy
+	}
+
+	// Apply cost optimization settings from template
+	if c.template.CostOptimization != nil {
+		spec.CostOptimization = c.template.CostOptimization.DeepCopy()
+	}
+
+	// Apply spot config from template
+	if c.template.SpotConfig != nil {
+		spec.SpotConfig = c.template.SpotConfig.DeepCopy()
+	}
+
+	// Merge labels: start with template labels, then add pod NodeSelector labels
+	spec.Labels = make(map[string]string)
+
+	// First, copy template labels
+	for key, value := range c.template.Labels {
+		spec.Labels[key] = value
+	}
+
+	// Then, overlay pod's node selector labels (pod-specific labels take precedence)
+	for key, value := range pod.Spec.NodeSelector {
+		spec.Labels[key] = value
+	}
+
+	// Merge taints: start with template taints, then add pod-derived taints
+	if len(c.template.Taints) > 0 {
+		spec.Taints = make([]corev1.Taint, len(c.template.Taints))
+		copy(spec.Taints, c.template.Taints)
 	}
 
 	// Extract tolerations that might indicate required taints
 	// Note: We only add taints for explicitly requested tolerations, not wildcard ones
-	taints := c.extractRequiredTaints(pod.Spec.Tolerations)
-	if len(taints) > 0 {
-		spec.Taints = taints
+	podTaints := c.extractRequiredTaints(pod.Spec.Tolerations)
+	if len(podTaints) > 0 {
+		spec.Taints = append(spec.Taints, podTaints...)
 	}
 
 	return spec
@@ -483,6 +546,103 @@ func (c *DynamicNodeGroupCreator) SelectOptimalKubeSizeID(
 
 	// All sizes are in use - this is a VPSie limitation
 	return 0, fmt.Errorf("all K8s sizes are already in use by existing node groups (VPSie limitation)")
+}
+
+// LoadAutoscalerConfig loads the AutoscalerConfig CRD and returns a NodeGroupTemplate.
+// If no AutoscalerConfig exists or an error occurs, it returns the current template.
+func (c *DynamicNodeGroupCreator) LoadAutoscalerConfig(ctx context.Context) (*NodeGroupTemplate, error) {
+	// Try to get the default AutoscalerConfig
+	config := &v1alpha1.AutoscalerConfig{}
+	err := c.client.Get(ctx, client.ObjectKey{Name: "default"}, config)
+	if err != nil {
+		// If not found, return current template
+		if client.IgnoreNotFound(err) == nil {
+			c.logger.Debug("No AutoscalerConfig found, using existing template")
+			return c.template, nil
+		}
+		return nil, fmt.Errorf("failed to get AutoscalerConfig: %w", err)
+	}
+
+	// Convert AutoscalerConfig to NodeGroupTemplate
+	template := c.autoscalerConfigToTemplate(config)
+	c.logger.Info("Loaded configuration from AutoscalerConfig CRD",
+		zap.Int32("minNodes", template.MinNodes),
+		zap.Int32("maxNodes", template.MaxNodes),
+		zap.Int("labelsCount", len(template.Labels)),
+	)
+
+	return template, nil
+}
+
+// autoscalerConfigToTemplate converts an AutoscalerConfig to a NodeGroupTemplate
+func (c *DynamicNodeGroupCreator) autoscalerConfigToTemplate(config *v1alpha1.AutoscalerConfig) *NodeGroupTemplate {
+	defaults := config.Spec.NodeGroupDefaults
+
+	template := &NodeGroupTemplate{
+		Namespace:           defaults.Namespace,
+		MinNodes:            defaults.MinNodes,
+		MaxNodes:            defaults.MaxNodes,
+		DefaultOfferingIDs:  defaults.OfferingIDs,
+		DefaultDatacenterID: defaults.DatacenterID,
+		ResourceIdentifier:  defaults.ResourceIdentifier,
+		Project:             defaults.Project,
+		OSImageID:           defaults.OSImageID,
+		KubernetesVersion:   defaults.KubernetesVersion,
+		KubeSizeID:          defaults.KubeSizeID,
+		Labels:              defaults.Labels,
+		Taints:              defaults.Taints,
+		SSHKeyIDs:           defaults.SSHKeyIDs,
+		Tags:                defaults.Tags,
+		Notes:               defaults.Notes,
+	}
+
+	// Apply defaults if not set
+	if template.Namespace == "" {
+		template.Namespace = "default"
+	}
+	if template.MinNodes == 0 {
+		template.MinNodes = 1
+	}
+	if template.MaxNodes == 0 {
+		template.MaxNodes = 10
+	}
+
+	// Copy policy configurations (use DeepCopy to avoid reference issues)
+	if defaults.ScaleUpPolicy.StabilizationWindowSeconds > 0 ||
+		defaults.ScaleUpPolicy.CPUThreshold > 0 ||
+		defaults.ScaleUpPolicy.MemoryThreshold > 0 ||
+		defaults.ScaleUpPolicy.Enabled {
+		template.ScaleUpPolicy = defaults.ScaleUpPolicy.DeepCopy()
+	}
+
+	if defaults.ScaleDownPolicy.StabilizationWindowSeconds > 0 ||
+		defaults.ScaleDownPolicy.CPUThreshold > 0 ||
+		defaults.ScaleDownPolicy.MemoryThreshold > 0 ||
+		defaults.ScaleDownPolicy.Enabled ||
+		defaults.ScaleDownPolicy.CooldownSeconds > 0 {
+		template.ScaleDownPolicy = defaults.ScaleDownPolicy.DeepCopy()
+	}
+
+	if defaults.CostOptimization != nil {
+		template.CostOptimization = defaults.CostOptimization.DeepCopy()
+	}
+
+	if defaults.SpotConfig != nil {
+		template.SpotConfig = defaults.SpotConfig.DeepCopy()
+	}
+
+	return template
+}
+
+// RefreshConfigFromCRD reloads the template from the AutoscalerConfig CRD.
+// Call this periodically or when the CRD is updated.
+func (c *DynamicNodeGroupCreator) RefreshConfigFromCRD(ctx context.Context) error {
+	template, err := c.LoadAutoscalerConfig(ctx)
+	if err != nil {
+		return err
+	}
+	c.template = template
+	return nil
 }
 
 // calculatePodResources calculates the total resource requests for a pod

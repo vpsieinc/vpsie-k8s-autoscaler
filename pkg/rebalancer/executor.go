@@ -160,6 +160,17 @@ func (e *Executor) executeRollingBatch(ctx context.Context, plan *RebalancePlan,
 			"currentOffering", candidate.CurrentOffering,
 			"targetOffering", candidate.TargetOffering)
 
+		// Same-nodegroup protection: Skip termination if target nodegroup == current nodegroup
+		// and offering is the same (no actual change needed)
+		currentNodeGroup := e.getNodeGroupFromNode(ctx, candidate.NodeName)
+		if currentNodeGroup == plan.NodeGroupName && candidate.CurrentOffering == candidate.TargetOffering {
+			logger.Info("Skipping termination: same nodegroup and offering",
+				"nodeName", candidate.NodeName,
+				"nodeGroup", plan.NodeGroupName,
+				"offering", candidate.CurrentOffering)
+			continue
+		}
+
 		// Step 1: Provision new node
 		newNode, err := e.provisionNewNode(ctx, plan, &candidate)
 		if err != nil || newNode == nil {
@@ -245,11 +256,30 @@ func (e *Executor) executeSurgeBatch(ctx context.Context, plan *RebalancePlan, b
 		FailedNodes:    make([]NodeFailure, 0),
 	}
 
+	// Same-nodegroup protection: Filter out candidates that don't need rebalancing
+	var candidatesToProcess []CandidateNode
+	for _, candidate := range batch.Nodes {
+		currentNodeGroup := e.getNodeGroupFromNode(ctx, candidate.NodeName)
+		if currentNodeGroup == plan.NodeGroupName && candidate.CurrentOffering == candidate.TargetOffering {
+			logger.Info("Skipping termination: same nodegroup and offering",
+				"nodeName", candidate.NodeName,
+				"nodeGroup", plan.NodeGroupName,
+				"offering", candidate.CurrentOffering)
+			continue
+		}
+		candidatesToProcess = append(candidatesToProcess, candidate)
+	}
+
+	if len(candidatesToProcess) == 0 {
+		logger.Info("No candidates to process after same-nodegroup filtering")
+		return result, nil
+	}
+
 	newNodes := make([]*Node, 0)
 
 	// Phase 1: Provision all new nodes
-	logger.Info("Surge strategy: provisioning all new nodes", "count", len(batch.Nodes))
-	for _, candidate := range batch.Nodes {
+	logger.Info("Surge strategy: provisioning all new nodes", "count", len(candidatesToProcess))
+	for _, candidate := range candidatesToProcess {
 		newNode, err := e.provisionNewNode(ctx, plan, &candidate)
 		if err != nil || newNode == nil {
 			// Handle both provisioning errors and nil node pointer
@@ -283,8 +313,8 @@ func (e *Executor) executeSurgeBatch(ctx context.Context, plan *RebalancePlan, b
 	}
 
 	// Phase 2: Drain and terminate all old nodes
-	logger.Info("Surge strategy: draining all old nodes", "count", len(batch.Nodes))
-	for _, candidate := range batch.Nodes {
+	logger.Info("Surge strategy: draining all old nodes", "count", len(candidatesToProcess))
+	for _, candidate := range candidatesToProcess {
 		oldNode := &Node{Name: candidate.NodeName}
 
 		err := e.DrainNode(ctx, oldNode)
@@ -317,6 +347,19 @@ func (e *Executor) executeBlueGreenBatch(ctx context.Context, plan *RebalancePla
 // provisionNewNode provisions a new node with the target instance type.
 // Returns (*Node, nil) on success, or (nil, error) on failure.
 // Callers MUST check both return values: if err != nil || newNode == nil
+//
+// IMPLEMENTATION STATUS: NOT IMPLEMENTED
+// This function currently returns an error because VPSie API integration for node
+// provisioning is not yet complete. The rebalancer feature should be disabled via
+// GlobalAutoscalerSettings.EnableRebalancing=false (the default) until this is implemented.
+//
+// To implement, this function needs to:
+// 1. Call VPSie API to provision a new VPS with the target offering
+// 2. Wait for the VPS to be created and get its ID
+// 3. Create a VPSieNode CR to track the new node
+// 4. Return a Node struct with the new node's information
+//
+// See pkg/controller/nodegroup/nodegroup_controller.go for reference on VPSie node provisioning.
 func (e *Executor) provisionNewNode(ctx context.Context, plan *RebalancePlan, candidate *CandidateNode) (*Node, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("Provisioning new node",
@@ -334,8 +377,8 @@ func (e *Executor) provisionNewNode(ctx context.Context, plan *RebalancePlan, ca
 
 	// IMPLEMENTATION NOT COMPLETE: Return explicit error instead of fake success
 	// This prevents silent failures in production where no node is actually provisioned
-	// TODO: Implement actual VPSie API call to provision VPS instance
-	return nil, fmt.Errorf("node provisioning not yet implemented: VPSie API integration required for offering %s", candidate.TargetOffering)
+	// Ensure GlobalAutoscalerSettings.EnableRebalancing=false until this is implemented
+	return nil, fmt.Errorf("node provisioning not yet implemented: VPSie API integration required for offering %s (ensure enableRebalancing=false in AutoscalerConfig)", candidate.TargetOffering)
 }
 
 // DrainNode safely drains workloads from a node
@@ -666,4 +709,14 @@ type batchResult struct {
 	NodesFailed     int32
 	CompletedNodes  []string
 	FailedNodes     []NodeFailure
+}
+
+// getNodeGroupFromNode retrieves the nodegroup label from a node.
+// Returns empty string on error (fail-safe - allows operation to proceed).
+func (e *Executor) getNodeGroupFromNode(ctx context.Context, nodeName string) string {
+	node, err := e.kubeClient.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		return ""
+	}
+	return node.Labels["autoscaler.vpsie.com/nodegroup"]
 }

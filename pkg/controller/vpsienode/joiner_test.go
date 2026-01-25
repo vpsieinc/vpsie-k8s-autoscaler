@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/utils"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -14,8 +15,6 @@ func TestNewJoiner(t *testing.T) {
 }
 
 func TestJoiner_IsNodeReady(t *testing.T) {
-	joiner := NewJoiner(nil, nil)
-
 	tests := []struct {
 		name     string
 		node     *corev1.Node
@@ -76,7 +75,7 @@ func TestJoiner_IsNodeReady(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := joiner.isNodeReady(tt.node)
+			result := utils.IsNodeReady(tt.node)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

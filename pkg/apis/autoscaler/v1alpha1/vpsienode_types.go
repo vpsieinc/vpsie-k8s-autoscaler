@@ -61,6 +61,11 @@ type VPSieNodeSpec struct {
 	// This is the numeric ID from ListK8sNodeGroups, used for adding nodes via API
 	// +optional
 	VPSieGroupID int `json:"vpsieGroupID,omitempty"`
+
+	// VPSieNodeIdentifier is the VPSie node UUID used for K8s-specific API operations
+	// This identifier is required for deleting nodes via the K8s cluster API
+	// +optional
+	VPSieNodeIdentifier string `json:"vpsieNodeIdentifier,omitempty"`
 }
 
 // VPSieNodeStatus defines the observed state of VPSieNode

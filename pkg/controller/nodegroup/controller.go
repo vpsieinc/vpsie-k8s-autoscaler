@@ -21,6 +21,7 @@ import (
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/scaler"
+	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/tracing"
 	vpsieclient "github.com/vpsie/vpsie-k8s-autoscaler/pkg/vpsie/client"
 )
 
@@ -307,6 +308,15 @@ func NewNodeGroupReconcilerWithOptions(
 func (r *NodeGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// Add correlation ID for request tracing
 	ctx = logging.WithRequestID(ctx)
+
+	// Start Sentry transaction for tracing
+	ctx, span := tracing.StartTransaction(ctx, "NodeGroupReconciler.Reconcile", "controller.reconcile")
+	if span != nil {
+		span.SetTag("controller", ControllerName)
+		span.SetTag("resource.name", req.Name)
+		span.SetTag("resource.namespace", req.Namespace)
+		defer span.Finish()
+	}
 
 	logger := logging.WithRequestIDField(ctx, r.Logger.With(
 		zap.String("namespace", req.Namespace),
