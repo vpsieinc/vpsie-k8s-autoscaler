@@ -14,6 +14,7 @@ import (
 	"github.com/go-logr/zapr"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -1071,8 +1072,7 @@ func (cm *ControllerManager) updateNodeGroupWithRetry(ctx context.Context, name,
 		}
 
 		// Sync ScaleUpPolicy if configured in AutoscalerConfig
-		if defaults.ScaleUpPolicy.Enabled || defaults.ScaleUpPolicy.CPUThreshold > 0 ||
-			defaults.ScaleUpPolicy.MemoryThreshold > 0 || defaults.ScaleUpPolicy.StabilizationWindowSeconds > 0 {
+		if isScaleUpPolicyConfigured(defaults.ScaleUpPolicy) {
 			if !scaleUpPolicyEqual(ng.Spec.ScaleUpPolicy, defaults.ScaleUpPolicy) {
 				cm.logger.Info("Updating NodeGroup scaleUpPolicy",
 					zap.String("nodeGroup", ng.Name),
@@ -1083,9 +1083,7 @@ func (cm *ControllerManager) updateNodeGroupWithRetry(ctx context.Context, name,
 		}
 
 		// Sync ScaleDownPolicy if configured in AutoscalerConfig
-		if defaults.ScaleDownPolicy.Enabled || defaults.ScaleDownPolicy.CPUThreshold > 0 ||
-			defaults.ScaleDownPolicy.MemoryThreshold > 0 || defaults.ScaleDownPolicy.StabilizationWindowSeconds > 0 ||
-			defaults.ScaleDownPolicy.CooldownSeconds > 0 {
+		if isScaleDownPolicyConfigured(defaults.ScaleDownPolicy) {
 			if !scaleDownPolicyEqual(ng.Spec.ScaleDownPolicy, defaults.ScaleDownPolicy) {
 				cm.logger.Info("Updating NodeGroup scaleDownPolicy",
 					zap.String("nodeGroup", ng.Name),
@@ -1122,12 +1120,13 @@ func (cm *ControllerManager) updateNodeGroupWithRetry(ctx context.Context, name,
 		}
 
 		if err := cm.mgr.GetClient().Update(ctx, ng); err != nil {
-			if strings.Contains(err.Error(), "the object has been modified") && attempt < maxRetries-1 {
+			if apierrors.IsConflict(err) && attempt < maxRetries-1 {
 				cm.logger.Debug("NodeGroup update conflict, retrying",
 					zap.String("nodeGroup", name),
 					zap.Int("attempt", attempt+1),
 				)
-				time.Sleep(100 * time.Millisecond)
+				// Exponential backoff: 100ms, 200ms, 300ms, ...
+				time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
 				continue
 			}
 			cm.logger.Warn("Failed to update managed NodeGroup",
@@ -1143,7 +1142,25 @@ func (cm *ControllerManager) updateNodeGroupWithRetry(ctx context.Context, name,
 	return false
 }
 
-// scaleUpPolicyEqual compares two ScaleUpPolicy structs for equality
+// Equality functions for policy structs
+//
+// These functions are used to compare policy configurations to prevent unnecessary
+// API updates when syncing NodeGroup specs. They enable the controller to detect
+// when a policy has actually changed versus when it's identical to the current state.
+//
+// IMPORTANT: When adding or removing fields from the corresponding struct types
+// in pkg/apis/autoscaler/v1alpha1/, these equality functions MUST be updated
+// to include the new fields. Failure to do so will cause the controller to miss
+// configuration changes for those fields.
+//
+// Affected structs and their equality functions:
+//   - ScaleUpPolicy          -> scaleUpPolicyEqual
+//   - ScaleDownPolicy        -> scaleDownPolicyEqual
+//   - CostOptimizationConfig -> costOptimizationEqual
+//   - SpotInstanceConfig     -> spotConfigEqual
+
+// scaleUpPolicyEqual compares two ScaleUpPolicy structs for equality.
+// NOTE: Update this function when adding fields to ScaleUpPolicy struct.
 func scaleUpPolicyEqual(a, b v1alpha1.ScaleUpPolicy) bool {
 	return a.Enabled == b.Enabled &&
 		a.CPUThreshold == b.CPUThreshold &&
@@ -1151,7 +1168,8 @@ func scaleUpPolicyEqual(a, b v1alpha1.ScaleUpPolicy) bool {
 		a.StabilizationWindowSeconds == b.StabilizationWindowSeconds
 }
 
-// scaleDownPolicyEqual compares two ScaleDownPolicy structs for equality
+// scaleDownPolicyEqual compares two ScaleDownPolicy structs for equality.
+// NOTE: Update this function when adding fields to ScaleDownPolicy struct.
 func scaleDownPolicyEqual(a, b v1alpha1.ScaleDownPolicy) bool {
 	return a.Enabled == b.Enabled &&
 		a.CPUThreshold == b.CPUThreshold &&
@@ -1160,7 +1178,19 @@ func scaleDownPolicyEqual(a, b v1alpha1.ScaleDownPolicy) bool {
 		a.CooldownSeconds == b.CooldownSeconds
 }
 
-// costOptimizationEqual compares two CostOptimizationConfig structs for equality
+// isScaleUpPolicyConfigured checks if any ScaleUpPolicy field is set
+func isScaleUpPolicyConfigured(p v1alpha1.ScaleUpPolicy) bool {
+	return p.Enabled || p.CPUThreshold > 0 || p.MemoryThreshold > 0 || p.StabilizationWindowSeconds > 0
+}
+
+// isScaleDownPolicyConfigured checks if any ScaleDownPolicy field is set
+func isScaleDownPolicyConfigured(p v1alpha1.ScaleDownPolicy) bool {
+	return p.Enabled || p.CPUThreshold > 0 || p.MemoryThreshold > 0 ||
+		p.StabilizationWindowSeconds > 0 || p.CooldownSeconds > 0
+}
+
+// costOptimizationEqual compares two CostOptimizationConfig structs for equality.
+// NOTE: Update this function when adding fields to CostOptimizationConfig struct.
 func costOptimizationEqual(a, b *v1alpha1.CostOptimizationConfig) bool {
 	if a == nil && b == nil {
 		return true
@@ -1176,7 +1206,8 @@ func costOptimizationEqual(a, b *v1alpha1.CostOptimizationConfig) bool {
 		a.RequireApproval == b.RequireApproval
 }
 
-// spotConfigEqual compares two SpotInstanceConfig structs for equality
+// spotConfigEqual compares two SpotInstanceConfig structs for equality.
+// NOTE: Update this function when adding fields to SpotInstanceConfig struct.
 func spotConfigEqual(a, b *v1alpha1.SpotInstanceConfig) bool {
 	if a == nil && b == nil {
 		return true
