@@ -347,6 +347,19 @@ func (e *Executor) executeBlueGreenBatch(ctx context.Context, plan *RebalancePla
 // provisionNewNode provisions a new node with the target instance type.
 // Returns (*Node, nil) on success, or (nil, error) on failure.
 // Callers MUST check both return values: if err != nil || newNode == nil
+//
+// IMPLEMENTATION STATUS: NOT IMPLEMENTED
+// This function currently returns an error because VPSie API integration for node
+// provisioning is not yet complete. The rebalancer feature should be disabled via
+// GlobalAutoscalerSettings.EnableRebalancing=false (the default) until this is implemented.
+//
+// To implement, this function needs to:
+// 1. Call VPSie API to provision a new VPS with the target offering
+// 2. Wait for the VPS to be created and get its ID
+// 3. Create a VPSieNode CR to track the new node
+// 4. Return a Node struct with the new node's information
+//
+// See pkg/controller/nodegroup/nodegroup_controller.go for reference on VPSie node provisioning.
 func (e *Executor) provisionNewNode(ctx context.Context, plan *RebalancePlan, candidate *CandidateNode) (*Node, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("Provisioning new node",
@@ -364,8 +377,8 @@ func (e *Executor) provisionNewNode(ctx context.Context, plan *RebalancePlan, ca
 
 	// IMPLEMENTATION NOT COMPLETE: Return explicit error instead of fake success
 	// This prevents silent failures in production where no node is actually provisioned
-	// TODO: Implement actual VPSie API call to provision VPS instance
-	return nil, fmt.Errorf("node provisioning not yet implemented: VPSie API integration required for offering %s", candidate.TargetOffering)
+	// Ensure GlobalAutoscalerSettings.EnableRebalancing=false until this is implemented
+	return nil, fmt.Errorf("node provisioning not yet implemented: VPSie API integration required for offering %s (ensure enableRebalancing=false in AutoscalerConfig)", candidate.TargetOffering)
 }
 
 // DrainNode safely drains workloads from a node

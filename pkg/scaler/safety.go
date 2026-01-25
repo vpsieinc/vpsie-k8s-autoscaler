@@ -759,6 +759,14 @@ func matchesNodeAffinity(pod *corev1.Pod, node *corev1.Node) bool {
 // if the existing pod's NodeName matches the target node's Name, they are on the same topology.
 // For other topology keys (e.g., zone), we would need to look up the existing pod's node,
 // which requires additional API calls. For safety, we return false for non-hostname topologies.
+//
+// RACE CONDITION NOTE: This function reads existingPod.Spec.NodeName which may change if the pod
+// is being rescheduled concurrently. This is acceptable for scale-down safety checks because:
+// 1. If the pod moves AFTER we check, the scale-down decision remains safe (pod is elsewhere)
+// 2. If the pod moves BEFORE we check but NodeName is stale, we may be overly conservative
+//    (blocking a safe scale-down) but never unsafe
+// 3. The scheduler handles the authoritative pod placement; we only make advisory decisions
+// For stronger consistency, callers should use informer caches with appropriate resync periods.
 func matchesPodAffinityTerm(existingPod *corev1.Pod, term *corev1.PodAffinityTerm, node *corev1.Node) bool {
 	// Handle nil LabelSelector - cannot match without selector
 	if term.LabelSelector == nil {

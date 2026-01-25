@@ -3,7 +3,9 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -981,19 +983,14 @@ func (c *Client) IsSimpleTokenAuth() bool {
 	return c.useSimpleToken
 }
 
-// CalculateCredentialsHash calculates a hash of the given credentials for change detection.
+// CalculateCredentialsHash calculates a SHA-256 hash of the given credentials for change detection.
 // This is useful for comparing credentials without storing them in plain text.
 // The hash does not expose the actual credentials.
 // This function is exported to allow credential change detection before updating the client.
 func CalculateCredentialsHash(clientID, clientSecret string) string {
-	// Use a simple hash of clientID + secret for change detection
-	// We don't need cryptographic security here, just change detection
 	combined := clientID + ":" + clientSecret
-	var hash uint64
-	for i := 0; i < len(combined); i++ {
-		hash = hash*31 + uint64(combined[i])
-	}
-	return fmt.Sprintf("%016x", hash)
+	hash := sha256.Sum256([]byte(combined))
+	return hex.EncodeToString(hash[:])
 }
 
 // GetCredentialsHash returns a hash of the current credentials for change detection.

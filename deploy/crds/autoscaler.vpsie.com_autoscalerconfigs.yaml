@@ -81,9 +81,13 @@ spec:
                       autoscaler can create new NodeGroups
                     type: boolean
                   enableRebalancing:
-                    default: true
-                    description: EnableRebalancing controls whether the autoscaler
-                      can rebalance nodes for cost optimization
+                    default: false
+                    description: |-
+                      EnableRebalancing controls whether the autoscaler can rebalance nodes for cost optimization.
+                      NOTE: Rebalancing is currently disabled by default because the VPSie API integration
+                      for node provisioning is not yet implemented. The rebalancer's provisionNewNode function
+                      will return an error until this integration is complete. Set to true only when VPSie
+                      API node provisioning is available.
                     type: boolean
                   maxClusterWorkers:
                     default: 10

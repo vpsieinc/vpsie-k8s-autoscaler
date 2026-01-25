@@ -150,8 +150,12 @@ type GlobalAutoscalerSettings struct {
 	// +optional
 	EnableDynamicNodeGroupCreation bool `json:"enableDynamicNodeGroupCreation,omitempty"`
 
-	// EnableRebalancing controls whether the autoscaler can rebalance nodes for cost optimization
-	// +kubebuilder:default=true
+	// EnableRebalancing controls whether the autoscaler can rebalance nodes for cost optimization.
+	// NOTE: Rebalancing is currently disabled by default because the VPSie API integration
+	// for node provisioning is not yet implemented. The rebalancer's provisionNewNode function
+	// will return an error until this integration is complete. Set to true only when VPSie
+	// API node provisioning is available.
+	// +kubebuilder:default=false
 	// +optional
 	EnableRebalancing bool `json:"enableRebalancing,omitempty"`
 
