@@ -314,6 +314,13 @@ func (p *Provisioner) Delete(ctx context.Context, vn *v1alpha1.VPSieNode, logger
 			if err != nil {
 				logger.Warn("Failed to look up node identifier, will try other deletion methods",
 					zap.String("vpsienode", vn.Name),
+					zap.String("vpsieNodeIdentifier", vn.Spec.VPSieNodeIdentifier),
+					zap.String("statusHostname", vn.Status.Hostname),
+					zap.String("specNodeName", vn.Spec.NodeName),
+					zap.String("statusNodeName", vn.Status.NodeName),
+					zap.String("hostnameUsed", hostname),
+					zap.String("resourceIdentifier", vn.Spec.ResourceIdentifier),
+					zap.Int("vpsieInstanceID", vn.Spec.VPSieInstanceID),
 					zap.Error(err),
 				)
 			} else if lookedUpID != "" {
@@ -325,7 +332,13 @@ func (p *Provisioner) Delete(ctx context.Context, vn *v1alpha1.VPSieNode, logger
 			} else {
 				logger.Warn("Node not found in cluster info, may already be deleted",
 					zap.String("vpsienode", vn.Name),
-					zap.String("hostname", hostname),
+					zap.String("vpsieNodeIdentifier", vn.Spec.VPSieNodeIdentifier),
+					zap.String("statusHostname", vn.Status.Hostname),
+					zap.String("specNodeName", vn.Spec.NodeName),
+					zap.String("statusNodeName", vn.Status.NodeName),
+					zap.String("hostnameUsed", hostname),
+					zap.String("resourceIdentifier", vn.Spec.ResourceIdentifier),
+					zap.Int("vpsieInstanceID", vn.Spec.VPSieInstanceID),
 				)
 			}
 		}
@@ -415,7 +428,12 @@ func (p *Provisioner) Delete(ctx context.Context, vn *v1alpha1.VPSieNode, logger
 	return nil
 }
 
-// generateHostname generates a hostname for the VPS
+// generateHostname generates a hostname for the VPS.
+// This function is used as a fallback when updating VPSieNode spec after VPS creation,
+// specifically when both vn.Spec.NodeName is empty AND the VPSie API does not return
+// a hostname (vps.Hostname is empty). In practice, VPSie API usually provides the
+// hostname, but this fallback ensures we always have a valid NodeName set.
+// See UpdateVPSieNodeFromVPS where this is called.
 func (p *Provisioner) generateHostname(vn *v1alpha1.VPSieNode) string {
 	if vn.Spec.NodeName != "" {
 		return vn.Spec.NodeName
