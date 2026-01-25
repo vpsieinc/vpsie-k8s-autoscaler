@@ -394,7 +394,7 @@ This release establishes the complete foundation for the VPSie Kubernetes Autosc
   - CRD manifest freshness verification
 - Docker multi-arch builds (linux/amd64, linux/arm64)
   - Automated builds on push to main and version tags
-  - Published to ghcr.io/vpsie/vpsie-k8s-autoscaler
+  - Published to ghcr.io/vpsieinc/vpsie-k8s-autoscaler
   - Version information injection via ldflags
   - Distroless base image for minimal attack surface
 - Makefile with comprehensive targets
@@ -453,9 +453,9 @@ See [OAUTH_MIGRATION.md](OAUTH_MIGRATION.md) for migration guide.
 ### Docker Images
 
 Published to GitHub Container Registry:
-- `ghcr.io/vpsie/vpsie-k8s-autoscaler:latest`
-- `ghcr.io/vpsie/vpsie-k8s-autoscaler:main`
-- `ghcr.io/vpsie/vpsie-k8s-autoscaler:v0.1.0-alpha` (planned)
+- `ghcr.io/vpsieinc/vpsie-k8s-autoscaler:latest`
+- `ghcr.io/vpsieinc/vpsie-k8s-autoscaler:main`
+- `ghcr.io/vpsieinc/vpsie-k8s-autoscaler:v0.1.0-alpha` (planned)
 
 Multi-architecture support:
 - linux/amd64

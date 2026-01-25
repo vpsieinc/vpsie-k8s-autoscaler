@@ -33,7 +33,7 @@
 4. **CI/CD & Infrastructure**
    - ✅ GitHub Actions CI workflow (test, lint, build, verify-crds)
    - ✅ Docker multi-arch builds (linux/amd64, linux/arm64)
-   - ✅ Automated image publishing to ghcr.io/vpsie/vpsie-k8s-autoscaler
+   - ✅ Automated image publishing to ghcr.io/vpsieinc/vpsie-k8s-autoscaler
    - ✅ 72 total tests with 81.5% overall coverage
    - ✅ Pre-commit hooks for code quality
    - ✅ All workflows passing with zero failures

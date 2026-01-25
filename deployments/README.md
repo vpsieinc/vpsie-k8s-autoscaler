@@ -144,7 +144,7 @@ kubectl get --raw /api/v1/namespaces/vpsie-system/services/vpsie-autoscaler-metr
 
 ```bash
 kubectl kustomize deployments/overlays/production/ | \
-  kubectl patch --local -f - -p '{"spec":{"template":{"spec":{"containers":[{"name":"controller","image":"ghcr.io/vpsie/vpsie-k8s-autoscaler:v0.5.0"}]}}}}' --type=strategic -o yaml | \
+  kubectl patch --local -f - -p '{"spec":{"template":{"spec":{"containers":[{"name":"controller","image":"ghcr.io/vpsieinc/vpsie-k8s-autoscaler:v0.5.0"}]}}}}' --type=strategic -o yaml | \
   kubectl apply -f -
 ```
 
