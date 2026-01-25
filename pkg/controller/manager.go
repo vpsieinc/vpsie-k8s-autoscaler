@@ -1070,6 +1070,53 @@ func (cm *ControllerManager) updateNodeGroupWithRetry(ctx context.Context, name,
 			needsUpdate = true
 		}
 
+		// Sync ScaleUpPolicy if configured in AutoscalerConfig
+		if defaults.ScaleUpPolicy.Enabled || defaults.ScaleUpPolicy.CPUThreshold > 0 ||
+			defaults.ScaleUpPolicy.MemoryThreshold > 0 || defaults.ScaleUpPolicy.StabilizationWindowSeconds > 0 {
+			if !scaleUpPolicyEqual(ng.Spec.ScaleUpPolicy, defaults.ScaleUpPolicy) {
+				cm.logger.Info("Updating NodeGroup scaleUpPolicy",
+					zap.String("nodeGroup", ng.Name),
+				)
+				ng.Spec.ScaleUpPolicy = defaults.ScaleUpPolicy
+				needsUpdate = true
+			}
+		}
+
+		// Sync ScaleDownPolicy if configured in AutoscalerConfig
+		if defaults.ScaleDownPolicy.Enabled || defaults.ScaleDownPolicy.CPUThreshold > 0 ||
+			defaults.ScaleDownPolicy.MemoryThreshold > 0 || defaults.ScaleDownPolicy.StabilizationWindowSeconds > 0 ||
+			defaults.ScaleDownPolicy.CooldownSeconds > 0 {
+			if !scaleDownPolicyEqual(ng.Spec.ScaleDownPolicy, defaults.ScaleDownPolicy) {
+				cm.logger.Info("Updating NodeGroup scaleDownPolicy",
+					zap.String("nodeGroup", ng.Name),
+				)
+				ng.Spec.ScaleDownPolicy = defaults.ScaleDownPolicy
+				needsUpdate = true
+			}
+		}
+
+		// Sync CostOptimization if configured in AutoscalerConfig
+		if defaults.CostOptimization != nil {
+			if ng.Spec.CostOptimization == nil || !costOptimizationEqual(ng.Spec.CostOptimization, defaults.CostOptimization) {
+				cm.logger.Info("Updating NodeGroup costOptimization",
+					zap.String("nodeGroup", ng.Name),
+				)
+				ng.Spec.CostOptimization = defaults.CostOptimization.DeepCopy()
+				needsUpdate = true
+			}
+		}
+
+		// Sync SpotConfig if configured in AutoscalerConfig
+		if defaults.SpotConfig != nil {
+			if ng.Spec.SpotConfig == nil || !spotConfigEqual(ng.Spec.SpotConfig, defaults.SpotConfig) {
+				cm.logger.Info("Updating NodeGroup spotConfig",
+					zap.String("nodeGroup", ng.Name),
+				)
+				ng.Spec.SpotConfig = defaults.SpotConfig.DeepCopy()
+				needsUpdate = true
+			}
+		}
+
 		if !needsUpdate {
 			return false // No update needed
 		}
@@ -1094,6 +1141,54 @@ func (cm *ControllerManager) updateNodeGroupWithRetry(ctx context.Context, name,
 	}
 
 	return false
+}
+
+// scaleUpPolicyEqual compares two ScaleUpPolicy structs for equality
+func scaleUpPolicyEqual(a, b v1alpha1.ScaleUpPolicy) bool {
+	return a.Enabled == b.Enabled &&
+		a.CPUThreshold == b.CPUThreshold &&
+		a.MemoryThreshold == b.MemoryThreshold &&
+		a.StabilizationWindowSeconds == b.StabilizationWindowSeconds
+}
+
+// scaleDownPolicyEqual compares two ScaleDownPolicy structs for equality
+func scaleDownPolicyEqual(a, b v1alpha1.ScaleDownPolicy) bool {
+	return a.Enabled == b.Enabled &&
+		a.CPUThreshold == b.CPUThreshold &&
+		a.MemoryThreshold == b.MemoryThreshold &&
+		a.StabilizationWindowSeconds == b.StabilizationWindowSeconds &&
+		a.CooldownSeconds == b.CooldownSeconds
+}
+
+// costOptimizationEqual compares two CostOptimizationConfig structs for equality
+func costOptimizationEqual(a, b *v1alpha1.CostOptimizationConfig) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Enabled == b.Enabled &&
+		a.Strategy == b.Strategy &&
+		a.OptimizationInterval == b.OptimizationInterval &&
+		a.MinMonthlySavings == b.MinMonthlySavings &&
+		a.MaxPerformanceImpact == b.MaxPerformanceImpact &&
+		a.RequireApproval == b.RequireApproval
+}
+
+// spotConfigEqual compares two SpotInstanceConfig structs for equality
+func spotConfigEqual(a, b *v1alpha1.SpotInstanceConfig) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Enabled == b.Enabled &&
+		a.MaxSpotPercentage == b.MaxSpotPercentage &&
+		a.FallbackToOnDemand == b.FallbackToOnDemand &&
+		a.InterruptionGracePeriod == b.InterruptionGracePeriod &&
+		a.AllowedInterruptionRate == b.AllowedInterruptionRate
 }
 
 // newLogger creates a new zap logger based on options

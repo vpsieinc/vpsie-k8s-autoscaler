@@ -36,6 +36,9 @@ type MockVPSieClient struct {
 	// DeleteK8sNodeFunc allows custom behavior for DeleteK8sNode
 	DeleteK8sNodeFunc func(ctx context.Context, clusterIdentifier, nodeIdentifier string) error
 
+	// FindK8sNodeIdentifierFunc allows custom behavior for FindK8sNodeIdentifier
+	FindK8sNodeIdentifierFunc func(ctx context.Context, clusterIdentifier, hostname string) (string, error)
+
 	// CallCounts tracks how many times each method was called
 	CallCounts map[string]int
 
@@ -298,6 +301,22 @@ func (m *MockVPSieClient) DeleteK8sNode(ctx context.Context, clusterIdentifier, 
 
 	m.DeletedK8sNodes[key] = true
 	return nil
+}
+
+// FindK8sNodeIdentifier mocks looking up a node identifier by hostname
+func (m *MockVPSieClient) FindK8sNodeIdentifier(ctx context.Context, clusterIdentifier, hostname string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.CallCounts["FindK8sNodeIdentifier"]++
+
+	// Use custom function if provided
+	if m.FindK8sNodeIdentifierFunc != nil {
+		return m.FindK8sNodeIdentifierFunc(ctx, clusterIdentifier, hostname)
+	}
+
+	// Default: return empty string (not found)
+	return "", nil
 }
 
 // Helper functions to parse string IDs to int
