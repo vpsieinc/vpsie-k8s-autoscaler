@@ -352,3 +352,33 @@ type GetK8sClusterResponse struct {
 	Message string     `json:"message"`
 	Data    K8sCluster `json:"data,omitempty"`
 }
+
+// K8sClusterNode represents a node (master or slave) in a VPSie K8s cluster
+type K8sClusterNode struct {
+	Identifier string `json:"identifier"` // UUID for API operations (needed for deletion)
+	Hostname   string `json:"hostname"`   // Node hostname
+	IP         string `json:"ip"`         // Node IP address
+	Status     string `json:"status"`     // Node status (e.g., "running")
+	Role       string `json:"role"`       // Node role ("master" or "slave")
+	CPU        int    `json:"cpu"`        // CPU cores
+	RAM        int    `json:"ram"`        // RAM in MB
+	Disk       int    `json:"disk"`       // Disk in GB
+}
+
+// K8sClusterInfo represents detailed information about a VPSie K8s cluster including nodes
+type K8sClusterInfo struct {
+	Identifier string           `json:"identifier"`
+	Name       string           `json:"cluster_name"`
+	KubeVer    string           `json:"kube_version"`
+	Status     string           `json:"status"`
+	Masters    []K8sClusterNode `json:"masters"`
+	Slaves     []K8sClusterNode `json:"slaves"`
+}
+
+// GetK8sClusterInfoResponse represents the response from getting K8s cluster info
+type GetK8sClusterInfoResponse struct {
+	Error   bool           `json:"error"`
+	Code    int            `json:"code"`
+	Message string         `json:"message"`
+	Data    K8sClusterInfo `json:"data,omitempty"`
+}

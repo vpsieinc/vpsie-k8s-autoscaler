@@ -1712,3 +1712,60 @@ func (c *Client) FindK8sClusterByName(ctx context.Context, name string) (*K8sClu
 
 	return nil, nil // Not found
 }
+
+// GetK8sClusterInfo retrieves detailed cluster information including node list.
+// This is useful for looking up node identifiers by hostname.
+func (c *Client) GetK8sClusterInfo(ctx context.Context, clusterIdentifier string) (*K8sClusterInfo, error) {
+	if clusterIdentifier == "" {
+		return nil, NewConfigError("cluster_identifier", "Cluster identifier is required")
+	}
+
+	var response GetK8sClusterInfoResponse
+
+	// GET /k8s/cluster/byId/{identifier}/info - gets detailed cluster info with nodes
+	endpoint := fmt.Sprintf("/k8s/cluster/byId/%s/info", clusterIdentifier)
+	if err := c.get(ctx, endpoint, &response); err != nil {
+		return nil, fmt.Errorf("failed to get K8s cluster info: %w", err)
+	}
+
+	if response.Error {
+		return nil, NewAPIError(response.Code, "GetK8sClusterInfoFailed", response.Message)
+	}
+
+	return &response.Data, nil
+}
+
+// FindK8sNodeIdentifier looks up a node's identifier by hostname in a cluster.
+// This is used during node deletion when VPSieNodeIdentifier is not set.
+// Returns empty string if node is not found.
+func (c *Client) FindK8sNodeIdentifier(ctx context.Context, clusterIdentifier, hostname string) (string, error) {
+	if clusterIdentifier == "" || hostname == "" {
+		return "", nil
+	}
+
+	info, err := c.GetK8sClusterInfo(ctx, clusterIdentifier)
+	if err != nil {
+		// If cluster info endpoint doesn't exist, return empty without error
+		// The caller will fall back to other deletion methods
+		if IsNotFound(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to get cluster info: %w", err)
+	}
+
+	// Search in slaves first (most common case)
+	for _, node := range info.Slaves {
+		if node.Hostname == hostname {
+			return node.Identifier, nil
+		}
+	}
+
+	// Search in masters (less common but possible)
+	for _, node := range info.Masters {
+		if node.Hostname == hostname {
+			return node.Identifier, nil
+		}
+	}
+
+	return "", nil // Not found
+}

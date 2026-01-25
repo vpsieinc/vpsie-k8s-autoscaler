@@ -25,6 +25,9 @@ type VPSieClientInterface interface {
 	// DeleteK8sNode deletes a node from a VPSie managed Kubernetes cluster
 	// Uses the K8s-specific deletion API: DELETE /k8s/cluster/byId/{clusterIdentifier}/delete/slave
 	DeleteK8sNode(ctx context.Context, clusterIdentifier, nodeIdentifier string) error
+	// FindK8sNodeIdentifier looks up a node's identifier by hostname in a cluster
+	// Used during node deletion when VPSieNodeIdentifier is not set
+	FindK8sNodeIdentifier(ctx context.Context, clusterIdentifier, hostname string) (string, error)
 }
 
 // Ensure vpsieclient.Client implements VPSieClientInterface

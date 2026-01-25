@@ -291,28 +291,68 @@ func (p *Provisioner) checkVPSStatus(ctx context.Context, vn *v1alpha1.VPSieNode
 // Delete deletes the VPS from VPSie
 // Uses the K8s-specific deletion API when ResourceIdentifier and VPSieNodeIdentifier are available
 func (p *Provisioner) Delete(ctx context.Context, vn *v1alpha1.VPSieNode, logger *zap.Logger) error {
-	// Try K8s-specific deletion API first if we have the required identifiers
-	if vn.Spec.ResourceIdentifier != "" && vn.Spec.VPSieNodeIdentifier != "" {
+	nodeIdentifier := vn.Spec.VPSieNodeIdentifier
+
+	// If we have ResourceIdentifier but no VPSieNodeIdentifier, try to look it up by hostname
+	if vn.Spec.ResourceIdentifier != "" && nodeIdentifier == "" {
+		hostname := vn.Status.Hostname
+		if hostname == "" {
+			hostname = vn.Spec.NodeName
+		}
+		if hostname == "" {
+			hostname = vn.Status.NodeName
+		}
+
+		if hostname != "" {
+			logger.Info("Looking up K8s node identifier by hostname",
+				zap.String("vpsienode", vn.Name),
+				zap.String("hostname", hostname),
+				zap.String("clusterIdentifier", vn.Spec.ResourceIdentifier),
+			)
+
+			lookedUpID, err := p.vpsieClient.FindK8sNodeIdentifier(ctx, vn.Spec.ResourceIdentifier, hostname)
+			if err != nil {
+				logger.Warn("Failed to look up node identifier, will try other deletion methods",
+					zap.String("vpsienode", vn.Name),
+					zap.Error(err),
+				)
+			} else if lookedUpID != "" {
+				logger.Info("Found node identifier via cluster info lookup",
+					zap.String("vpsienode", vn.Name),
+					zap.String("nodeIdentifier", lookedUpID),
+				)
+				nodeIdentifier = lookedUpID
+			} else {
+				logger.Warn("Node not found in cluster info, may already be deleted",
+					zap.String("vpsienode", vn.Name),
+					zap.String("hostname", hostname),
+				)
+			}
+		}
+	}
+
+	// Try K8s-specific deletion API if we have the required identifiers
+	if vn.Spec.ResourceIdentifier != "" && nodeIdentifier != "" {
 		logger.Info("Deleting K8s node via cluster API",
 			zap.String("vpsienode", vn.Name),
 			zap.String("clusterIdentifier", vn.Spec.ResourceIdentifier),
-			zap.String("nodeIdentifier", vn.Spec.VPSieNodeIdentifier),
+			zap.String("nodeIdentifier", nodeIdentifier),
 		)
 
-		err := p.vpsieClient.DeleteK8sNode(ctx, vn.Spec.ResourceIdentifier, vn.Spec.VPSieNodeIdentifier)
+		err := p.vpsieClient.DeleteK8sNode(ctx, vn.Spec.ResourceIdentifier, nodeIdentifier)
 		if err != nil {
 			// If node not found, consider it already deleted
 			if vpsieclient.IsNotFound(err) {
 				logger.Info("K8s node not found, already deleted",
 					zap.String("vpsienode", vn.Name),
-					zap.String("nodeIdentifier", vn.Spec.VPSieNodeIdentifier),
+					zap.String("nodeIdentifier", nodeIdentifier),
 				)
 				return nil
 			}
 
 			logger.Error("Failed to delete K8s node via cluster API",
 				zap.String("vpsienode", vn.Name),
-				zap.String("nodeIdentifier", vn.Spec.VPSieNodeIdentifier),
+				zap.String("nodeIdentifier", nodeIdentifier),
 				zap.Error(err),
 			)
 			return fmt.Errorf("failed to delete K8s node: %w", err)
@@ -320,7 +360,7 @@ func (p *Provisioner) Delete(ctx context.Context, vn *v1alpha1.VPSieNode, logger
 
 		logger.Info("K8s node deleted successfully via cluster API",
 			zap.String("vpsienode", vn.Name),
-			zap.String("nodeIdentifier", vn.Spec.VPSieNodeIdentifier),
+			zap.String("nodeIdentifier", nodeIdentifier),
 		)
 
 		now := metav1.Now()
@@ -330,10 +370,13 @@ func (p *Provisioner) Delete(ctx context.Context, vn *v1alpha1.VPSieNode, logger
 
 	// Fallback to regular VM deletion if K8s identifiers are not available
 	if vn.Spec.VPSieInstanceID == 0 {
-		logger.Info("No VPS ID or K8s node identifier set, skipping deletion",
+		logger.Warn("No VPS ID or K8s node identifier available for deletion",
 			zap.String("vpsienode", vn.Name),
+			zap.String("resourceIdentifier", vn.Spec.ResourceIdentifier),
+			zap.String("hostname", vn.Status.Hostname),
 		)
-		return nil
+		// Don't silently skip - return error so the caller knows deletion didn't happen
+		return fmt.Errorf("cannot delete VPS: no VPSieInstanceID or VPSieNodeIdentifier available (hostname: %s)", vn.Status.Hostname)
 	}
 
 	logger.Info("Deleting VPS via VM API (fallback)",
