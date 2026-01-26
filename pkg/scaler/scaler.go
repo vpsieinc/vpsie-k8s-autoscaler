@@ -149,6 +149,15 @@ func DefaultConfig() *Config {
 	}
 }
 
+// GetMaxNodesPerScaleDown returns the maximum number of nodes that can be scaled down
+// in a single operation. This is a safety limit to prevent aggressive scale-down.
+func (s *ScaleDownManager) GetMaxNodesPerScaleDown() int {
+	if s.config == nil {
+		return 1 // Safe default
+	}
+	return s.config.MaxNodesPerScaleDown
+}
+
 // IdentifyUnderutilizedNodes finds nodes with low utilization.
 // Only processes NodeGroups that have the managed label (autoscaler.vpsie.com/managed=true).
 func (s *ScaleDownManager) IdentifyUnderutilizedNodes(

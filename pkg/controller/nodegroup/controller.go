@@ -41,6 +41,9 @@ type ScaleDownManagerInterface interface {
 	IdentifyUnderutilizedNodes(ctx context.Context, ng *v1alpha1.NodeGroup) ([]*scaler.ScaleDownCandidate, error)
 	ScaleDown(ctx context.Context, ng *v1alpha1.NodeGroup, candidates []*scaler.ScaleDownCandidate) error
 	UpdateNodeUtilization(ctx context.Context) error
+	// GetMaxNodesPerScaleDown returns the maximum number of nodes that can be scaled down
+	// in a single operation. This is a safety limit to prevent aggressive scale-down.
+	GetMaxNodesPerScaleDown() int
 }
 
 // NodeGroupReconciler reconciles a NodeGroup object

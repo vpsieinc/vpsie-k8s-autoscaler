@@ -28,6 +28,7 @@ make clean                    # Clean build artifacts
 make test                     # Run unit tests with race detection
 make lint                     # Run golangci-lint
 make fmt                      # Format code (gofmt + goimports)
+make vet                      # Run go vet
 
 # Run specific tests
 go test ./pkg/scaler -run TestScaleDownManager_IdentifyUnderutilizedNodes -v
@@ -46,6 +47,10 @@ make generate                 # Generate DeepCopy methods + CRD manifests
 make run                      # Run controller against current kubectl context
 make kind-create              # Create local kind cluster
 make kind-delete              # Delete kind cluster
+
+# Dependencies
+make deps                     # Download and tidy go modules
+make verify                   # Verify go modules
 ```
 
 ## Architecture
@@ -139,15 +144,18 @@ go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
 | Task | Files |
 |------|-------|
 | Add NodeGroup field | `pkg/apis/autoscaler/v1alpha1/nodegroup_types.go`, then `make generate` |
+| Add VPSieNode field | `pkg/apis/autoscaler/v1alpha1/vpsienode_types.go`, then `make generate` |
 | Add/modify labels | `pkg/apis/autoscaler/v1alpha1/labels.go` |
 | Modify scaling logic | `pkg/scaler/scaler.go`, `pkg/scaler/policies.go`, `pkg/scaler/safety.go` |
 | Modify rebalancing | `pkg/rebalancer/analyzer.go`, `planner.go`, `executor.go` |
+| Add cost optimization | `pkg/vpsie/cost/calculator.go`, `optimizer.go` |
 | Add metrics | `pkg/metrics/metrics.go` (use `sanitize.go` for labels) |
 | VPSie API changes | `pkg/vpsie/client/client.go`, `types.go`, `errors.go` |
 | Webhook validation | `pkg/webhook/server.go`, `nodegroup_validator.go`, `vpsienode_validator.go` |
 | Controller CLI flags | `cmd/controller/main.go`, `pkg/controller/options.go` |
 | Error tracking | `pkg/tracing/sentry.go` |
 | Node utilities | `pkg/utils/node.go` |
+| Scale-up triggers | `pkg/events/watcher.go`, `scaleup.go`, `analyzer.go` |
 
 ## Deployment
 

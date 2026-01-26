@@ -45,6 +45,11 @@ func (m *MockScaleDownManager) UpdateNodeUtilization(ctx context.Context) error 
 	return args.Error(0)
 }
 
+func (m *MockScaleDownManager) GetMaxNodesPerScaleDown() int {
+	args := m.Called()
+	return args.Int(0)
+}
+
 // TestReconcileIntelligentScaleDown_Success tests successful intelligent scale-down
 func TestReconcileIntelligentScaleDown_Success(t *testing.T) {
 	// Create logger
@@ -123,7 +128,9 @@ func TestReconcileIntelligentScaleDown_Success(t *testing.T) {
 
 	// Setup expectations
 	mockSDM.On("IdentifyUnderutilizedNodes", mock.Anything, ng).Return(candidates, nil)
-	mockSDM.On("ScaleDown", mock.Anything, ng, candidates).Return(nil)
+	mockSDM.On("GetMaxNodesPerScaleDown").Return(1)
+	// Note: ScaleDown will receive only 1 candidate due to MaxNodesPerScaleDown limit
+	mockSDM.On("ScaleDown", mock.Anything, ng, mock.AnythingOfType("[]*scaler.ScaleDownCandidate")).Return(nil)
 
 	// Create fake Kubernetes client
 	scheme := runtime.NewScheme()
@@ -306,6 +313,7 @@ func TestReconcileIntelligentScaleDown_ScaleDownError(t *testing.T) {
 	}
 
 	mockSDM.On("IdentifyUnderutilizedNodes", mock.Anything, ng).Return(candidates, nil)
+	mockSDM.On("GetMaxNodesPerScaleDown").Return(1)
 	mockSDM.On("ScaleDown", mock.Anything, ng, candidates).Return(errors.New("pod eviction failed"))
 
 	// Create fake client

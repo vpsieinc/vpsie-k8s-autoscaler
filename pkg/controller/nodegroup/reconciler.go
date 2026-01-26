@@ -358,6 +358,19 @@ func (r *NodeGroupReconciler) reconcileIntelligentScaleDown(
 		return ctrl.Result{RequeueAfter: DefaultRequeueAfter}, nil
 	}
 
+	// IMPORTANT: Limit candidates to MaxNodesPerScaleDown BEFORE calling ScaleDown
+	// This ensures we only drain AND delete the same limited set of nodes.
+	// Previously, ScaleDown would limit internally but this function would still
+	// iterate over ALL candidates when deleting VPSieNodes, causing all nodes to be deleted.
+	maxNodes := r.ScaleDownManager.GetMaxNodesPerScaleDown()
+	if len(candidates) > maxNodes {
+		logger.Info("Limiting scale-down candidates to max allowed per operation",
+			zap.Int("totalCandidates", len(candidates)),
+			zap.Int("maxNodesPerScaleDown", maxNodes),
+		)
+		candidates = candidates[:maxNodes]
+	}
+
 	logger.Info("Found scale-down candidates",
 		zap.Int("candidateCount", len(candidates)),
 	)
@@ -575,11 +588,24 @@ func (r *NodeGroupReconciler) evaluateUtilizationBasedScaleDown(
 		nodesToRemove = maxRemovable
 	}
 
+	// IMPORTANT: Also respect MaxNodesPerScaleDown safety limit
+	// This prevents aggressive scale-down by limiting how many nodes
+	// can be removed in a single operation.
+	maxNodesPerScaleDown := r.ScaleDownManager.GetMaxNodesPerScaleDown()
+	if nodesToRemove > maxNodesPerScaleDown {
+		logger.Info("Limiting nodes to remove to MaxNodesPerScaleDown",
+			zap.Int("requestedRemoval", nodesToRemove),
+			zap.Int("maxNodesPerScaleDown", maxNodesPerScaleDown),
+		)
+		nodesToRemove = maxNodesPerScaleDown
+	}
+
 	logger.Info("Utilization-based scale-down evaluation complete",
 		zap.Int("underutilizedCandidates", len(candidates)),
 		zap.Int("nodesToRemove", nodesToRemove),
 		zap.Int("currentNodes", currentNodes),
 		zap.Int("minNodes", minNodes),
+		zap.Int("maxNodesPerScaleDown", maxNodesPerScaleDown),
 	)
 
 	return true, nodesToRemove
