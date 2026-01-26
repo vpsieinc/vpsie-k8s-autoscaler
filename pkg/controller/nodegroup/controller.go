@@ -423,7 +423,11 @@ func (r *NodeGroupReconciler) reconcileDelete(ctx context.Context, ng *v1alpha1.
 	return ctrl.Result{}, nil
 }
 
-// listVPSieNodesForNodeGroup lists all VPSieNodes belonging to a NodeGroup
+// listVPSieNodesForNodeGroup lists all VPSieNodes belonging to a NodeGroup.
+// IMPORTANT: This function filters out VPSieNodes that have deletion timestamps,
+// as those are in the process of being deleted and should not be counted toward
+// CurrentNodes. This prevents duplicate scale-down operations when a VPSieNode
+// CR still exists (finalizers running) but the actual node is being terminated.
 func (r *NodeGroupReconciler) listVPSieNodesForNodeGroup(ctx context.Context, ng *v1alpha1.NodeGroup) ([]v1alpha1.VPSieNode, error) {
 	var vpsieNodeList v1alpha1.VPSieNodeList
 	labels := GetNodeGroupLabels(ng)
@@ -432,7 +436,22 @@ func (r *NodeGroupReconciler) listVPSieNodesForNodeGroup(ctx context.Context, ng
 		return nil, fmt.Errorf("failed to list VPSieNodes: %w", err)
 	}
 
-	return vpsieNodeList.Items, nil
+	// Filter out VPSieNodes that are being deleted (have deletion timestamps)
+	// These nodes should not be counted toward CurrentNodes as they are in the
+	// process of termination. Including them causes duplicate scale-down operations:
+	// 1. First reconcile: deletes VPSieNode A, pod restarts
+	// 2. Second reconcile: sees VPSieNode A (with deletion timestamp) + VPSieNode B
+	// 3. CurrentNodes = 2 (incorrect), triggers another scale-down
+	// 4. But K8s Node A is gone, so only Node B is found as candidate
+	// 5. Node B gets deleted → BOTH nodes gone!
+	activeNodes := make([]v1alpha1.VPSieNode, 0, len(vpsieNodeList.Items))
+	for _, vn := range vpsieNodeList.Items {
+		if vn.DeletionTimestamp == nil {
+			activeNodes = append(activeNodes, vn)
+		}
+	}
+
+	return activeNodes, nil
 }
 
 // containsString checks if a slice contains a string
