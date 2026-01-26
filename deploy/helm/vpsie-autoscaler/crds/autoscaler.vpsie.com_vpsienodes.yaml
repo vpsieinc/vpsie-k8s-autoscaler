@@ -1,0 +1,255 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
+  name: vpsienodes.autoscaler.vpsie.com
+spec:
+  group: autoscaler.vpsie.com
+  names:
+    kind: VPSieNode
+    listKind: VPSieNodeList
+    plural: vpsienodes
+    shortNames:
+    - vn
+    - vns
+    singular: vpsienode
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: VPSie instance ID
+      jsonPath: .spec.vpsieInstanceID
+      name: VPS ID
+      type: integer
+    - description: Kubernetes node name
+      jsonPath: .status.nodeName
+      name: Node
+      type: string
+    - description: Node phase
+      jsonPath: .status.phase
+      name: Phase
+      type: string
+    - description: VPSie instance type
+      jsonPath: .spec.instanceType
+      name: Instance Type
+      type: string
+    - description: NodeGroup name
+      jsonPath: .spec.nodeGroupName
+      name: NodeGroup
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          VPSieNode is the Schema for the vpsienodes API
+          It represents a single VPSie VPS instance that is part of a Kubernetes cluster
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: VPSieNodeSpec defines the desired state of VPSieNode
+            properties:
+              datacenterID:
+                description: DatacenterID is the VPSie datacenter ID where this node
+                  is located
+                type: string
+              instanceType:
+                description: InstanceType is the VPSie offering/boxsize ID used for
+                  this node
+                type: string
+              ipAddress:
+                description: IPAddress is the primary IP address of the VPS
+                type: string
+              ipv6Address:
+                description: IPv6Address is the IPv6 address of the VPS
+                type: string
+              kubernetesVersion:
+                description: KubernetesVersion is the Kubernetes version to install
+                  on this node (e.g., "v1.28.0")
+                pattern: ^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$
+                type: string
+              nodeGroupName:
+                description: NodeGroupName is the name of the NodeGroup this node
+                  belongs to
+                type: string
+              nodeName:
+                description: |-
+                  NodeName is the desired Kubernetes node name
+                  If not specified, it will be automatically generated
+                type: string
+              osImageID:
+                description: |-
+                  OSImageID is the VPSie OS image ID to use for this node
+                  Optional: VPSie API will automatically select an appropriate OS image if not specified
+                type: string
+              project:
+                description: Project is the VPSie project ID
+                type: string
+              resourceIdentifier:
+                description: ResourceIdentifier is the VPSie Kubernetes cluster identifier
+                type: string
+              sshKeyIDs:
+                description: SSHKeyIDs is a list of VPSie SSH key IDs to install on
+                  this node
+                items:
+                  type: string
+                type: array
+              vpsieGroupID:
+                description: |-
+                  VPSieGroupID is the numeric VPSie node group ID this node belongs to
+                  This is the numeric ID from ListK8sNodeGroups, used for adding nodes via API
+                type: integer
+              vpsieInstanceID:
+                description: VPSieInstanceID is the VPSie VPS instance ID
+                type: integer
+              vpsieNodeIdentifier:
+                description: |-
+                  VPSieNodeIdentifier is the VPSie node UUID used for K8s-specific API operations
+                  This identifier is required for deleting nodes via the K8s cluster API
+                type: string
+            required:
+            - datacenterID
+            - instanceType
+            - kubernetesVersion
+            - nodeGroupName
+            - project
+            - resourceIdentifier
+            - vpsieInstanceID
+            type: object
+          status:
+            description: VPSieNodeStatus defines the observed state of VPSieNode
+            properties:
+              conditions:
+                description: Conditions represent the latest available observations
+                  of the node's state
+                items:
+                  description: VPSieNodeCondition describes the state of a VPSieNode
+                    at a certain point
+                  properties:
+                    lastTransitionTime:
+                      description: LastTransitionTime is the last time the condition
+                        transitioned from one status to another
+                      format: date-time
+                      type: string
+                    lastUpdateTime:
+                      description: LastUpdateTime is the last time this condition
+                        was updated
+                      format: date-time
+                      type: string
+                    message:
+                      description: Message is a human-readable message indicating
+                        details about last transition
+                      type: string
+                    reason:
+                      description: Reason is a one-word CamelCase reason for the condition's
+                        last transition
+                      type: string
+                    status:
+                      description: Status of the condition (True, False, Unknown)
+                      type: string
+                    type:
+                      description: Type of condition
+                      type: string
+                  required:
+                  - status
+                  - type
+                  type: object
+                type: array
+              createdAt:
+                description: CreatedAt is when the VPS was created
+                format: date-time
+                type: string
+              deletedAt:
+                description: DeletedAt is when the VPS was deleted
+                format: date-time
+                type: string
+              hostname:
+                description: Hostname is the hostname of the VPS
+                type: string
+              joinedAt:
+                description: JoinedAt is when the node successfully joined the Kubernetes
+                  cluster
+                format: date-time
+                type: string
+              lastError:
+                description: LastError is the last error encountered while managing
+                  this node
+                type: string
+              nodeName:
+                description: NodeName is the actual Kubernetes node name once the
+                  node has joined
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is the generation observed by the
+                  controller
+                format: int64
+                type: integer
+              phase:
+                description: Phase represents the current phase of the node lifecycle
+                type: string
+              provisionedAt:
+                description: ProvisionedAt is when the VPS was fully provisioned and
+                  running
+                format: date-time
+                type: string
+              readyAt:
+                description: ReadyAt is when the node became ready to accept workloads
+                format: date-time
+                type: string
+              resources:
+                description: Resources contains the actual resource capacity of the
+                  node
+                properties:
+                  bandwidthGB:
+                    description: BandwidthGB is the network bandwidth allocation in
+                      gigabytes
+                    type: integer
+                  cpu:
+                    description: CPU is the number of CPU cores
+                    type: integer
+                  diskGB:
+                    description: DiskGB is the disk size in gigabytes
+                    type: integer
+                  memoryMB:
+                    description: MemoryMB is the amount of memory in megabytes
+                    type: integer
+                required:
+                - cpu
+                - diskGB
+                - memoryMB
+                type: object
+              terminatingAt:
+                description: TerminatingAt is when node termination was initiated
+                format: date-time
+                type: string
+              vpsieStatus:
+                description: VPSieStatus is the status from VPSie API (running, stopped,
+                  suspended, etc.)
+                type: string
+            required:
+            - phase
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

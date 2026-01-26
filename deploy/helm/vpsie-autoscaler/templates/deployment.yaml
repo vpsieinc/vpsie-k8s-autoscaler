@@ -57,6 +57,11 @@ spec:
         - --sync-period={{ .Values.controller.syncPeriod }}
         - --vpsie-secret-name={{ include "vpsie-autoscaler.secretName" . }}
         - --vpsie-secret-namespace={{ .Release.Namespace }}
+        {{- if .Values.webhook.enabled }}
+        - --enable-webhook=true
+        - --webhook-addr=:9443
+        - --webhook-cert-dir=/tmp/k8s-webhook-server/serving-certs
+        {{- end }}
         {{- with .Values.extraArgs }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

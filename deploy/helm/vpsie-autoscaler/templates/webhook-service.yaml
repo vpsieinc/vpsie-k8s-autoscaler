@@ -1,0 +1,19 @@
+{{- if .Values.webhook.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vpsie-autoscaler.webhook.serviceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vpsie-autoscaler.labels" . | nindent 4 }}
+    component: webhook
+spec:
+  type: {{ .Values.webhook.service.type }}
+  selector:
+    {{- include "vpsie-autoscaler.selectorLabels" . | nindent 4 }}
+  ports:
+  - name: webhook
+    port: {{ .Values.webhook.service.port }}
+    targetPort: 9443
+    protocol: TCP
+{{- end }}

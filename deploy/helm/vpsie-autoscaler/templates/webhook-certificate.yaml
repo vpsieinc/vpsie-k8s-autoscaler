@@ -1,0 +1,81 @@
+{{- if and .Values.webhook.enabled .Values.webhook.certificate.useCertManager }}
+---
+# Self-signed issuer for webhook certificates
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "vpsie-autoscaler.fullname" . }}-selfsigned
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vpsie-autoscaler.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+# CA Certificate
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "vpsie-autoscaler.fullname" . }}-ca
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vpsie-autoscaler.labels" . | nindent 4 }}
+spec:
+  isCA: true
+  commonName: {{ include "vpsie-autoscaler.fullname" . }}-ca
+  secretName: {{ include "vpsie-autoscaler.fullname" . }}-ca-cert
+  duration: {{ .Values.webhook.certificate.duration }}
+  renewBefore: {{ .Values.webhook.certificate.renewBefore }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: {{ include "vpsie-autoscaler.fullname" . }}-selfsigned
+    kind: Issuer
+    group: cert-manager.io
+---
+# CA Issuer using the CA certificate
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "vpsie-autoscaler.fullname" . }}-ca-issuer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vpsie-autoscaler.labels" . | nindent 4 }}
+spec:
+  ca:
+    secretName: {{ include "vpsie-autoscaler.fullname" . }}-ca-cert
+---
+# Webhook serving certificate
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "vpsie-autoscaler.webhook.certSecretName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vpsie-autoscaler.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "vpsie-autoscaler.webhook.certSecretName" . }}
+  duration: {{ .Values.webhook.certificate.duration }}
+  renewBefore: {{ .Values.webhook.certificate.renewBefore }}
+  subject:
+    organizations:
+      - vpsie
+  commonName: {{ include "vpsie-autoscaler.webhook.serviceName" . }}.{{ .Release.Namespace }}.svc
+  isCA: false
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  usages:
+    - server auth
+    - digital signature
+    - key encipherment
+  dnsNames:
+    - {{ include "vpsie-autoscaler.webhook.serviceName" . }}
+    - {{ include "vpsie-autoscaler.webhook.serviceName" . }}.{{ .Release.Namespace }}
+    - {{ include "vpsie-autoscaler.webhook.serviceName" . }}.{{ .Release.Namespace }}.svc
+    - {{ include "vpsie-autoscaler.webhook.serviceName" . }}.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    name: {{ include "vpsie-autoscaler.fullname" . }}-ca-issuer
+    kind: Issuer
+    group: cert-manager.io
+{{- end }}

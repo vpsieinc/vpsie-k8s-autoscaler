@@ -1,0 +1,107 @@
+{{- if .Values.webhook.enabled }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ include "vpsie-autoscaler.fullname" . }}-webhook
+  labels:
+    {{- include "vpsie-autoscaler.labels" . | nindent 4 }}
+    component: webhook
+  {{- if .Values.webhook.certificate.useCertManager }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "vpsie-autoscaler.webhook.certSecretName" . }}
+  {{- end }}
+webhooks:
+  # NodeGroup validation webhook
+  - name: nodegroups.autoscaler.vpsie.com
+    clientConfig:
+      service:
+        name: {{ include "vpsie-autoscaler.webhook.serviceName" . }}
+        namespace: {{ .Release.Namespace }}
+        path: /validate/nodegroups
+        port: {{ .Values.webhook.service.port }}
+      {{- if not .Values.webhook.certificate.useCertManager }}
+      # caBundle must be provided manually when not using cert-manager
+      # caBundle: <base64-encoded-ca-cert>
+      {{- end }}
+    rules:
+      - apiGroups:
+          - autoscaler.vpsie.com
+        apiVersions:
+          - v1alpha1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - nodegroups
+        scope: Namespaced
+    admissionReviewVersions:
+      - v1
+      - v1beta1
+    sideEffects: None
+    timeoutSeconds: 10
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+
+  # VPSieNode validation webhook
+  - name: vpsienodes.autoscaler.vpsie.com
+    clientConfig:
+      service:
+        name: {{ include "vpsie-autoscaler.webhook.serviceName" . }}
+        namespace: {{ .Release.Namespace }}
+        path: /validate/vpsienodes
+        port: {{ .Values.webhook.service.port }}
+      {{- if not .Values.webhook.certificate.useCertManager }}
+      # caBundle must be provided manually when not using cert-manager
+      # caBundle: <base64-encoded-ca-cert>
+      {{- end }}
+    rules:
+      - apiGroups:
+          - autoscaler.vpsie.com
+        apiVersions:
+          - v1alpha1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - vpsienodes
+        scope: Namespaced
+    admissionReviewVersions:
+      - v1
+      - v1beta1
+    sideEffects: None
+    timeoutSeconds: 10
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+
+  # Node deletion protection webhook
+  # Only allows deletion of nodes with label autoscaler.vpsie.com/managed=true
+  - name: node-deletion.autoscaler.vpsie.com
+    clientConfig:
+      service:
+        name: {{ include "vpsie-autoscaler.webhook.serviceName" . }}
+        namespace: {{ .Release.Namespace }}
+        path: /validate/node-deletion
+        port: {{ .Values.webhook.service.port }}
+      {{- if not .Values.webhook.certificate.useCertManager }}
+      # caBundle must be provided manually when not using cert-manager
+      # caBundle: <base64-encoded-ca-cert>
+      {{- end }}
+    rules:
+      - apiGroups:
+          - ""
+        apiVersions:
+          - v1
+        operations:
+          - DELETE
+        resources:
+          - nodes
+        scope: Cluster
+    admissionReviewVersions:
+      - v1
+      - v1beta1
+    sideEffects: None
+    timeoutSeconds: 10
+    # Fail closed for security - if webhook is unavailable, deny deletion
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+{{- end }}
