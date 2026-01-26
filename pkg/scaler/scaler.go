@@ -189,6 +189,16 @@ func (s *ScaleDownManager) IdentifyUnderutilizedNodes(
 	var candidates []*ScaleDownCandidate
 
 	for _, node := range nodes {
+		// Skip already cordoned nodes - they are likely being drained by a previous
+		// scale-down operation that was interrupted (e.g., autoscaler pod restart).
+		// This prevents duplicate scale-down operations from targeting multiple nodes.
+		if node.Spec.Unschedulable {
+			s.logger.Info("skipping already cordoned node (likely being drained)",
+				"node", node.Name,
+				"nodeGroup", nodeGroup.Name)
+			continue
+		}
+
 		// Skip protected nodes
 		if s.isNodeProtected(node) {
 			s.logger.Info("skipping protected node",

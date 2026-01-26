@@ -54,3 +54,15 @@ test/
 # Misc
 *.log
 *.pid
+
+# Ignore everything by default (when running from root)
+**
+# Then explicitly allow only what we need
+!.
+!cmd/
+!pkg/
+!internal/
+!go.mod
+!go.sum
+!Dockerfile
+!Makefile
