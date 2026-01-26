@@ -1031,6 +1031,15 @@ func (c *Client) GetTokenExpiresAt() time.Time {
 	return c.tokenExpiresAt
 }
 
+// GetCircuitBreakerStats returns the current circuit breaker statistics.
+// This is useful for monitoring the health of the VPSie API connection.
+func (c *Client) GetCircuitBreakerStats() CircuitBreakerStats {
+	if c.circuitBreaker == nil {
+		return CircuitBreakerStats{}
+	}
+	return c.circuitBreaker.GetStats()
+}
+
 // ============================================================================
 // VPS Lifecycle Operations
 // ============================================================================

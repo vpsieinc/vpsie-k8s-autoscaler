@@ -517,8 +517,9 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 	// Create ResourceAnalyzer for scale-up decisions with cost-aware selection
 	resourceAnalyzer := events.NewResourceAnalyzer(logger, costCalculator)
 
-	// Create health checker
+	// Create health checker with K8s client for enhanced checks
 	healthChecker := NewHealthChecker(vpsieClient)
+	healthChecker.SetKubernetesClient(k8sClient)
 
 	// Try auto-discovery if manual configuration is not provided
 	var clusterConfig *DiscoveredClusterConfig
@@ -827,9 +828,20 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 
 	// Load and activate AutoscalerConfig after cache is ready
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				cm.logger.Error("panic recovered in AutoscalerConfig loader",
+					zap.Any("panic", r),
+					zap.Stack("stack"))
+			}
+		}()
 		// Wait for cache to be ready by waiting for manager to start
 		<-cm.mgr.Elected()
 		cm.logger.Info("Leader elected, loading AutoscalerConfig")
+
+		// Update health checker with leader status
+		cm.healthChecker.SetLeaderElected(true)
+
 		cm.loadAndActivateAutoscalerConfig(ctx)
 	}()
 
@@ -859,6 +871,13 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 			zap.String("keyFile", keyFile),
 		)
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					cm.logger.Error("panic recovered in webhook server",
+						zap.Any("panic", r),
+						zap.Stack("stack"))
+				}
+			}()
 			if err := cm.webhookServer.Start(ctx, certFile, keyFile); err != nil {
 				cm.logger.Error("Webhook server failed", zap.Error(err))
 			}
@@ -880,6 +899,14 @@ func (cm *ControllerManager) startMetricsCollection(ctx context.Context) {
 		zap.Duration("interval", scaler.DefaultMetricsCollectionInterval))
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				cm.logger.Error("panic recovered in metrics collection",
+					zap.Any("panic", r),
+					zap.Stack("stack"))
+			}
+		}()
+
 		ticker := time.NewTicker(scaler.DefaultMetricsCollectionInterval)
 		defer ticker.Stop()
 

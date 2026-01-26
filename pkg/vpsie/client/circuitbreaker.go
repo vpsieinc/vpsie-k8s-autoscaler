@@ -303,8 +303,18 @@ func (cb *CircuitBreaker) transitionTo(newState CircuitBreakerState, reason stri
 
 		// Call state change callback if configured
 		if cb.config.OnStateChange != nil {
-			// Call async to avoid blocking
-			go cb.config.OnStateChange(oldState, newState, reason)
+			// Call async to avoid blocking, with panic recovery
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						cb.logger.Error("panic recovered in circuit breaker state change callback",
+							zap.Any("panic", r),
+							zap.String("from", string(oldState)),
+							zap.String("to", string(newState)))
+					}
+				}()
+				cb.config.OnStateChange(oldState, newState, reason)
+			}()
 		}
 	}
 }
