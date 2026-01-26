@@ -1731,11 +1731,23 @@ func (c *Client) GetK8sClusterInfo(ctx context.Context, clusterIdentifier string
 
 	var response GetK8sClusterInfoResponse
 
-	// GET /k8s/cluster/byId/{identifier}/info - gets detailed cluster info with nodes
-	endpoint := fmt.Sprintf("/k8s/cluster/byId/%s/info", clusterIdentifier)
+	// GET /k8s/cluster/byId/{identifier} - gets cluster info including nodes array
+	// Note: This endpoint is under /apps/v2 in VPSie API, but we use relative path from baseURL
+	endpoint := fmt.Sprintf("/k8s/cluster/byId/%s", clusterIdentifier)
+
+	c.logger.Debug("GetK8sClusterInfo: calling API",
+		zap.String("endpoint", endpoint),
+		zap.String("clusterIdentifier", clusterIdentifier),
+	)
+
 	if err := c.get(ctx, endpoint, &response); err != nil {
 		return nil, fmt.Errorf("failed to get K8s cluster info: %w", err)
 	}
+
+	c.logger.Debug("GetK8sClusterInfo: API response",
+		zap.Int("nodesCount", len(response.Data.Nodes)),
+		zap.String("clusterName", response.Data.Name),
+	)
 
 	if response.Error {
 		return nil, NewAPIError(response.Code, "GetK8sClusterInfoFailed", response.Message)
@@ -1766,14 +1778,29 @@ func (c *Client) FindK8sNodeIdentifier(ctx context.Context, clusterIdentifier, h
 	// VPSie API may return different casing than K8s node names
 	hostnameNormalized := strings.ToLower(hostname)
 
-	// Search in slaves first (most common case)
+	// Log what we received from the API
+	c.logger.Debug("FindK8sNodeIdentifier: cluster info received",
+		zap.Int("nodesCount", len(info.Nodes)),
+		zap.Int("slavesCount", len(info.Slaves)),
+		zap.Int("mastersCount", len(info.Masters)),
+		zap.String("searchingFor", hostnameNormalized),
+	)
+
+	// Search in nodes array first (returned by /k8s/cluster/byId/{id} endpoint)
+	for _, node := range info.Nodes {
+		if strings.ToLower(node.Hostname) == hostnameNormalized {
+			return node.Identifier, nil
+		}
+	}
+
+	// Fallback: search in slaves (for /info endpoint compatibility)
 	for _, node := range info.Slaves {
 		if strings.ToLower(node.Hostname) == hostnameNormalized {
 			return node.Identifier, nil
 		}
 	}
 
-	// Search in masters (less common but possible)
+	// Fallback: search in masters
 	for _, node := range info.Masters {
 		if strings.ToLower(node.Hostname) == hostnameNormalized {
 			return node.Identifier, nil

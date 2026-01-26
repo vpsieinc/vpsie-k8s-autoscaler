@@ -330,16 +330,16 @@ func (p *Provisioner) Delete(ctx context.Context, vn *v1alpha1.VPSieNode, logger
 				)
 				nodeIdentifier = lookedUpID
 			} else {
-				logger.Warn("Node not found in cluster info, may already be deleted",
+				// Node was not found in cluster info - this means it's already deleted from VPSie
+				// We successfully queried the K8s cluster API, the cluster exists, but the node doesn't
+				// This is the expected state after a manual deletion or if the node was never created
+				logger.Info("Node not found in cluster info, treating as already deleted",
 					zap.String("vpsienode", vn.Name),
-					zap.String("vpsieNodeIdentifier", vn.Spec.VPSieNodeIdentifier),
-					zap.String("statusHostname", vn.Status.Hostname),
-					zap.String("specNodeName", vn.Spec.NodeName),
-					zap.String("statusNodeName", vn.Status.NodeName),
-					zap.String("hostnameUsed", hostname),
+					zap.String("hostnameSearched", hostname),
 					zap.String("resourceIdentifier", vn.Spec.ResourceIdentifier),
-					zap.Int("vpsieInstanceID", vn.Spec.VPSieInstanceID),
 				)
+				// Return nil to indicate success - the VPS doesn't exist so there's nothing to delete
+				return nil
 			}
 		}
 	}

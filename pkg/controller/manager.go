@@ -497,6 +497,7 @@ func NewManager(config *rest.Config, opts *Options) (*ControllerManager, error) 
 	vpsieClientOpts := &vpsieclient.ClientOptions{
 		SecretName:      opts.VPSieSecretName,
 		SecretNamespace: opts.VPSieSecretNamespace,
+		Logger:          logger, // Pass logger for client-side logging
 	}
 	// Add tracing HTTP transport if Sentry is enabled
 	if tracer.IsEnabled() {

@@ -373,6 +373,7 @@ type K8sClusterInfo struct {
 	Status     string           `json:"status"`
 	Masters    []K8sClusterNode `json:"masters"`
 	Slaves     []K8sClusterNode `json:"slaves"`
+	Nodes      []K8sClusterNode `json:"nodes"` // All nodes (used by /k8s/cluster/byId/{id} endpoint)
 }
 
 // GetK8sClusterInfoResponse represents the response from getting K8s cluster info
