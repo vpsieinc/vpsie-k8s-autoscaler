@@ -108,9 +108,24 @@ func (t *Terminator) DrainAndDelete(ctx context.Context, vn *v1alpha1.VPSieNode,
 // DeleteVPS deletes the VPS instance from VPSie
 // This is called during the Deleting phase
 func (t *Terminator) DeleteVPS(ctx context.Context, vn *v1alpha1.VPSieNode, logger *zap.Logger) (ctrl.Result, error) {
-	if vn.Spec.VPSieInstanceID == 0 {
-		logger.Info("No VPS ID set, skipping VPS deletion",
+	// Determine if we can identify the VPS for deletion
+	// For K8s-managed nodes, VPSieInstanceID may be 0 but we can still delete via hostname lookup
+	hostname := vn.Status.Hostname
+	if hostname == "" {
+		hostname = vn.Spec.NodeName
+	}
+	if hostname == "" {
+		hostname = vn.Status.NodeName
+	}
+
+	canDeleteViaK8sAPI := vn.Spec.ResourceIdentifier != "" && hostname != ""
+	canDeleteViaVMAPI := vn.Spec.VPSieInstanceID != 0
+
+	if !canDeleteViaK8sAPI && !canDeleteViaVMAPI {
+		logger.Info("No VPS ID or K8s identifiers available, skipping VPS deletion",
 			zap.String("vpsienode", vn.Name),
+			zap.String("resourceIdentifier", vn.Spec.ResourceIdentifier),
+			zap.String("hostname", hostname),
 		)
 		// No VPS to delete, mark termination as complete
 		now := metav1.Now()
@@ -121,6 +136,8 @@ func (t *Terminator) DeleteVPS(ctx context.Context, vn *v1alpha1.VPSieNode, logg
 	logger.Info("Deleting VPS",
 		zap.String("vpsienode", vn.Name),
 		zap.Int("vpsID", vn.Spec.VPSieInstanceID),
+		zap.String("resourceIdentifier", vn.Spec.ResourceIdentifier),
+		zap.String("hostname", hostname),
 	)
 
 	// Delete VPS with retries

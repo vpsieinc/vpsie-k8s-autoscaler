@@ -1762,16 +1762,20 @@ func (c *Client) FindK8sNodeIdentifier(ctx context.Context, clusterIdentifier, h
 		return "", fmt.Errorf("failed to get cluster info: %w", err)
 	}
 
+	// Normalize hostname for case-insensitive comparison
+	// VPSie API may return different casing than K8s node names
+	hostnameNormalized := strings.ToLower(hostname)
+
 	// Search in slaves first (most common case)
 	for _, node := range info.Slaves {
-		if node.Hostname == hostname {
+		if strings.ToLower(node.Hostname) == hostnameNormalized {
 			return node.Identifier, nil
 		}
 	}
 
 	// Search in masters (less common but possible)
 	for _, node := range info.Masters {
-		if node.Hostname == hostname {
+		if strings.ToLower(node.Hostname) == hostnameNormalized {
 			return node.Identifier, nil
 		}
 	}
