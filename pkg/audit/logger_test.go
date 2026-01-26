@@ -356,9 +356,9 @@ func TestAuditLogger_LogNodeProvisionFailed(t *testing.T) {
 
 func TestAuditLogger_LogScaleUp(t *testing.T) {
 	tests := []struct {
-		name          string
-		outcome       string
-		expectedType  EventType
+		name         string
+		outcome      string
+		expectedType EventType
 	}{
 		{"success", "success", EventScaleUpCompleted},
 		{"failure", "failure", EventScaleUpFailed},
@@ -401,9 +401,9 @@ func TestAuditLogger_LogScaleUp(t *testing.T) {
 
 func TestAuditLogger_LogScaleDown(t *testing.T) {
 	tests := []struct {
-		name          string
-		outcome       string
-		expectedType  EventType
+		name         string
+		outcome      string
+		expectedType EventType
 	}{
 		{"success", "success", EventScaleDownCompleted},
 		{"failure", "failure", EventScaleDownFailed},
@@ -469,9 +469,9 @@ func TestAuditLogger_LogScaleDownBlocked(t *testing.T) {
 
 func TestAuditLogger_LogAPICall(t *testing.T) {
 	tests := []struct {
-		name          string
-		outcome       string
-		expectedType  EventType
+		name         string
+		outcome      string
+		expectedType EventType
 	}{
 		{"success", "success", EventAPICallSuccess},
 		{"failure", "failure", EventAPICallFailed},
@@ -514,10 +514,10 @@ func TestAuditLogger_LogAPICall(t *testing.T) {
 
 func TestAuditLogger_LogRebalance(t *testing.T) {
 	tests := []struct {
-		name          string
-		operation     string
-		outcome       string
-		expectedType  EventType
+		name         string
+		operation    string
+		outcome      string
+		expectedType EventType
 	}{
 		{"analyze", "analyze", "success", EventRebalanceAnalyzed},
 		{"plan", "plan", "success", EventRebalancePlanned},

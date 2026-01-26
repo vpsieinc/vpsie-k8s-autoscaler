@@ -49,11 +49,11 @@ type HealthChecker struct {
 	shutdownInitiated bool
 
 	// Enhanced health tracking
-	leaderElected          bool
-	lastReconcileTime      time.Time
-	reconcileStaleTimeout  time.Duration
-	k8sAPIHealthy          bool
-	circuitBreakerOpen     bool
+	leaderElected         bool
+	lastReconcileTime     time.Time
+	reconcileStaleTimeout time.Duration
+	k8sAPIHealthy         bool
+	circuitBreakerOpen    bool
 }
 
 // NewHealthChecker creates a new HealthChecker

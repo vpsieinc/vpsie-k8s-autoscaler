@@ -425,10 +425,10 @@ func TestNodeGroupValidator_ValidateScaleUpPolicy(t *testing.T) {
 		{
 			name: "valid policy",
 			policy: autoscalerv1alpha1.ScaleUpPolicy{
-				Enabled:                     true,
-				CPUThreshold:                80,
-				MemoryThreshold:             80,
-				StabilizationWindowSeconds:  60,
+				Enabled:                    true,
+				CPUThreshold:               80,
+				MemoryThreshold:            80,
+				StabilizationWindowSeconds: 60,
 			},
 			wantErr: false,
 		},
@@ -519,11 +519,11 @@ func TestNodeGroupValidator_ValidateScaleDownPolicy(t *testing.T) {
 		{
 			name: "valid policy",
 			policy: autoscalerv1alpha1.ScaleDownPolicy{
-				Enabled:                     true,
-				CPUThreshold:                30,
-				MemoryThreshold:             30,
-				CooldownSeconds:             300,
-				StabilizationWindowSeconds:  600,
+				Enabled:                    true,
+				CPUThreshold:               30,
+				MemoryThreshold:            30,
+				CooldownSeconds:            300,
+				StabilizationWindowSeconds: 600,
 			},
 			wantErr: false,
 		},
