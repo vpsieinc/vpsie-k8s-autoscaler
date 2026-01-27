@@ -72,6 +72,24 @@ rules:
   verbs:
   - update
 
+# AutoscalerConfig CRD permissions (cluster-wide configuration)
+- apiGroups:
+  - autoscaler.vpsie.com
+  resources:
+  - autoscalerconfigs
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - autoscaler.vpsie.com
+  resources:
+  - autoscalerconfigs/status
+  verbs:
+  - get
+  - update
+  - patch
+
 # Core Kubernetes resources
 # NOTE: Node delete permission is broad and should be used carefully
 # In production, consider using ValidatingWebhook to restrict which nodes can be deleted

@@ -62,6 +62,24 @@ rules:
   verbs:
   - update
 
+# AutoscalerConfig CRD permissions (cluster-wide configuration)
+- apiGroups:
+  - autoscaler.vpsie.com
+  resources:
+  - autoscalerconfigs
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - autoscaler.vpsie.com
+  resources:
+  - autoscalerconfigs/status
+  verbs:
+  - get
+  - update
+  - patch
+
 # Core Kubernetes resources
 - apiGroups:
   - ""

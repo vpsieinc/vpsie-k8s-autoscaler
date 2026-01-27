@@ -39,6 +39,9 @@ rules:
   - apiGroups: ["autoscaler.vpsie.com"]
     resources: ["vpsienodes", "vpsienodes/status", "vpsienodes/finalizers"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["autoscaler.vpsie.com"]
+    resources: ["autoscalerconfigs", "autoscalerconfigs/status"]
+    verbs: ["get", "list", "watch", "update", "patch"]
   # Policy for PDB checks
   - apiGroups: ["policy"]
     resources: ["poddisruptionbudgets"]
