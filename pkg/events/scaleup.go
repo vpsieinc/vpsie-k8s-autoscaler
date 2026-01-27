@@ -421,12 +421,8 @@ func (c *ScaleUpController) createNodeGroupForPendingPods(
 		zap.String("namespace", pod.Namespace),
 	)
 
-	// Create the NodeGroup in the same namespace as the first pending pod
-	// This ensures proper RBAC and resource isolation
-	namespace := pod.Namespace
-	if namespace == "" {
-		namespace = "default"
-	}
+	// NodeGroups must be created in kube-system namespace (enforced by webhook)
+	namespace := "kube-system"
 
 	ng, err := c.creator.CreateNodeGroupForPod(ctx, pod, namespace)
 	if err != nil {

@@ -30,19 +30,22 @@ spec:
     {{- if .Values.networkPolicy.ingress.apiserver.enabled }}
     # Allow webhook calls from kube-apiserver
     {{- if .Values.webhook.enabled }}
+    {{- if .Values.networkPolicy.ingress.apiserver.cidrBlocks }}
     - from:
-        {{- if .Values.networkPolicy.ingress.apiserver.cidrBlocks }}
         {{- range .Values.networkPolicy.ingress.apiserver.cidrBlocks }}
         - ipBlock:
             cidr: {{ . }}
         {{- end }}
-        {{- else }}
-        # Allow from all pods in the cluster (API server access)
-        - namespaceSelector: {}
-        {{- end }}
       ports:
-        - port: {{ .Values.webhook.service.port }}
+        - port: 9443  # Container port, not service port - NetworkPolicy operates at pod level
           protocol: TCP
+    {{- else }}
+    # Allow from any source (API server runs on control plane, not as a pod)
+    # Use apiserver.cidrBlocks to restrict to specific IPs if needed
+    - ports:
+        - port: 9443
+          protocol: TCP
+    {{- end }}
     {{- end }}
     {{- end }}
 
