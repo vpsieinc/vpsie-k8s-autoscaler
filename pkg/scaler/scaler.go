@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	autoscalerv1alpha1 "github.com/vpsie/vpsie-k8s-autoscaler/pkg/apis/autoscaler/v1alpha1"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/metrics"
 	"github.com/vpsie/vpsie-k8s-autoscaler/pkg/tracing"
@@ -366,6 +367,20 @@ func (s *ScaleDownManager) ScaleDown(
 		defer span.Finish()
 	}
 
+	// Helper to capture errors to Sentry
+	captureError := func(err error, operation string, nodeName string) {
+		if span != nil {
+			span.Status = sentry.SpanStatusInternalError
+		}
+		tracing.CaptureError(err, map[string]string{
+			"component":  "scaler",
+			"nodegroup":  nodeGroup.Name,
+			"namespace":  nodeGroup.Namespace,
+			"node":       nodeName,
+			"operation":  operation,
+		})
+	}
+
 	// Limit number of nodes to scale down at once
 	maxNodes := s.config.MaxNodesPerScaleDown
 	if len(candidates) > maxNodes {
@@ -386,6 +401,7 @@ func (s *ScaleDownManager) ScaleDown(
 		// Double-check safety before draining
 		canScale, reason, err := s.CanScaleDown(ctx, nodeGroup, candidate.Node)
 		if err != nil {
+			captureError(err, "pre_drain_check", candidate.Node.Name)
 			errors = append(errors, fmt.Errorf("pre-drain check failed for %s: %w", candidate.Node.Name, err))
 			continue
 		}
@@ -400,6 +416,7 @@ func (s *ScaleDownManager) ScaleDown(
 
 		// Drain the node
 		if err := s.DrainNode(ctx, candidate.Node); err != nil {
+			captureError(err, "drain_node", candidate.Node.Name)
 			errors = append(errors, fmt.Errorf("failed to drain node %s: %w", candidate.Node.Name, err))
 
 			// Record drain failure metric

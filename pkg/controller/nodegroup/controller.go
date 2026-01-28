@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -321,6 +322,19 @@ func (r *NodeGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		defer span.Finish()
 	}
 
+	// Helper to capture errors to Sentry
+	captureError := func(err error, operation string) {
+		if span != nil {
+			span.Status = sentry.SpanStatusInternalError
+		}
+		tracing.CaptureError(err, map[string]string{
+			"controller": ControllerName,
+			"resource":   req.Name,
+			"namespace":  req.Namespace,
+			"operation":  operation,
+		})
+	}
+
 	logger := logging.WithRequestIDField(ctx, r.Logger.With(
 		zap.String("namespace", req.Namespace),
 		zap.String("name", req.Name),
@@ -336,6 +350,7 @@ func (r *NodeGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, nil
 		}
 		logger.Error("Failed to get NodeGroup", zap.Error(err))
+		captureError(err, "get_nodegroup")
 		return ctrl.Result{}, err
 	}
 
@@ -361,6 +376,7 @@ func (r *NodeGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		ng.Finalizers = append(ng.Finalizers, FinalizerName)
 		if err := r.Update(ctx, ng); err != nil {
 			logger.Error("Failed to add finalizer", zap.Error(err))
+			captureError(err, "add_finalizer")
 			return ctrl.Result{}, err
 		}
 		logger.Info("Added finalizer to NodeGroup")
@@ -375,6 +391,16 @@ func (r *NodeGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 func (r *NodeGroupReconciler) reconcileDelete(ctx context.Context, ng *v1alpha1.NodeGroup, logger *zap.Logger) (ctrl.Result, error) {
 	logger.Info("Handling NodeGroup deletion")
 
+	// Helper to capture errors to Sentry
+	captureError := func(err error, operation string) {
+		tracing.CaptureError(err, map[string]string{
+			"controller": ControllerName,
+			"resource":   ng.Name,
+			"namespace":  ng.Namespace,
+			"operation":  operation,
+		})
+	}
+
 	if !containsString(ng.Finalizers, FinalizerName) {
 		logger.Info("Finalizer already removed, nothing to do")
 		return ctrl.Result{}, nil
@@ -384,6 +410,7 @@ func (r *NodeGroupReconciler) reconcileDelete(ctx context.Context, ng *v1alpha1.
 	vpsieNodes, err := r.listVPSieNodesForNodeGroup(ctx, ng)
 	if err != nil {
 		logger.Error("Failed to list VPSieNodes", zap.Error(err))
+		captureError(err, "list_vpsienodes")
 		return ctrl.Result{}, err
 	}
 
@@ -399,6 +426,7 @@ func (r *NodeGroupReconciler) reconcileDelete(ctx context.Context, ng *v1alpha1.
 					zap.String("vpsienode", vn.Name),
 					zap.Error(err),
 				)
+				captureError(err, "delete_vpsienode")
 				return ctrl.Result{}, err
 			}
 		}
@@ -416,6 +444,7 @@ func (r *NodeGroupReconciler) reconcileDelete(ctx context.Context, ng *v1alpha1.
 	ng.Finalizers = removeString(ng.Finalizers, FinalizerName)
 	if err := r.Update(ctx, ng); err != nil {
 		logger.Error("Failed to remove finalizer", zap.Error(err))
+		captureError(err, "remove_finalizer")
 		return ctrl.Result{}, err
 	}
 

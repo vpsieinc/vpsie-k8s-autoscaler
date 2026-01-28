@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -113,6 +114,19 @@ func (r *VPSieNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		defer span.Finish()
 	}
 
+	// Helper to capture errors to Sentry
+	captureError := func(err error, operation string) {
+		if span != nil {
+			span.Status = sentry.SpanStatusInternalError
+		}
+		tracing.CaptureError(err, map[string]string{
+			"controller": ControllerName,
+			"resource":   req.Name,
+			"namespace":  req.Namespace,
+			"operation":  operation,
+		})
+	}
+
 	logger := logging.WithRequestIDField(ctx, r.Logger.With(
 		zap.String("namespace", req.Namespace),
 		zap.String("name", req.Name),
@@ -128,12 +142,13 @@ func (r *VPSieNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, nil
 		}
 		logger.Error("Failed to get VPSieNode", zap.Error(err))
+		captureError(err, "get_vpsienode")
 		return ctrl.Result{}, err
 	}
 
 	// Handle deletion
 	if !vn.DeletionTimestamp.IsZero() {
-		return r.reconcileDelete(ctx, vn, logger)
+		return r.reconcileDelete(ctx, vn, logger, captureError)
 	}
 
 	// Add finalizer if not present
@@ -141,6 +156,7 @@ func (r *VPSieNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		vn.Finalizers = append(vn.Finalizers, FinalizerName)
 		if err := r.Update(ctx, vn); err != nil {
 			logger.Error("Failed to add finalizer", zap.Error(err))
+			captureError(err, "add_finalizer")
 			return ctrl.Result{}, err
 		}
 		logger.Info("Added finalizer to VPSieNode")
@@ -163,6 +179,7 @@ func (r *VPSieNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				return ctrl.Result{Requeue: true}, nil
 			}
 			logger.Error("Failed to initialize phase", zap.Error(err))
+			captureError(err, "initialize_phase")
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{Requeue: true}, nil
@@ -262,7 +279,7 @@ func (r *VPSieNodeReconciler) reconcile(ctx context.Context, vn *v1alpha1.VPSieN
 }
 
 // reconcileDelete handles VPSieNode deletion
-func (r *VPSieNodeReconciler) reconcileDelete(ctx context.Context, vn *v1alpha1.VPSieNode, logger *zap.Logger) (ctrl.Result, error) {
+func (r *VPSieNodeReconciler) reconcileDelete(ctx context.Context, vn *v1alpha1.VPSieNode, logger *zap.Logger, captureError func(error, string)) (ctrl.Result, error) {
 	logger.Info("Handling VPSieNode deletion")
 
 	if !containsString(vn.Finalizers, FinalizerName) {
@@ -281,6 +298,7 @@ func (r *VPSieNodeReconciler) reconcileDelete(ctx context.Context, vn *v1alpha1.
 				return ctrl.Result{Requeue: true}, nil
 			}
 			logger.Error("Failed to update phase to Terminating", zap.Error(err))
+			captureError(err, "update_phase_terminating")
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{Requeue: true}, nil
@@ -299,6 +317,7 @@ func (r *VPSieNodeReconciler) reconcileDelete(ctx context.Context, vn *v1alpha1.
 				zap.String("phase", string(vn.Status.Phase)),
 				zap.Error(err),
 			)
+			captureError(err, "state_machine_delete")
 		}
 
 		// Update status after state machine handling
@@ -311,6 +330,7 @@ func (r *VPSieNodeReconciler) reconcileDelete(ctx context.Context, vn *v1alpha1.
 				return ctrl.Result{Requeue: true}, nil
 			}
 			logger.Error("Failed to update status during deletion", zap.Error(statusErr))
+			captureError(statusErr, "update_status_deletion")
 			if err == nil {
 				return ctrl.Result{}, statusErr
 			}
@@ -326,6 +346,7 @@ func (r *VPSieNodeReconciler) reconcileDelete(ctx context.Context, vn *v1alpha1.
 	vn.Finalizers = removeString(vn.Finalizers, FinalizerName)
 	if err := r.Update(ctx, vn); err != nil {
 		logger.Error("Failed to remove finalizer", zap.Error(err))
+		captureError(err, "remove_finalizer")
 		return ctrl.Result{}, err
 	}
 
