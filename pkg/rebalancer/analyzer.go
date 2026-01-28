@@ -395,7 +395,222 @@ func (a *Analyzer) checkResourceCapacity(ctx context.Context, nodeGroup *v1alpha
 		check.Details["available_headroom"] = maxNodes - currentNodes
 	}
 
+	// Check pod resource requests can be accommodated on remaining nodes
+	resourceCheck, err := a.checkPodResourceCapacity(ctx, nodeGroup, candidates)
+	if err != nil {
+		check.Status = SafetyCheckWarn
+		check.Message = fmt.Sprintf("Failed to verify resource capacity: %v", err)
+		return check
+	}
+
+	// Merge resource check details
+	for k, v := range resourceCheck.Details {
+		check.Details[k] = v
+	}
+
+	// If resource check failed, override status
+	if resourceCheck.Status == SafetyCheckFailed {
+		check.Status = SafetyCheckFailed
+		check.Message = resourceCheck.Message
+	} else if resourceCheck.Status == SafetyCheckWarn && check.Status == SafetyCheckPassed {
+		check.Status = SafetyCheckWarn
+		check.Message = resourceCheck.Message
+	}
+
 	return check
+}
+
+// checkPodResourceCapacity verifies that pods on candidate nodes can be rescheduled
+// based on their resource requests
+func (a *Analyzer) checkPodResourceCapacity(ctx context.Context, nodeGroup *v1alpha1.NodeGroup, candidates []CandidateNode) (SafetyCheck, error) {
+	check := SafetyCheck{
+		Category:  SafetyCheckResourceCapacity,
+		Status:    SafetyCheckPassed,
+		Message:   "Pod resource requests can be accommodated",
+		CheckedAt: time.Now(),
+		Details:   make(map[string]interface{}),
+	}
+
+	// Build set of candidate node names
+	candidateNodeNames := make(map[string]bool)
+	for _, c := range candidates {
+		candidateNodeNames[c.NodeName] = true
+	}
+
+	// Get all nodes
+	allNodes, err := a.kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return check, fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	// Calculate resource requests from pods on candidate nodes
+	var totalCPURequests, totalMemRequests int64
+	for _, candidate := range candidates {
+		pods, err := a.kubeClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{
+			FieldSelector: fmt.Sprintf("spec.nodeName=%s", candidate.NodeName),
+		})
+		if err != nil {
+			return check, fmt.Errorf("failed to list pods on node %s: %w", candidate.NodeName, err)
+		}
+
+		for _, pod := range pods.Items {
+			// Skip DaemonSet pods (they'll be recreated automatically on new nodes)
+			if a.isDaemonSetPod(&pod) {
+				continue
+			}
+			// Skip completed/failed pods
+			if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+				continue
+			}
+
+			cpuReq, memReq := a.calculatePodResourceRequests(&pod)
+			totalCPURequests += cpuReq
+			totalMemRequests += memReq
+		}
+	}
+
+	check.Details["pods_cpu_requests_milli"] = totalCPURequests
+	check.Details["pods_memory_requests_bytes"] = totalMemRequests
+
+	// Calculate available capacity on non-candidate nodes
+	var totalAvailableCPU, totalAvailableMem int64
+	availableNodeCount := 0
+
+	for _, node := range allNodes.Items {
+		// Skip candidate nodes
+		if candidateNodeNames[node.Name] {
+			continue
+		}
+		// Skip unschedulable nodes
+		if node.Spec.Unschedulable {
+			continue
+		}
+		// Skip non-ready nodes
+		if !a.isNodeReady(&node) {
+			continue
+		}
+
+		// Get allocatable resources
+		allocatableCPU := node.Status.Allocatable.Cpu().MilliValue()
+		allocatableMem := node.Status.Allocatable.Memory().Value()
+
+		// Get current pod requests on this node
+		nodePods, err := a.kubeClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{
+			FieldSelector: fmt.Sprintf("spec.nodeName=%s", node.Name),
+		})
+		if err != nil {
+			continue // Skip this node on error
+		}
+
+		var nodeCPURequests, nodeMemRequests int64
+		for _, pod := range nodePods.Items {
+			if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+				continue
+			}
+			cpuReq, memReq := a.calculatePodResourceRequests(&pod)
+			nodeCPURequests += cpuReq
+			nodeMemRequests += memReq
+		}
+
+		totalAvailableCPU += (allocatableCPU - nodeCPURequests)
+		totalAvailableMem += (allocatableMem - nodeMemRequests)
+		availableNodeCount++
+	}
+
+	check.Details["available_cpu_milli"] = totalAvailableCPU
+	check.Details["available_memory_bytes"] = totalAvailableMem
+	check.Details["available_node_count"] = availableNodeCount
+
+	// Add 20% buffer for scheduling overhead (same as scaler)
+	requiredCPU := int64(float64(totalCPURequests) * 1.2)
+	requiredMem := int64(float64(totalMemRequests) * 1.2)
+
+	check.Details["required_cpu_with_buffer_milli"] = requiredCPU
+	check.Details["required_memory_with_buffer_bytes"] = requiredMem
+
+	// Check if we have sufficient capacity
+	if totalAvailableCPU < requiredCPU {
+		check.Status = SafetyCheckFailed
+		check.Message = fmt.Sprintf("Insufficient CPU capacity: need %dm, available %dm",
+			requiredCPU, totalAvailableCPU)
+		return check, nil
+	}
+
+	if totalAvailableMem < requiredMem {
+		check.Status = SafetyCheckFailed
+		check.Message = fmt.Sprintf("Insufficient memory capacity: need %d bytes, available %d bytes",
+			requiredMem, totalAvailableMem)
+		return check, nil
+	}
+
+	// Warn if capacity is tight (less than 50% headroom)
+	cpuHeadroom := float64(totalAvailableCPU-requiredCPU) / float64(requiredCPU) * 100
+	memHeadroom := float64(totalAvailableMem-requiredMem) / float64(requiredMem) * 100
+
+	check.Details["cpu_headroom_percent"] = cpuHeadroom
+	check.Details["memory_headroom_percent"] = memHeadroom
+
+	if cpuHeadroom < 50 || memHeadroom < 50 {
+		check.Status = SafetyCheckWarn
+		check.Message = fmt.Sprintf("Tight capacity: CPU headroom %.1f%%, memory headroom %.1f%%",
+			cpuHeadroom, memHeadroom)
+	}
+
+	return check, nil
+}
+
+// calculatePodResourceRequests calculates total CPU and memory requests for a pod
+func (a *Analyzer) calculatePodResourceRequests(pod *corev1.Pod) (cpu, memory int64) {
+	for _, container := range pod.Spec.Containers {
+		if req := container.Resources.Requests.Cpu(); req != nil {
+			cpu += req.MilliValue()
+		}
+		if req := container.Resources.Requests.Memory(); req != nil {
+			memory += req.Value()
+		}
+	}
+	// Include init containers (they run sequentially, so take max, not sum)
+	var initCPU, initMem int64
+	for _, container := range pod.Spec.InitContainers {
+		if req := container.Resources.Requests.Cpu(); req != nil {
+			if req.MilliValue() > initCPU {
+				initCPU = req.MilliValue()
+			}
+		}
+		if req := container.Resources.Requests.Memory(); req != nil {
+			if req.Value() > initMem {
+				initMem = req.Value()
+			}
+		}
+	}
+	// Pod needs max of (sum of containers, max of init containers)
+	if initCPU > cpu {
+		cpu = initCPU
+	}
+	if initMem > memory {
+		memory = initMem
+	}
+	return cpu, memory
+}
+
+// isDaemonSetPod checks if a pod is owned by a DaemonSet
+func (a *Analyzer) isDaemonSetPod(pod *corev1.Pod) bool {
+	for _, owner := range pod.OwnerReferences {
+		if owner.Kind == "DaemonSet" {
+			return true
+		}
+	}
+	return false
+}
+
+// isNodeReady checks if a node is in Ready condition
+func (a *Analyzer) isNodeReady(node *corev1.Node) bool {
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == corev1.NodeReady {
+			return condition.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }
 
 // checkTiming checks if rebalancing is allowed at this time
