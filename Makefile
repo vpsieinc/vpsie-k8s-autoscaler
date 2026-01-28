@@ -12,7 +12,7 @@ GOFILES := $(wildcard *.go)
 
 # Docker variables
 DOCKER_REGISTRY := ghcr.io
-DOCKER_IMAGE := $(DOCKER_REGISTRY)/vpsie/vpsie-k8s-autoscaler
+DOCKER_IMAGE := $(DOCKER_REGISTRY)/vpsieinc/vpsie-k8s-autoscaler
 DOCKER_TAG ?= $(VERSION)
 
 # Kubernetes variables
@@ -171,6 +171,43 @@ docker-push:
 	@echo "Pushing Docker image..."
 	@docker push $(DOCKER_IMAGE):$(DOCKER_TAG)
 	@docker push $(DOCKER_IMAGE):latest
+
+## docker-buildx: Build multi-arch Docker image (amd64, arm64) with no-cache
+docker-buildx:
+	@echo "Building multi-arch Docker image (linux/amd64,linux/arm64)..."
+	@docker buildx create --name multiarch-builder --use --bootstrap 2>/dev/null || docker buildx use multiarch-builder
+	@docker buildx build \
+		--platform linux/amd64,linux/arm64 \
+		--no-cache \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg COMMIT=$(COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG) \
+		-t $(DOCKER_IMAGE):latest \
+		.
+	@echo "Multi-arch build complete. Use 'make docker-buildx-push' to push to registry."
+
+## docker-buildx-push: Build and push multi-arch Docker image to registry
+docker-buildx-push:
+	@echo "Building and pushing multi-arch Docker image..."
+	@docker buildx create --name multiarch-builder --use --bootstrap 2>/dev/null || docker buildx use multiarch-builder
+	@docker buildx build \
+		--platform linux/amd64,linux/arm64 \
+		--no-cache \
+		--push \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg COMMIT=$(COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG) \
+		-t $(DOCKER_IMAGE):latest \
+		.
+	@echo "Multi-arch image pushed successfully!"
+
+## docker-buildx-inspect: Inspect multi-arch builder capabilities
+docker-buildx-inspect:
+	@echo "Checking multi-arch builder setup..."
+	@docker buildx inspect multiarch-builder --bootstrap 2>/dev/null || docker buildx create --name multiarch-builder --bootstrap
+	@docker buildx inspect multiarch-builder
 
 ## docker-login: Login to GitHub Container Registry
 docker-login:

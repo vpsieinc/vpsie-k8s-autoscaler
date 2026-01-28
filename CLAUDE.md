@@ -89,7 +89,7 @@ pkg/
 
 - **Controller Separation:** ScaleDownManager handles node identification/draining, NodeGroupReconciler handles VM termination. This prevents race conditions.
 - **Scale-Down Safety (6 checks):** No local storage pods, pods can be rescheduled, no critical system pods, no anti-affinity violations, cluster has capacity, node not protected by annotation
-- **Rebalancer Safety (5 checks):** Cluster health, PDB compliance, local storage detection, maintenance windows, cooldowns
+- **Rebalancer Safety (5 checks):** Cluster health, NodeGroup health, PDB compliance, resource capacity (CPU/memory), timing/maintenance windows
 - **VPSie Client:** OAuth with auto-refresh, rate limiting (100 req/min default), circuit breaker for fault tolerance
 - **Max 1 node per scale-down operation:** Prevents aggressive scale-down
 - **TTL for Failed VPSieNodes:** Automatic cleanup of stuck resources (30min default)
@@ -186,9 +186,92 @@ Key labels/annotations defined in `pkg/apis/autoscaler/v1alpha1/labels.go`:
 | `autoscaler.vpsie.com/creation-reason` | Tracks why node was created: `metrics`, `manual`, `rebalance`, `initial` |
 | `autoscaler.vpsie.com/vps-id` (annotation) | VPSie VPS instance ID |
 
+## Rebalancer Resource Capacity Validation
+
+The rebalancer includes comprehensive resource capacity checks to ensure pods can be successfully rescheduled during rebalancing:
+
+### `checkPodResourceCapacity` Function
+
+Location: `pkg/rebalancer/analyzer.go` (lines 425-560)
+
+**Purpose:** Validates that pods on candidate nodes can be rescheduled to remaining nodes based on CPU/memory requests.
+
+**Key Features:**
+1. **Pod Resource Calculation:** Aggregates CPU and memory requests from all pods on candidate nodes (excluding DaemonSet and completed pods)
+2. **Available Capacity Analysis:** Calculates total allocatable resources across non-candidate, ready, and schedulable nodes
+3. **Pod Request Tracking:** Accounts for existing pod requests on destination nodes to determine actual available capacity
+4. **Buffer Application:** Adds 20% safety buffer to resource requirements (same as scale-down logic) to account for scheduling overhead
+5. **Headroom Monitoring:** Tracks CPU and memory headroom percentage and warns if less than 50%
+
+**Validation Checks:**
+- Sufficient CPU capacity: `available_cpu >= (pod_requests * 1.2)`
+- Sufficient memory capacity: `available_memory >= (pod_requests * 1.2)`
+- Adequate headroom: Warns if CPU or memory headroom < 50%
+
+**Safety Check Categories:**
+- **Status: PASSED** - Sufficient capacity with adequate headroom
+- **Status: FAILED** - Insufficient CPU or memory capacity
+- **Status: WARN** - Capacity available but headroom tight (< 50%)
+
+**Details Output:**
+- `pods_cpu_requests_milli` - Total CPU requests from pods on candidate nodes
+- `pods_memory_requests_bytes` - Total memory requests from pods on candidate nodes
+- `available_cpu_milli` - Available CPU across non-candidate nodes
+- `available_memory_bytes` - Available memory across non-candidate nodes
+- `available_node_count` - Count of schedulable, ready non-candidate nodes
+- `cpu_headroom_percent` - Available headroom after rescheduling (percentage)
+- `memory_headroom_percent` - Available memory headroom (percentage)
+
+This check ensures rebalancing operations don't cause pod scheduling failures or resource contention.
+
 ## Important Notes
 
 - **Metrics sanitization:** All Prometheus labels are sanitized via `pkg/metrics/sanitize.go` (max 100 chars, special chars → underscores)
 - **Cloud-init removed:** Node configuration handled by VPSie API via QEMU agent. Fields `spec.userData`, `spec.cloudInitTemplate*` no longer exist.
 - **TLS 1.3 required:** Webhook server enforces TLS 1.3 minimum
 - **Sentry integration:** Optional error tracking/tracing via `pkg/tracing/sentry.go`. Configure with `--sentry-dsn` or `SENTRY_DSN` env var.
+
+## Multi-Architecture Docker Builds
+
+This project uses Docker buildx for building multi-architecture container images targeting both amd64 and arm64 architectures.
+
+### Build Prerequisites
+
+- Docker with buildx support (v20.10+)
+- QEMU for cross-platform emulation (optional, for native cross-compilation)
+- GitHub Container Registry credentials via `GH_TOKEN` environment variable
+
+### Building Multi-Arch Images
+
+```bash
+# Set up multi-platform builder (if needed)
+docker buildx create --name multiarch-builder --use --bootstrap
+
+# Build and push to GHCR for both amd64 and arm64
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --no-cache \
+  --push \
+  -t ghcr.io/vpsieinc/vpsie-k8s-autoscaler:latest \
+  -t ghcr.io/vpsieinc/vpsie-k8s-autoscaler:v1.0.0 \
+  .
+
+# Or using Makefile (when available)
+VERSION=v1.0.0 make docker-buildx-push
+```
+
+### Build Arguments
+
+The Dockerfile accepts the following build arguments for version information:
+- `VERSION` - Semantic version (default: `dev`)
+- `COMMIT` - Git commit hash
+- `BUILD_DATE` - Build timestamp (RFC3339 format)
+- `TARGETARCH` - Target architecture (automatically set by buildx)
+
+### Image Features
+
+- **Multi-architecture:** Native builds for linux/amd64 and linux/arm64
+- **Minimal footprint:** Uses distroless base image (`gcr.io/distroless/static:nonroot`)
+- **Non-root user:** Runs as UID 65532 for security
+- **No cache:** All builds disable layer caching for reproducibility
+- **Static binary:** CGO disabled for maximum portability
