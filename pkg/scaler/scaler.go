@@ -373,11 +373,11 @@ func (s *ScaleDownManager) ScaleDown(
 			span.Status = sentry.SpanStatusInternalError
 		}
 		tracing.CaptureError(err, map[string]string{
-			"component":  "scaler",
-			"nodegroup":  nodeGroup.Name,
-			"namespace":  nodeGroup.Namespace,
-			"node":       nodeName,
-			"operation":  operation,
+			"component": "scaler",
+			"nodegroup": nodeGroup.Name,
+			"namespace": nodeGroup.Namespace,
+			"node":      nodeName,
+			"operation": operation,
 		})
 	}
 

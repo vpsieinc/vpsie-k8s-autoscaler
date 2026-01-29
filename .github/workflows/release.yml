@@ -123,6 +123,14 @@ jobs:
           echo "Packaged chart: $CHART_FILE"
           ls -la helm-releases/
 
+      - name: Log in to GitHub Container Registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Push Helm chart to OCI registry
+        run: |
+          helm push ${{ steps.helm-package.outputs.chart_file }} oci://ghcr.io/${{ github.repository_owner }}/charts
+
       - name: Upload Helm chart artifact
         uses: actions/upload-artifact@v4
         with:
@@ -184,9 +192,15 @@ jobs:
 
           echo "" >> CHANGELOG.md
           echo "" >> CHANGELOG.md
+          echo "## Helm Chart (OCI)" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo '```bash' >> CHANGELOG.md
+          echo "helm install vpsie-autoscaler oci://ghcr.io/${{ github.repository_owner }}/charts/vpsie-autoscaler --version ${GITHUB_REF#refs/tags/v}" >> CHANGELOG.md
+          echo '```' >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
           echo "## Docker Image" >> CHANGELOG.md
           echo "" >> CHANGELOG.md
-          echo '```' >> CHANGELOG.md
+          echo '```bash' >> CHANGELOG.md
           echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF#refs/tags/v}" >> CHANGELOG.md
           echo '```' >> CHANGELOG.md
           echo "" >> CHANGELOG.md
@@ -250,6 +264,6 @@ jobs:
           echo "### Artifacts:" >> $GITHUB_STEP_SUMMARY
           echo "- :whale: Docker image: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF#refs/tags/v}\`" >> $GITHUB_STEP_SUMMARY
           echo "- :lock: Image signed with Cosign (Sigstore)" >> $GITHUB_STEP_SUMMARY
-          echo "- :package: Helm chart packaged" >> $GITHUB_STEP_SUMMARY
+          echo "- :package: Helm chart: \`oci://ghcr.io/${{ github.repository_owner }}/charts/vpsie-autoscaler:${GITHUB_REF#refs/tags/v}\`" >> $GITHUB_STEP_SUMMARY
           echo "- :memo: SBOM generated" >> $GITHUB_STEP_SUMMARY
           echo "- :page_facing_up: Binaries for linux/darwin (amd64/arm64)" >> $GITHUB_STEP_SUMMARY
